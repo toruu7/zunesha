@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/zunesha-core",
+    "crates/zunesha-api",
+    "crates/zunesha-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+# --- build profiles ---------------------------------------------------------
+#
+# Goals: fast iteration (the compile loop), fast runtime, small memory/binary.
+#
+# Dev: our crates compile with plain `opt-level = 0` + line-tables-only debug
+# info (accurate panic/backtrace lines without full debuginfo's compile-time
+# and size cost). Dependencies — SQLite included — are optimized at level 2:
+# they compile once and are cached, so iteration speed is untouched while dev
+# binaries run close to release speed on DB-heavy paths.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+# Release: thin LTO with a single codegen unit trades a slower release build
+# for a smaller, faster binary; symbols are stripped. `panic` stays `unwind`
+# on purpose — a panicking worker task must fail *that task*, not abort the
+# daemon.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+

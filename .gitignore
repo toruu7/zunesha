@@ -1,0 +1,11 @@
+# Rust build artifacts (~9 GB of incremental caches)
+/target/
+
+# Next.js build + dependencies
+/web/node_modules/
+/web/.next/
+/web/out/
+*.tsbuildinfo
+
+# Zunesha's own control directory (if this repo is orch/zou-initialized)
+/.zou/

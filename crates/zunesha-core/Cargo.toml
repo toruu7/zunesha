@@ -1,0 +1,25 @@
+[package]
+name = "zunesha-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core state, DAG, and workspace logic for the local-first AI coding orchestrator"
+
+[dependencies]
+ignore = "0.4.33"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = [
+    "process",
+    "sync",
+    "rt",
+    "rt-multi-thread",
+    "macros",
+    "io-util",
+    "time",
+] }
+
+[dev-dependencies]
+tempfile = "3"
