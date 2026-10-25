@@ -34,12 +34,11 @@ mdbook serve docs               # http://localhost:3000
 mdbook build docs               # static site in docs/book/
 ```
 
-Every push that touches `docs/` or this README builds the book and uploads it
-as a Pages artifact. Publishing is opt-in: enable Pages
-(**Settings → Pages → Source: GitHub Actions**) and set the repository
-variable `PUBLISH_DOCS=true`; the site then appears at
-`https://<owner>.github.io/<repo>/`. Pages is not available for private repos
-on free plans, but `mdbook serve docs` works everywhere.
+Every push that touches `docs/` or this README builds the book in CI, and
+`master` deploys the prebuilt site to **Vercel** once the repository has the
+`VERCEL_DEPLOY` variable set to `true` (plus the `VERCEL_TOKEN` secret and
+`VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` variables). Details are in
+`.github/workflows/docs.yml`; `mdbook serve docs` works locally with no setup.
 
 ## Usage
 

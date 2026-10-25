@@ -1,15 +1,18 @@
 name: docs
 
-# Builds the mdBook in docs/ on every push/PR (the build job proves the site
-# is valid and uploads it as a downloadable Pages artifact).
+# Builds the mdBook in docs/ on every push/PR (so the site is always
+# validated), then deploys the prebuilt output to Vercel on master.
 #
-# Publishing to GitHub Pages is opt-in, because Pages is not available on
-# every plan/repo (private repos need a paid plan) and the default
-# GITHUB_TOKEN cannot enable it. To turn it on:
-#   1. Settings → Pages → Build and deployment → Source: "GitHub Actions"
-#   2. Settings → Secrets and variables → Actions → Variables →
-#      new variable PUBLISH_DOCS = true
-# The site then lives at https://<owner>.github.io/<repo>/.
+# One-time setup — Settings → Secrets and variables → Actions:
+#   secret    VERCEL_TOKEN               (https://vercel.com/account/tokens)
+#   variable  VERCEL_ORG_ID              (team id)
+#   variable  VERCEL_PROJECT_ID          (project id)
+#   variable  VERCEL_DEPLOY = true       (switch deploys on)
+#
+# Both ids are printed by `npx vercel@latest link` in .vercel/project.json
+# (orgId / projectId), or live in the project's Settings → General page.
+# The Vercel project does not need a Git connection: this workflow is the
+# only deployer.
 
 on:
   push:
@@ -42,24 +45,38 @@ jobs:
           mdbook-version: "0.5.4"
       - name: Build the book
         run: mdbook build docs
-      - name: Upload the Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Upload the site
+        uses: actions/upload-artifact@v4
         with:
+          name: docs-book
           path: docs/book
+          if-no-files-found: error
 
   deploy:
     needs: build
-    if: vars.PUBLISH_DOCS == 'true'
+    if: vars.VERCEL_DEPLOY == 'true' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
     steps:
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: docs-book
+          path: site
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Link the Vercel project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest pull --yes --environment=production --token "$VERCEL_TOKEN"
+      - name: Package the prebuilt output
+        run: |
+          mkdir -p .vercel/output/static
+          cp -R site/. .vercel/output/static/
+          printf '{"version":3}\n' > .vercel/output/config.json
+      - name: Deploy to Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest deploy --prebuilt --prod --yes --token "$VERCEL_TOKEN"

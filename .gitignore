@@ -12,3 +12,6 @@
 
 # mdBook output
 /docs/book/
+
+# Vercel CLI project link (local)
+/.vercel/
