@@ -45,6 +45,15 @@ export interface StatusCount {
 }
 
 /**
+ * One edge of the task DAG: `task_id` may start only once `depends_on` is
+ * DONE. Created with the plan and never mutated afterwards.
+ */
+export interface DependencyEdge {
+  task_id: string;
+  depends_on: string;
+}
+
+/**
  * One live log line.
  *
  * `seq` is the 0-based index of the line within the run. It lets the client
@@ -60,7 +69,13 @@ export interface LogEvent {
 
 /** The single message protocol pushed over the WebSocket (and REST). */
 export type ApiEvent =
-  | { type: "snapshot"; tasks: Task[]; counts: StatusCount[] }
+  | {
+      type: "snapshot";
+      tasks: Task[];
+      /** Dependency edges (`task_id` ← `depends_on`); see `dag.ts`. */
+      dependencies: DependencyEdge[];
+      counts: StatusCount[];
+    }
   | { type: "task_updated"; task: Task }
   | ({ type: "log" } & LogEvent);
 
@@ -68,6 +83,8 @@ export type ApiEvent =
 
 export interface TasksResponse {
   tasks: Task[];
+  /** Dependency edges (`task_id` ← `depends_on`), immutable after planning. */
+  dependencies: DependencyEdge[];
   counts: StatusCount[];
 }
 

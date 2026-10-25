@@ -17,19 +17,31 @@ pub struct StatusCount {
     pub count: usize,
 }
 
+/// One edge of the task DAG: `task_id` may start only once `depends_on` is
+/// `DONE`. Created with the plan and never mutated afterwards.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DependencyEdge {
+    pub task_id: String,
+    pub depends_on: String,
+}
+
 /// A single message pushed to the dashboard.
 ///
 /// Tagged by `type` so the frontend can `switch` on it without ambiguity.
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ApiEvent {
-    /// The entire board state: every task plus per-status counts.
+    /// The entire board state: every task, the task DAG, and per-status
+    /// counts.
     ///
     /// Sent once when a WebSocket connects and again after every human-driven
     /// mutation (plan / approve / reject). Clients can treat it as a hard
     /// resynchronisation point.
     Snapshot {
         tasks: Vec<Task>,
+        /// Dependency edges (`task_id` ← `depends_on`); immutable after
+        /// planning, so they only change with the plan itself.
+        dependencies: Vec<DependencyEdge>,
         counts: Vec<StatusCount>,
     },
 
@@ -69,11 +81,28 @@ pub fn zero_filled_counts(db: &Database) -> zunesha_core::Result<Vec<StatusCount
         .collect())
 }
 
+/// Read every dependency edge from the database (`task_id` ← `depends_on`).
+pub fn dependency_edges(db: &Database) -> zunesha_core::Result<Vec<DependencyEdge>> {
+    Ok(db
+        .list_dependencies()?
+        .into_iter()
+        .map(|(task_id, depends_on)| DependencyEdge {
+            task_id,
+            depends_on,
+        })
+        .collect())
+}
+
 /// Build the authoritative `Snapshot` for the current database state.
 pub fn snapshot_event(db: &Database) -> zunesha_core::Result<ApiEvent> {
     let tasks = db.list_tasks()?;
+    let dependencies = dependency_edges(db)?;
     let counts = zero_filled_counts(db)?;
-    Ok(ApiEvent::Snapshot { tasks, counts })
+    Ok(ApiEvent::Snapshot {
+        tasks,
+        dependencies,
+        counts,
+    })
 }
 
 /// Bridge the worker pool's internal events into the API's broadcast channel.

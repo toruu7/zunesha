@@ -4,7 +4,15 @@
 // so the merge/idempotency rules that keep the live view correct are unit
 // testable. The store wires these to the WebSocket; tests drive them directly.
 
-import type { ApiEvent, LogEvent, StatusCount, StreamKind, Task, TaskStatus } from "./types";
+import type {
+  ApiEvent,
+  DependencyEdge,
+  LogEvent,
+  StatusCount,
+  StreamKind,
+  Task,
+  TaskStatus,
+} from "./types";
 import { STATUSES } from "./types";
 
 /** One line of agent output, keyed by its index within the run. */
@@ -18,9 +26,14 @@ export interface LogLine {
 export interface BoardState {
   tasks: Task[];
   logs: Record<string, LogLine[]>;
+  /**
+   * Dependency edges (`task_id` ← `depends_on`), carried by snapshots.
+   * Immutable after planning, so only snapshots ever change them.
+   */
+  deps: DependencyEdge[];
 }
 
-export const EMPTY_STATE: BoardState = { tasks: [], logs: {} };
+export const EMPTY_STATE: BoardState = { tasks: [], logs: {}, deps: [] };
 
 /**
  * Split a task's persisted `worker_logs` into indexed lines.
@@ -100,7 +113,7 @@ export function applyEvent(state: BoardState, ev: ApiEvent): BoardState {
             ? []
             : mergeLogLines(state.logs[task.id] ?? [], persisted);
       }
-      return { tasks: ev.tasks, logs };
+      return { tasks: ev.tasks, logs, deps: ev.dependencies };
     }
 
     case "task_updated": {
@@ -117,7 +130,7 @@ export function applyEvent(state: BoardState, ev: ApiEvent): BoardState {
         ...state.logs,
         [ev.task.id]: mergeLogLines(base, splitLogs(ev.task.worker_logs)),
       };
-      return { tasks, logs };
+      return { tasks, logs, deps: state.deps };
     }
 
     case "log": {

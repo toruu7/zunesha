@@ -1,11 +1,17 @@
 "use client";
 
 import { useEffect } from "react";
+import dynamic from "next/dynamic";
 
 import Board from "@/components/board";
 import PlanBar from "@/components/plan-bar";
 import ReviewModal from "@/components/review-modal";
 import { useZou } from "@/lib/store";
+
+// reactflow measures the DOM (and needs `window`), so the graph view loads
+// client-side only. The code split also keeps it — and its stylesheet — out
+// of the initial bundle until the view is switched on.
+const DagView = dynamic(() => import("@/components/dag-view"), { ssr: false });
 
 const STATUS_COLOR: Record<string, string> = {
   open: "bg-emerald-500",
@@ -49,9 +55,39 @@ function ErrorBanner() {
   );
 }
 
+/** Kanban board ⇄ interactive DAG graph (Phase 11). */
+function ViewToggle() {
+  const view = useZou((s) => s.view);
+  const setView = useZou((s) => s.setView);
+  return (
+    <div
+      className="flex items-center rounded-md border border-zinc-800 bg-zinc-900/60 p-0.5"
+      role="tablist"
+      aria-label="board view"
+    >
+      {(["board", "dag"] as const).map((v) => (
+        <button
+          key={v}
+          role="tab"
+          aria-selected={view === v}
+          onClick={() => setView(v)}
+          className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+            view === v
+              ? "bg-zinc-800 text-zinc-100"
+              : "text-zinc-500 hover:text-zinc-300"
+          }`}
+        >
+          {v}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const connect = useZou((s) => s.connect);
   const disconnect = useZou((s) => s.disconnect);
+  const view = useZou((s) => s.view);
   const selectedId = useZou((s) => s.selectedId);
   const selectedTask = useZou((s) =>
     s.tasks.find((t) => t.id === s.selectedId),
@@ -72,7 +108,8 @@ export default function Dashboard() {
             <h1 className="text-lg font-semibold tracking-tight">
               zou <span className="text-zinc-500 font-normal">· zunesha</span>
             </h1>
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-3">
+              <ViewToggle />
               <ConnectionDot />
             </div>
           </div>
@@ -81,9 +118,17 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 overflow-y-auto p-4">
+      {/* The DAG canvas pans itself, so it fills without page scroll; the
+          board's columns keep the page scrollbar. */}
+      <main
+        className={
+          view === "dag"
+            ? "flex-1 min-h-0 overflow-hidden p-4"
+            : "flex-1 min-h-0 overflow-y-auto p-4"
+        }
+      >
         <div className="max-w-[1600px] mx-auto h-full flex flex-col">
-          <Board />
+          {view === "dag" ? <DagView /> : <Board />}
         </div>
       </main>
 

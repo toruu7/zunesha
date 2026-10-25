@@ -237,6 +237,90 @@ assert_contains "auto-resolved content landed" "$(cat a.txt)" "v2-$H2"
 [ -d ".zou/ws/$H2" ] && fail "resolution workspace left behind" || pass "workspace reaped after final approve"
 unset ZOU_AGENT_CMD
 
+say "daemon boot auto-resumes work a crash left claimed (Phase 11)"
+new_repo
+"$ZOU" plan "survive a daemon crash" > /dev/null
+# The agent blocks on a marker file so the crash provably lands mid-run: it
+# writes its output, then waits until the test releases it (10s cap).
+cat > "$AG/agent-crash.sh" <<'EOF'
+#!/bin/sh
+printf 'v2\nfrom-task\n' > "$1/a.txt"
+echo "agent-ran"
+i=0
+while [ ! -f "$RELEASE" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i+1)); done
+EOF
+RELEASE="$AG/release"
+CRASH_LOG="$AG/crash-daemon.log"
+
+start_daemon() {
+  # $1 = extra flag ("" or "--no-resume"), $2 = log file
+  ZOU_AGENT_CMD="sh $AG/agent-crash.sh {workspace}" RELEASE="$RELEASE" \
+    "$ZOU" start --port "$PORT" $1 > "$2" 2>&1 &
+  DAEMON_PID=$!
+  i=0; code=000
+  while [ "$i" -lt 60 ]; do
+    code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/health" || true)
+    [ "$code" = "200" ] && break
+    i=$((i + 1)); sleep 0.5
+  done
+  [ "$code" = "200" ] || fail "daemon on port $PORT did not become healthy"
+}
+wait_status() {
+  # $1 = status, $2 = expected count, $3 = failure message
+  i=0
+  until [ "$(count_in "$1")" = "$2" ]; do
+    i=$((i + 1))
+    [ "$i" -gt 80 ] && fail "$3 (status: $("$ZOU" status | tr '\n' ' '))"
+    sleep 0.5
+  done
+}
+
+start_daemon "" "$CRASH_LOG"
+
+# The dependency edges ride on /api/tasks for the dashboard's DAG view.
+DEPS=$(curl -s "http://127.0.0.1:$PORT/api/tasks")
+[ "$(printf '%s' "$DEPS" | grep -o depends_on | wc -l)" = "2" ] \
+  && pass "/api/tasks carries the 2 dependency edges" || fail "missing edges in /api/tasks: $DEPS"
+
+# Claim the head on the daemon, then wait until its agent is provably running.
+T=$(id_in TODO)
+curl -s -o /dev/null -X POST "http://127.0.0.1:$PORT/api/run"
+i=0
+until [ -f ".zou/ws/$T/a.txt" ]; do
+  i=$((i + 1)); [ "$i" -gt 80 ] && fail "agent never started (no workspace output)"; sleep 0.25
+done
+pass "agent is mid-run (blocked on the release marker)"
+
+# Simulate the crash: SIGKILL, no graceful shutdown.
+kill -9 "$DAEMON_PID"; DAEMON_PID=
+[ "$(count_in IN_PROGRESS)" = "1" ] \
+  && pass "the claim survives the crash" || fail "crash left no claimed task"
+
+# Let the orphaned agent exit, then restart: boot must resume by itself.
+touch "$RELEASE"
+start_daemon "" "$CRASH_LOG"
+assert_contains "boot announces what it resumed" "$(cat "$CRASH_LOG")" "resumed 1 interrupted task(s)"
+
+# …and the resumed run completes with no further human action, but still
+# stops at the review gate.
+wait_status REVIEW 1 "resumed task never reached REVIEW"
+pass "crashed task re-ran to REVIEW with no manual recover"
+[ "$(count_in DONE)" = "0" ] && pass "resumption still stops at the human gate" || fail "resumption bypassed review"
+
+# --no-resume: claims a live `zou run` might own are left alone.
+kill "$DAEMON_PID"; DAEMON_PID=
+"$ZOU" plan "second feature" > /dev/null
+PH2=$(id_in TODO)
+"$ZOU" work "$PH2" --activate > /dev/null     # phantom claim, no worker owns it
+start_daemon "--no-resume" "$CRASH_LOG"
+case "$(cat "$CRASH_LOG")" in
+  *resumed*) fail "--no-resume boot still resumed something";;
+  *) pass "--no-resume boot skips resumption";;
+esac
+[ "$(count_in IN_PROGRESS)" = "1" ] \
+  && pass "--no-resume left the claim untouched" || fail "--no-resume released the claim"
+kill "$DAEMON_PID"; DAEMON_PID=
+
 say "live daemon WebSocket check (fresh project)"
 new_repo
 "$ZOU" plan "stream my logs" > /dev/null

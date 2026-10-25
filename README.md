@@ -150,20 +150,31 @@ suite is killed and counts as a failure rather than wedging the daemon.
 A killed daemon or interrupted `zou run` (Ctrl-C, crash, reboot) leaves tasks
 stuck `IN_PROGRESS` (mid-agent), `EVALUATING` (mid-validation), or
 `RESOLVING_CONFLICTS` (mid-auto-merge): they can't
-be re-run or reviewed, and their dependents stay blocked. Release them
-explicitly:
+be re-run or reviewed, and their dependents stay blocked.
+
+**Restarting the daemon resumes them automatically** (Phase 11): `zou start`
+detects the previous process's claims, releases each back to `TODO`, and
+re-runs it in the kept workspace — announced on boot:
+
+```
+resumed 1 interrupted task(s): task-1729000000000000000-0
+```
+
+For claims a *live* worker may own — e.g. a concurrent `zou run` — release
+them explicitly instead:
 
 ```sh
-zou recover              # release every stuck task
-zou recover <TASK_ID>    # release just one (errors if unknown or not stuck)
+zou start --no-resume    # boot without touching existing claims
+zou recover             # release every stuck task
+zou recover <TASK_ID>   # release just one (errors if unknown or not stuck)
 ```
 
 Or in the dashboard: open the stuck task → **Release stuck task**. The
 workspace is kept, so the retry continues from whatever the crashed agent
 already produced (the persisted retry counter still counts against the
-3-failure cap). This is deliberately manual — a CLI run and the daemon can
-coexist on one machine, and nothing in the state can tell a live agent from a
-dead one — so only release tasks whose worker is really gone.
+3-failure cap). Nothing in the state can tell a live agent from a dead one —
+that is why the manual path stays available and the boot-time resume can be
+switched off.
 
 ### Environment variables
 
@@ -232,7 +243,7 @@ zou run     [--jobs N] [--follow]       # run the agent on ready tasks, in paral
 zou approve <TASK_ID>                   # merge reviewed work into the repo (auto-resolves conflicts, Phase 9)
 zou recover [TASK_ID]                   # release stuck IN_PROGRESS/EVALUATING/RESOLVING_CONFLICTS tasks (crash recovery)
 zou status  [--path <PATH>]             # per-status counts + task list
-zou start   [--host H] [--port N] [--jobs N]  # serve the local API + dashboard
+zou start   [--host H] [--port N] [--jobs N] [--no-resume]  # serve the local API + dashboard (auto-resumes crashed work unless --no-resume)
 ```
 
 `init` refuses to run outside a git work tree unless `--force` is passed, and
@@ -494,7 +505,7 @@ the agent's prompt contains both the map heading and a tree entry, and
 |--------|--------------------------|--------------------------------------------|
 | GET    | `/health`                | Liveness probe.                            |
 | GET    | `/api/status`            | Per-status counts + concurrency cap.       |
-| GET    | `/api/tasks`             | Every task plus per-status counts.         |
+| GET    | `/api/tasks`             | Every task, the dependency DAG (`dependencies`), and per-status counts. |
 | GET    | `/api/tasks/:id`         | One task (captured logs + diff included).  |
 | POST   | `/api/plan`              | `{"prompt": "..."}` → DAG of tasks.        |
 | POST   | `/api/run`               | Start agents on all ready (`TODO`) tasks.  |
@@ -526,15 +537,18 @@ Key behaviors:
   it `REVIEW → TODO`, leaving the workspace intact so the retry builds on the
   previous diff.
 - **WebSocket protocol** — every message is an `ApiEvent`, tagged by `type`:
-  `snapshot` (full board; sent on connect and after every human mutation),
+  `snapshot` (full board — tasks, the `dependencies` edge list the DAG view
+  renders, and counts; sent on connect and after every human mutation),
   `task_updated` (one row), and `log` (a live agent line). A client that falls
   behind the bounded (256-slot) event ring is not disconnected and not left
   with a silent gap: the server pushes it a fresh `snapshot` immediately, and
   the reducer merges snapshots idempotently (persisted `worker_logs` fill in
-  any skipped lines).
-- **Crash recovery** — `POST /api/recover` releases stuck `IN_PROGRESS` /
-  `EVALUATING` / `RESOLVING_CONFLICTS` tasks back to `TODO` (see
-  [Usage](#crash-recovery)).
+  any skipped lines). Dependency edges are immutable after planning, so only
+  snapshots carry them.
+- **Crash recovery** — on boot the daemon releases stuck `IN_PROGRESS` /
+  `EVALUATING` / `RESOLVING_CONFLICTS` tasks back to `TODO` and re-runs them
+  (opt out with `zou start --no-resume`); `POST /api/recover` does the release
+  manually for claims a live worker may own (see [Usage](#crash-recovery)).
 - **Routing** — unmatched `/api/*` paths return a JSON `404` (never the HTML
   dashboard fallback); other unmatched GETs serve `web/out` when it exists,
   otherwise a placeholder page.
@@ -560,6 +574,13 @@ The Axum server auto-discovers `web/out` (override with `ZOU_DASHBOARD_DIR` or
   `snapshot`/`task_updated` events. Click a card to open the review modal.
   `FAILED_NEEDS_HUMAN` cards open with a **Send back to queue** action (with
   optional feedback, resetting the retry budget).
+- **DAG view** (Phase 11) — a `board | dag` toggle in the header switches to an
+  interactive [@xyflow/react](https://reactflow.dev) graph of the plan: nodes are
+  tasks with the same status accents, edges are the dependency list drawn
+  prerequisite → dependent, laid out left-to-right by dependency depth (a small
+  pure layout in `web/src/lib/dag.ts`, no layout library). Pan/zoom/drag freely,
+  click a node to open the same review modal — the graph repaints live as
+  statuses change but never jumps while you're looking at it.
 - **Review modal** — task description, a colourised unified diff, live agent
   output, and the human-in-the-loop controls: **Approve** (merges the diff
   into your working tree, then `REVIEW → DONE` + DAG promotion) or **Reject**
@@ -731,4 +752,4 @@ connection pool.
 | 8     | Self-healing test loop (`EVALUATING`, retries)     | ✅ done |
 | 9     | Auto-merge conflict resolution (`RESOLVING_CONFLICTS`) | ✅ done |
 | 10    | Codebase map injected into agent prompts           | ✅ done |
-| 11    | Interactive DAG view + automatic crash resumption  | 🔜 planned |
+| 11    | Interactive DAG view + automatic crash resumption  | ✅ done |

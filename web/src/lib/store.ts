@@ -33,6 +33,8 @@ export interface ZouState extends BoardState {
   error: string | null;
   /** True while a REST mutation is in flight (disables buttons). */
   busy: boolean;
+  /** Kanban board or interactive DAG graph (Phase 11). */
+  view: "board" | "dag";
 
   // --- lifecycle ---
   /** Connect to the daemon. Idempotent; safe to call from React effects. */
@@ -53,6 +55,8 @@ export interface ZouState extends BoardState {
   // --- view ---
   select: (id: string | null) => void;
   clearError: () => void;
+  /** Switch between the kanban board and the DAG graph. */
+  setView: (view: "board" | "dag") => void;
   /** Apply an event (exposed for tests; the store uses it internally). */
   dispatch: (ev: ApiEvent) => void;
 }
@@ -113,6 +117,7 @@ export const useZou = create<ZouState>((set, get) => {
     selectedId: null,
     error: null,
     busy: false,
+    view: "board",
 
     connect: () => {
       if (socket || reconnectTimer) return;
@@ -137,8 +142,8 @@ export const useZou = create<ZouState>((set, get) => {
 
     refresh: async () => {
       try {
-        const { tasks } = await api.tasks();
-        dispatch({ type: "snapshot", tasks, counts: countsFor(tasks) });
+        const { tasks, dependencies } = await api.tasks();
+        dispatch({ type: "snapshot", tasks, dependencies, counts: countsFor(tasks) });
         set({ error: null });
       } catch (err) {
         set({ error: `failed to load tasks: ${errText(err)}` });
@@ -230,6 +235,7 @@ export const useZou = create<ZouState>((set, get) => {
 
     select: (id) => set({ selectedId: id }),
     clearError: () => set({ error: null }),
+    setView: (view) => set({ view }),
     dispatch,
   };
 });

@@ -112,6 +112,11 @@ enum Commands {
         /// discovery (env `ZOU_DASHBOARD_DIR`, then CWD/exe-relative).
         #[arg(long)]
         dashboard: Option<std::path::PathBuf>,
+        /// Do not automatically re-run tasks left claimed by a previous
+        /// (crashed) daemon. Only needed when a concurrent `zou run` may own
+        /// those claims; a manual `zou recover` still works either way.
+        #[arg(long)]
+        no_resume: bool,
     },
 }
 
@@ -137,7 +142,8 @@ fn main() -> ExitCode {
             port,
             jobs,
             dashboard,
-        } => cmd_start(&target, &host, port, jobs, dashboard),
+            no_resume,
+        } => cmd_start(&target, &host, port, jobs, dashboard, no_resume),
     };
 
     match result {
@@ -252,6 +258,7 @@ fn cmd_start(
     port: u16,
     jobs: usize,
     dashboard: Option<std::path::PathBuf>,
+    no_resume: bool,
 ) -> zunesha_core::Result<()> {
     let paths = discover(target)?;
 
@@ -268,15 +275,25 @@ fn cmd_start(
             max_concurrency: jobs,
             agent: AgentCommand::default(),
             dashboard_dir: dashboard,
+            resume: !no_resume,
         };
 
         let handle = zunesha_api::serve(config)
             .await
-            .map_err(|e| Error::Workspace(format!("failed to bind {host}:{port}: {e}")))?;
+            .map_err(|e| Error::Workspace(format!("failed to start on {host}:{port}: {e}")))?;
 
         println!("zou daemon listening on http://{}", handle.address());
         println!("  REST  → http://{}/api/tasks", handle.address());
         println!("  WS    → ws://{}/ws", handle.address());
+        // Phase 11: a restarted daemon picks its crashed run back up.
+        let resumed = handle.resumed();
+        if !resumed.is_empty() {
+            println!(
+                "  resumed {} interrupted task(s): {}",
+                resumed.len(),
+                resumed.join(", ")
+            );
+        }
         println!("  press Ctrl-C to stop");
 
         // Wait for Ctrl-C, then shut down gracefully.

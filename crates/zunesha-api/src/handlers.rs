@@ -17,7 +17,9 @@ use zunesha_core::{
     approve_task, plan, recover_stuck, Database, Error, MergeOutcome, Task, TaskStatus,
 };
 
-use crate::events::{snapshot_event, zero_filled_counts, StatusCount};
+use crate::events::{
+    dependency_edges, snapshot_event, zero_filled_counts, DependencyEdge, StatusCount,
+};
 use crate::AppState;
 
 // ---------------------------------------------------------------------------
@@ -123,6 +125,8 @@ impl AppState {
 #[derive(Serialize)]
 pub struct TasksResponse {
     pub tasks: Vec<Task>,
+    /// Dependency edges (`task_id` ← `depends_on`), immutable after planning.
+    pub dependencies: Vec<DependencyEdge>,
     pub counts: Vec<StatusCount>,
 }
 
@@ -183,12 +187,13 @@ pub async fn health() -> Json<serde_json::Value> {
     Json(json!({ "ok": true }))
 }
 
-/// `GET /api/tasks` – every task plus per-status counts.
+/// `GET /api/tasks` – every task, the dependency edges, and per-status counts.
 pub async fn list_tasks(State(state): State<AppState>) -> ApiResult<Json<TasksResponse>> {
     let response = tokio::task::spawn_blocking(move || {
         let db = Database::open(&state.paths.state_db())?;
         Ok::<_, Error>(TasksResponse {
             tasks: db.list_tasks()?,
+            dependencies: dependency_edges(&db)?,
             counts: zero_filled_counts(&db)?,
         })
     })
@@ -358,10 +363,12 @@ pub async fn reject(
 /// and dependents stay blocked. Send `{"task_id": "..."}` to release one
 /// task, or an empty body to release every stuck task.
 ///
-/// Only call this when the worker is actually dead: a CLI run and the
-/// daemon can legitimately coexist, and nothing in the state can tell a
-/// live agent from a dead one. The workspace is kept, so the retry builds
-/// on whatever the crashed agent already produced.
+/// For claims left by a *dead daemon* nothing is needed: `zou start` releases
+/// and re-runs them automatically at boot (Phase 11). Only call this for
+/// claims that no live worker owns: a CLI run and the daemon can legitimately
+/// coexist, and nothing in the state can tell a live agent from a dead one.
+/// The workspace is kept, so the retry builds on whatever the crashed agent
+/// already produced.
 pub async fn recover(
     State(state): State<AppState>,
     // An absent or malformed body means "recover everything stuck".

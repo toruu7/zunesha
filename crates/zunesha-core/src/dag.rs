@@ -71,11 +71,13 @@ pub fn blocked_tasks(db: &Database) -> Result<Vec<(String, Vec<String>)>> {
 /// task is an error, so a typo can't silently "recover" the wrong thing);
 /// with `None`, every stuck task is released at once.
 ///
-/// This is deliberately **manual** (`zou recover` / `POST /api/recover`):
+/// This stays **manual** for the CLI (`zou recover` / `POST /api/recover`):
 /// a CLI run and the daemon can legitimately coexist on one machine, and
 /// without a heartbeat there is no safe way to distinguish a live worker
 /// from a dead one automatically. Only the human can know the worker is gone.
-/// (Daemon-startup *automatic* resumption is Phase 11 scope.)
+/// (At *daemon boot* the previous process is gone by construction, so
+/// [`crate::WorkerPool::resume_stuck`] re-runs these tasks automatically —
+/// Phase 11.)
 ///
 /// The task's workspace is kept, so the retry (and its review) builds on
 /// whatever the crashed agent already produced — the same contract as a

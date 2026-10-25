@@ -1,28 +1,8 @@
 "use client";
 
+import { ACCENT, isActive } from "@/lib/status";
 import { useZou } from "@/lib/store";
 import { STATUSES, type Task, type TaskStatus } from "@/lib/types";
-
-// Per-status accent colors for the column header + card left-rail.
-const ACCENT: Record<TaskStatus, string> = {
-  BACKLOG: "bg-zinc-500",
-  TODO: "bg-sky-500",
-  IN_PROGRESS: "bg-amber-500",
-  EVALUATING: "bg-teal-500",
-  REVIEW: "bg-violet-500",
-  RESOLVING_CONFLICTS: "bg-orange-500",
-  DONE: "bg-emerald-500",
-  FAILED_NEEDS_HUMAN: "bg-rose-600",
-};
-
-/** Statuses a live worker currently owns (pulsing dot). */
-function isActive(status: TaskStatus): boolean {
-  return (
-    status === "IN_PROGRESS" ||
-    status === "EVALUATING" ||
-    status === "RESOLVING_CONFLICTS"
-  );
-}
 
 function TaskCard({ id }: { id: string }) {
   const task = useZou((s) => s.tasks.find((t) => t.id === id));

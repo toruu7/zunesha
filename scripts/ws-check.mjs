@@ -35,6 +35,17 @@ function finish() {
     fail("snapshot has no tasks", JSON.stringify(snapshot).slice(0, 200));
   pass(`snapshot on connect (${snapshot.tasks.length} tasks, ${snapshot.counts.length} count buckets)`);
 
+  // The DAG view renders from the snapshot's edge list (Phase 11): the
+  // planner's 3-task chain must arrive as 2 prerequisite → dependent edges.
+  const deps = snapshot.dependencies;
+  if (!Array.isArray(deps) || deps.length !== 2)
+    fail("snapshot should carry the 2 dependency edges", JSON.stringify(deps));
+  for (const e of deps) {
+    if (typeof e.task_id !== "string" || typeof e.depends_on !== "string")
+      fail("malformed dependency edge", JSON.stringify(e));
+  }
+  pass(`snapshot carries the dependency DAG (${deps.length} edges)`);
+
   const updated = events.filter((e) => e.type === "task_updated");
   const statuses = new Set(updated.map((e) => e.task?.status));
   if (!statuses.has("IN_PROGRESS")) fail("no IN_PROGRESS task_updated", [...statuses]);

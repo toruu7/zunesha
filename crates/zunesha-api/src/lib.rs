@@ -19,18 +19,28 @@
 //! |--------|---------------------------|------------------------------------------|
 //! | GET    | `/health`                 | Liveness probe.                          |
 //! | GET    | `/api/status`             | Per-status counts + concurrency cap.     |
-//! | GET    | `/api/tasks`              | Every task plus per-status counts.       |
+//! | GET    | `/api/tasks`              | Every task, the dependency DAG, and per-status counts. |
 //! | GET    | `/api/tasks/:id`          | One task (logs + diff included).         |
 //! | POST   | `/api/plan`               | Decompose a prompt into a task DAG.      |
 //! | POST   | `/api/run`                | Start agents on all ready (`TODO`) tasks.|
 //! | POST   | `/api/tasks/:id/run`      | Start the agent on one ready task.       |
 //! | POST   | `/api/tasks/:id/approve`  | Accept reviewed work; merge or auto-resolve a conflict. |
 //! | POST   | `/api/tasks/:id/reject`   | Send reviewed work back with feedback.   |
-//! | POST   | `/api/recover`            | Release stuck tasks (worker crashed).    |
+//! | POST   | `/api/recover`            | Release stuck tasks (worker crashed; on `zou start` this happens automatically). |
 //! | WS     | `/ws`                     | Live snapshots + streaming agent logs.   |
 //!
 //! Unmatched GET paths fall back to a static dashboard (served from `web/out`
 //! when available, otherwise a helpful placeholder page).
+//!
+//! ## Crash resumption
+//!
+//! A daemon killed mid-run leaves its claims behind: tasks stuck in
+//! `IN_PROGRESS`, `EVALUATING`, or `RESOLVING_CONFLICTS` that nothing will
+//! ever finish. [`serve`] recovers them at boot — releasing each back to
+//! `TODO` and re-running it in its kept workspace — so restarting
+//! `zou start` resumes the run instead of stranding it. The endpoint stays
+//! for claims a *live* CLI run may own, which only a human can judge (see
+//! [`zunesha_core::dag::recover_stuck`]).
 
 pub mod events;
 pub mod handlers;
@@ -91,6 +101,13 @@ pub struct ServeConfig {
     /// [`find_dashboard_dir`]'s search; `Some` must contain `index.html` to
     /// be served (otherwise the placeholder page shows).
     pub dashboard_dir: Option<std::path::PathBuf>,
+    /// Re-run automatically whatever tasks a previous daemon left claimed
+    /// (Phase 11 crash resumption). At boot the previous process is gone by
+    /// construction, which is what makes releasing its `IN_PROGRESS`,
+    /// `EVALUATING`, and `RESOLVING_CONFLICTS` tasks safe here. Opt out when
+    /// a concurrent CLI `zou run` may own those claims — see
+    /// [`zunesha_core::dag::recover_stuck`].
+    pub resume: bool,
 }
 
 impl ServeConfig {
@@ -103,6 +120,7 @@ impl ServeConfig {
             max_concurrency: zunesha_core::DEFAULT_MAX_CONCURRENCY,
             agent: AgentCommand::default(),
             dashboard_dir: None,
+            resume: true,
         }
     }
 }
@@ -238,28 +256,47 @@ pub fn build_app(config: ServeConfig) -> (Router, AppState) {
 
 /// Bind and serve until the process is interrupted.
 ///
-/// Returns a [`ServeHandle`] once the listener is bound. `ServeConfig::port`
+/// Returns a [`ServeHandle`] once the listener is bound and any interrupted
+/// tasks have been resumed (see [`ServeConfig::resume`]). `ServeConfig::port`
 /// of `0` picks an ephemeral port — read it back with
 /// [`ServeHandle::address`].
 pub async fn serve(config: ServeConfig) -> std::io::Result<ServeHandle> {
+    let resume = config.resume;
     let bind_addr = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     let bound = listener.local_addr()?;
 
-    let (app, _state) = build_app(config);
+    let (app, state) = build_app(config);
+
+    // Phase 11: a restarted daemon picks its crashed run back up. The event
+    // bridge above is already subscribed, so the released/re-claimed flips
+    // stream to any dashboard that connects — and every connect replays a
+    // snapshot anyway.
+    let resumed = if resume {
+        state.pool.resume_stuck().await.map_err(io_error)?
+    } else {
+        Vec::new()
+    };
 
     let handle = tokio::spawn(async move { axum::serve(listener, app).await });
 
     Ok(ServeHandle {
         handle,
         address: bound,
+        resumed,
     })
+}
+
+/// Map a core error into the I/O error [`serve`] speaks.
+fn io_error(err: zunesha_core::Error) -> std::io::Error {
+    std::io::Error::other(format!("crash resumption failed: {err}"))
 }
 
 /// Handle to a running server.
 pub struct ServeHandle {
     handle: tokio::task::JoinHandle<std::io::Result<()>>,
     address: std::net::SocketAddr,
+    resumed: Vec<String>,
 }
 
 impl ServeHandle {
@@ -267,6 +304,12 @@ impl ServeHandle {
     /// configured port was `0`).
     pub fn address(&self) -> std::net::SocketAddr {
         self.address
+    }
+
+    /// Ids of the crashed tasks this boot released and re-ran (empty unless
+    /// [`ServeConfig::resume`] was enabled and there was something to resume).
+    pub fn resumed(&self) -> &[String] {
+        &self.resumed
     }
 
     /// Wait for the server to shut down.

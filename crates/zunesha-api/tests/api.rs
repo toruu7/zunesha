@@ -39,6 +39,9 @@ fn app_for(paths: &ZuneshaPaths) -> Router {
         // placeholder expectations depend on whether the dashboard has been
         // built.
         dashboard_dir: Some(std::path::PathBuf::from("/nonexistent-zou-test-dashboard")),
+        // Tests exercise handlers directly; boot resumption is covered by
+        // its own serve-level test.
+        resume: false,
     };
     build_app(config).0
 }
@@ -122,6 +125,25 @@ async fn plan_creates_tasks_and_lists_them() {
     let (status, body) = json_req(&app, Method::GET, "/api/tasks", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["tasks"].as_array().unwrap().len(), 3);
+    // The chain's two edges ride along (task 2 ← task 1, task 3 ← task 2),
+    // which is what the dashboard's DAG view renders.
+    let deps = body["dependencies"].as_array().unwrap();
+    let mut got: Vec<(&str, &str)> = deps
+        .iter()
+        .map(|e| {
+            (
+                e["task_id"].as_str().unwrap(),
+                e["depends_on"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    got.sort_unstable();
+    let mut want = vec![
+        (ids[1].as_str().unwrap(), ids[0].as_str().unwrap()),
+        (ids[2].as_str().unwrap(), ids[1].as_str().unwrap()),
+    ];
+    want.sort_unstable();
+    assert_eq!(got, want, "each non-head task depends on its predecessor");
     // Head is TODO, the other two are BACKLOG.
     let todo = body["counts"]
         .as_array()
@@ -486,6 +508,7 @@ async fn websocket_delivers_snapshot_then_live_updates() {
         max_concurrency: 1,
         agent: zunesha_core::AgentCommand::shell("true"),
         dashboard_dir: Some(std::path::PathBuf::from("/nonexistent-zou-test-dashboard")),
+        resume: false,
     };
     let handle = zunesha_api::serve(config).await.unwrap();
     let addr = handle.address();
@@ -569,6 +592,7 @@ async fn dashboard_dir_is_served_and_wins_over_discovery() {
         max_concurrency: 1,
         agent: zunesha_core::AgentCommand::shell("true"),
         dashboard_dir: Some(dash.path().to_path_buf()),
+        resume: false,
     };
     let (app, _state) = build_app(config);
 
@@ -617,6 +641,7 @@ async fn missing_dashboard_falls_back_to_placeholder() {
         max_concurrency: 1,
         agent: zunesha_core::AgentCommand::shell("true"),
         dashboard_dir: Some(empty.path().to_path_buf()),
+        resume: false,
     };
     let (app, _state) = build_app(config);
     let body = body_of(app, Method::GET, "/").await;
@@ -782,6 +807,7 @@ async fn websocket_resyncs_a_lagged_client_with_a_snapshot() {
         max_concurrency: 1,
         agent: zunesha_core::AgentCommand::shell("true"),
         dashboard_dir: Some(std::path::PathBuf::from("/nonexistent-zou-test-dashboard")),
+        resume: false,
     };
     let (app, state) = build_app(config);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -831,4 +857,90 @@ async fn websocket_resyncs_a_lagged_client_with_a_snapshot() {
     }
 
     drop(write);
+}
+
+#[tokio::test]
+async fn daemon_boot_resumes_the_tasks_a_crash_left_claimed() {
+    // Phase 11: restarting the daemon picks an interrupted run back up —
+    // releasing the dead process's claims and re-running them — without
+    // starting planned-but-never-run work.
+    let (tmp, paths) = scratch();
+    // The re-run agent's workspace is a worktree of a real repository.
+    let st = std::process::Command::new("git")
+        .arg("init")
+        .arg("--quiet")
+        .arg(tmp.path())
+        .status()
+        .unwrap();
+    assert!(st.success());
+    std::fs::write(tmp.path().join("app.rs"), "fn main() {}\n").unwrap();
+
+    let db = Database::open(&paths.state_db()).unwrap();
+    db.insert_task(&zunesha_core::Task::new("crashed", "crashed", "desc"))
+        .unwrap();
+    db.set_status("crashed", TaskStatus::Todo).unwrap();
+    db.force_set_status("crashed", TaskStatus::InProgress)
+        .unwrap();
+    db.insert_task(&zunesha_core::Task::new("planned", "planned", "desc"))
+        .unwrap();
+    db.set_status("planned", TaskStatus::Todo).unwrap();
+    drop(db);
+
+    let config = ServeConfig {
+        paths: paths.clone(),
+        host: "127.0.0.1".into(),
+        port: 0,
+        max_concurrency: 1,
+        agent: zunesha_core::AgentCommand::shell("true"),
+        dashboard_dir: Some(std::path::PathBuf::from("/nonexistent-zou-test-dashboard")),
+        resume: true,
+    };
+    let handle = zunesha_api::serve(config).await.unwrap();
+    assert_eq!(handle.resumed(), vec!["crashed".to_string()]);
+
+    // The resumed agent completes the pipeline without any further nudge.
+    let db = Database::open(&paths.state_db()).unwrap();
+    let status_of = |id: &str| db.get_task(id).unwrap().unwrap().status;
+    for _ in 0..200 {
+        if status_of("crashed") == TaskStatus::Review {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert_eq!(status_of("crashed"), TaskStatus::Review);
+    // Planned-but-never-run work stays parked: boot must not start it.
+    assert_eq!(status_of("planned"), TaskStatus::Todo);
+}
+
+#[tokio::test]
+async fn daemon_boot_can_be_told_not_to_resume() {
+    // `zou start --no-resume`: claims owned by a possible concurrent `zou
+    // run` are left alone; a manual `zou recover` still works.
+    let (_tmp, paths) = scratch();
+    let db = Database::open(&paths.state_db()).unwrap();
+    db.insert_task(&zunesha_core::Task::new("claimed", "claimed", "desc"))
+        .unwrap();
+    db.set_status("claimed", TaskStatus::Todo).unwrap();
+    db.force_set_status("claimed", TaskStatus::InProgress)
+        .unwrap();
+    drop(db);
+
+    let config = ServeConfig {
+        paths: paths.clone(),
+        host: "127.0.0.1".into(),
+        port: 0,
+        max_concurrency: 1,
+        agent: zunesha_core::AgentCommand::shell("true"),
+        dashboard_dir: Some(std::path::PathBuf::from("/nonexistent-zou-test-dashboard")),
+        resume: false,
+    };
+    let handle = zunesha_api::serve(config).await.unwrap();
+    assert!(handle.resumed().is_empty());
+
+    let db = Database::open(&paths.state_db()).unwrap();
+    assert_eq!(
+        db.get_task("claimed").unwrap().unwrap().status,
+        TaskStatus::InProgress,
+        "--no-resume must leave the claim untouched"
+    );
 }

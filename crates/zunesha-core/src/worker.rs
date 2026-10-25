@@ -383,6 +383,36 @@ impl WorkerPool {
         Ok(started)
     }
 
+    /// Release the tasks a dead worker left claimed and re-run them.
+    ///
+    /// [`crate::dag::recover_stuck`] releases every `IN_PROGRESS`,
+    /// `EVALUATING`, and `RESOLVING_CONFLICTS` task back to `TODO`; this
+    /// re-spawns *exactly those* tasks — never other `TODO` work nobody has
+    /// started yet — so a restarted daemon picks an interrupted run up where
+    /// it stopped. The workspace is kept, so a released agent continues from
+    /// the partial work instead of starting over.
+    ///
+    /// Returns the ids of the tasks that were released and re-started, in
+    /// creation order.
+    ///
+    /// Only the human knows whether a claim belongs to a worker that is
+    /// actually dead (see [`crate::dag::recover_stuck`]); at daemon boot the
+    /// previous process is gone by construction, which is what makes this
+    /// resumption safe there.
+    pub async fn resume_stuck(&self) -> Result<Vec<String>> {
+        let released = {
+            let db = self.open_db()?;
+            crate::dag::recover_stuck(&db, None)?
+        };
+
+        let mut resumed = Vec::with_capacity(released.len());
+        for id in released {
+            self.spawn_task(id.clone()).await?;
+            resumed.push(id);
+        }
+        Ok(resumed)
+    }
+
     /// Claim one task and hand it to a worker, respecting the concurrency cap.
     ///
     /// The returned handle resolves when that specific agent exits.
@@ -1345,6 +1375,101 @@ mod tests {
         let started = pool.run_ready().await.unwrap();
         assert_eq!(started.len(), 4);
         assert!(started.iter().all(|id| id.starts_with("t")));
+    }
+
+    /// Poll until `id` reaches `want` (agents run detached after
+    /// `resume_stuck`), or panic after ~5s.
+    async fn await_status(db: &Database, id: &str, want: TaskStatus) {
+        for _ in 0..200 {
+            if status_of(db, id) == want {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!(
+            "task {id} never reached {want:?}, stuck at {:?}",
+            status_of(db, id)
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_stuck_re_runs_exactly_the_crashed_claims() {
+        // A daemon killed mid-run leaves claims behind (Phase 11): a fresh
+        // pool must release and re-run *those* tasks — and must not start
+        // planned-but-never-run TODO work.
+        let (_repo, paths) = scratch_install();
+        let db = Database::open(&paths.state_db()).unwrap();
+
+        for (id, status) in [
+            ("midval", TaskStatus::Evaluating),
+            ("crashed", TaskStatus::InProgress),
+        ] {
+            db.insert_task(&Task::new(id, id, "desc")).unwrap();
+            db.set_status(id, TaskStatus::Todo).unwrap();
+            db.force_set_status(id, status).unwrap();
+        }
+        // Never started by anyone: stays TODO through a resume.
+        ready_tasks(&db, 1);
+
+        let pool = WorkerPool::new(paths.clone(), 2, AgentCommand::shell("true"));
+        let resumed = pool.resume_stuck().await.unwrap();
+        assert_eq!(resumed, vec!["crashed".to_string(), "midval".to_string()]);
+
+        // The re-run agents complete the pipeline without any further nudge.
+        await_status(&db, "crashed", TaskStatus::Review).await;
+        await_status(&db, "midval", TaskStatus::Review).await;
+        assert_eq!(status_of(&db, "t0"), TaskStatus::Todo);
+    }
+
+    #[tokio::test]
+    async fn resume_stuck_continues_a_crashed_conflict_resolution() {
+        // A resolution interrupted by a crash is re-queued like `zou recover`
+        // does: a normal attempt in the *kept* workspace, so the markers and
+        // the already-rebased base survive the restart.
+        let (_repo, paths) = scratch_install();
+        let db = Database::open(&paths.state_db()).unwrap();
+
+        db.insert_task(&Task::new("conflicted", "conflicted", "desc"))
+            .unwrap();
+        db.set_status("conflicted", TaskStatus::Todo).unwrap();
+        let ws = WorkspaceManager::new(paths.clone())
+            .create(&db, "conflicted")
+            .unwrap();
+        std::fs::write(
+            Path::new(&ws.path).join("app.rs"),
+            "<<<<<<< agent\nfn main() {}\n",
+        )
+        .unwrap();
+        db.force_set_status("conflicted", TaskStatus::ResolvingConflicts)
+            .unwrap();
+
+        let pool = WorkerPool::new(
+            paths.clone(),
+            1,
+            AgentCommand::shell("printf 'resolved\n' > app.rs"),
+        );
+        let resumed = pool.resume_stuck().await.unwrap();
+        assert_eq!(resumed, vec!["conflicted".to_string()]);
+
+        await_status(&db, "conflicted", TaskStatus::Review).await;
+        // The agent ran inside the same workspace (not a fresh clone).
+        let content = std::fs::read_to_string(Path::new(&ws.path).join("app.rs")).unwrap();
+        assert_eq!(content, "resolved\n");
+    }
+
+    #[tokio::test]
+    async fn resume_stuck_with_nothing_crashed_is_a_no_op() {
+        // Booting a daemon over a healthy plan must not touch it — in
+        // particular it must not start TODO work nobody asked to run.
+        let (_repo, paths) = scratch_install();
+        let db = Database::open(&paths.state_db()).unwrap();
+        ready_tasks(&db, 2);
+
+        let pool = WorkerPool::new(paths.clone(), 2, AgentCommand::shell("true"));
+        let resumed = pool.resume_stuck().await.unwrap();
+        assert!(resumed.is_empty());
+        assert_eq!(status_of(&db, "t0"), TaskStatus::Todo);
+        assert_eq!(status_of(&db, "t1"), TaskStatus::Todo);
     }
 
     #[tokio::test]

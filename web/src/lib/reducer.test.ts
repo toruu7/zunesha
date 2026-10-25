@@ -3,11 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   applyEvent,
   countsFor,
+  EMPTY_STATE,
   mergeLogLines,
   splitLogs,
   type LogLine,
 } from "./reducer";
-import type { ApiEvent, Task, TaskStatus } from "./types";
+import type { ApiEvent, DependencyEdge, Task, TaskStatus } from "./types";
 
 // --- fixtures -------------------------------------------------------------
 
@@ -27,6 +28,14 @@ function task(overrides: Partial<Task> & { id: string }): Task {
 
 function line(seq: number, text: string, stream: "stdout" | "stderr" = "stdout"): LogLine {
   return { seq, stream, line: text };
+}
+
+/**
+ * A snapshot event, defaulting to no dependency edges (the DAG layout keeps
+ * its own tests in `dag.test.ts`).
+ */
+function snapshot(tasks: Task[], dependencies: DependencyEdge[] = []): ApiEvent {
+  return { type: "snapshot", tasks, dependencies, counts: [] };
 }
 
 // --- splitLogs ------------------------------------------------------------
@@ -105,8 +114,7 @@ describe("countsFor", () => {
 describe("applyEvent", () => {
   it("snapshot seeds logs from persisted worker_logs", () => {
     const t = task({ id: "t1", worker_logs: "x\ny\n" });
-    const ev: ApiEvent = { type: "snapshot", tasks: [t], counts: [] };
-    const next = applyEvent({ tasks: [], logs: {} }, ev);
+    const next = applyEvent(EMPTY_STATE, snapshot([t]));
     expect(next.logs.t1.map((l) => l.line)).toEqual(["x", "y"]);
   });
 
@@ -114,8 +122,9 @@ describe("applyEvent", () => {
     const state = {
       tasks: [task({ id: "t1" }), task({ id: "t2" })],
       logs: { t1: [line(0, "a")], t2: [line(0, "b")] },
+      deps: [],
     };
-    const ev: ApiEvent = { type: "snapshot", tasks: [task({ id: "t1" })], counts: [] };
+    const ev: ApiEvent = snapshot([task({ id: "t1" })]);
     const next = applyEvent(state, ev);
     expect(next.logs.t1).toBeDefined();
     expect(next.logs.t2).toBeUndefined();
@@ -123,8 +132,8 @@ describe("applyEvent", () => {
 
   it("log events append and are deduped by seq", () => {
     let state = applyEvent(
-      { tasks: [], logs: {} },
-      { type: "snapshot", tasks: [task({ id: "t1", status: "IN_PROGRESS" })], counts: [] },
+      EMPTY_STATE,
+      snapshot([task({ id: "t1", status: "IN_PROGRESS" })]),
     );
     const log = (seq: number, text: string): ApiEvent => ({
       type: "log",
@@ -143,12 +152,8 @@ describe("applyEvent", () => {
   it("entering IN_PROGRESS resets logs so two runs never mix", () => {
     // Simulate run 1 finishing (REVIEW) with its output…
     let state = applyEvent(
-      { tasks: [], logs: {} },
-      {
-        type: "snapshot",
-        tasks: [task({ id: "t1", status: "REVIEW", worker_logs: "run1-line\n" })],
-        counts: [],
-      },
+      EMPTY_STATE,
+      snapshot([task({ id: "t1", status: "REVIEW", worker_logs: "run1-line\n" })]),
     );
     expect(state.logs.t1.map((l) => l.line)).toEqual(["run1-line"]);
 
@@ -172,12 +177,8 @@ describe("applyEvent", () => {
 
   it("does not reset logs when a task_updated merely refreshes an IN_PROGRESS task", () => {
     let state = applyEvent(
-      { tasks: [], logs: {} },
-      {
-        type: "snapshot",
-        tasks: [task({ id: "t1", status: "IN_PROGRESS", worker_logs: "" })],
-        counts: [],
-      },
+      EMPTY_STATE,
+      snapshot([task({ id: "t1", status: "IN_PROGRESS", worker_logs: "" })]),
     );
     state = applyEvent(state, {
       type: "log",
@@ -196,8 +197,8 @@ describe("applyEvent", () => {
 
   it("merges a task_updated's persisted logs without dropping streamed ones", () => {
     let state = applyEvent(
-      { tasks: [], logs: {} },
-      { type: "snapshot", tasks: [task({ id: "t1", status: "IN_PROGRESS" })], counts: [] },
+      EMPTY_STATE,
+      snapshot([task({ id: "t1", status: "IN_PROGRESS" })]),
     );
     // Stream line 2 but "miss" line 1 (dropped event).
     state = applyEvent(state, {
@@ -220,20 +221,15 @@ describe("applyEvent", () => {
     // event to ride on, so the snapshot carrying the reset must not merge the
     // old run into the fresh one (they'd collide at seq 0).
     let state = applyEvent(
-      { tasks: [], logs: {} },
-      {
-        type: "snapshot",
-        tasks: [task({ id: "t1", status: "REVIEW", worker_logs: "old-run-line\n" })],
-        counts: [],
-      },
+      EMPTY_STATE,
+      snapshot([task({ id: "t1", status: "REVIEW", worker_logs: "old-run-line\n" })]),
     );
     expect(state.logs.t1).toHaveLength(1);
 
-    state = applyEvent(state, {
-      type: "snapshot",
-      tasks: [task({ id: "t1", status: "RESOLVING_CONFLICTS", worker_logs: "" })],
-      counts: [],
-    });
+    state = applyEvent(
+      state,
+      snapshot([task({ id: "t1", status: "RESOLVING_CONFLICTS", worker_logs: "" })]),
+    );
     expect(state.logs.t1).toEqual([]);
 
     // The fresh run's lines stream in from seq 0.
@@ -245,5 +241,35 @@ describe("applyEvent", () => {
       seq: 0,
     });
     expect(state.logs.t1.map((l) => l.line)).toEqual(["resolving-line"]);
+  });
+
+  it("snapshots carry the dependency edges; later events preserve them", () => {
+    // The DAG view renders from `state.deps`. Edges are immutable after
+    // planning, so only a snapshot may change them.
+    const deps: DependencyEdge[] = [
+      { task_id: "t2", depends_on: "t1" },
+      { task_id: "t3", depends_on: "t2" },
+    ];
+    let state = applyEvent(
+      EMPTY_STATE,
+      snapshot([task({ id: "t1" }), task({ id: "t2" }), task({ id: "t3" })], deps),
+    );
+    expect(state.deps).toEqual(deps);
+
+    state = applyEvent(state, {
+      type: "task_updated",
+      task: task({ id: "t1", status: "DONE" }),
+    });
+    state = applyEvent(state, {
+      type: "log",
+      task_id: "t1",
+      stream: "stdout",
+      line: "x",
+      seq: 0,
+    });
+    expect(
+      state.deps,
+      "task_updated and log must not touch the DAG",
+    ).toEqual(deps);
   });
 });
