@@ -89,7 +89,7 @@ zou approve <TASK_ID>         # merge the reviewed diff → DONE, next task prom
 git diff                       # the approved changes are in your working tree
 
 # --- or drive it from the dashboard ---
-zou start                     # http://127.0.0.1:7420
+zou start                     # http://127.0.0.1:57804
 ```
 
 The daemon serves the Kanban board: type a prompt in the plan bar, hit **Run**,
@@ -187,7 +187,7 @@ switched off.
 | `NEXT_PUBLIC_API_BASE`| `next dev`/build | Daemon origin when the dashboard runs under Next's dev server. |
 
 Ports and caps are flags: `zou start --host --port --jobs`, `zou run --jobs`.
-The default API/dashboard port is `7420`, default concurrency cap is `3`.
+The default API/dashboard port is `57804`, default concurrency cap is `3`.
 
 ## Repository layout
 
@@ -497,7 +497,7 @@ the agent's prompt contains both the map heading and a tree entry, and
 
 ## Local API & WebSockets (Phase 5)
 
-`zou start` binds an Axum server on `127.0.0.1:7420` (override with
+`zou start` binds an Axum server on `127.0.0.1:57804` (override with
 `--host` / `--port`) that bridges the Rust state to the dashboard. It owns a
 `WorkerPool`, so the API can start agents in parallel (capped at `--jobs`).
 
@@ -746,7 +746,7 @@ connection pool.
 | 2     | DAG engine, state transitions, mock planner        | ✅ done |
 | 3     | Workspace + git manager (isolated clones, diffs)   | ✅ done |
 | 4     | Agent process orchestration (tokio worker pool)    | ✅ done |
-| 5     | Axum REST API + WebSockets on `localhost:7420`     | ✅ done |
+| 5     | Axum REST API + WebSockets on `localhost:57804`    | ✅ done |
 | 6     | Next.js dashboard (Kanban, live logs, review)      | ✅ done |
 | 7     | Integration: merge approved diffs back             | ✅ done |
 | 8     | Self-healing test loop (`EVALUATING`, retries)     | ✅ done |

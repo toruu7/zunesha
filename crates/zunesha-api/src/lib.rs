@@ -59,7 +59,7 @@ use zunesha_core::{AgentCommand, WorkerPool, ZuneshaPaths};
 use events::{spawn_event_bridge, ApiEvent};
 
 /// Default port the local API binds to.
-pub const DEFAULT_PORT: u16 = 7420;
+pub const DEFAULT_PORT: u16 = 57804;
 
 /// Capacity of the event broadcast channel.
 ///

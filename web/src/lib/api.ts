@@ -3,7 +3,7 @@
 // Base-URL rules:
 //   * Served by the daemon itself (`web/out` via Axum) → same origin, so
 //     relative `/api/...` and `ws(s)://<host>/ws` just work.
-//   * Under `next dev` (port 3000/3001) the daemon is on `127.0.0.1:7420`;
+//   * Under `next dev` (port 3000/3001) the daemon is on `127.0.0.1:57804`;
 //     the daemon's CORS is `very_permissive` so cross-origin is fine.
 //   * `NEXT_PUBLIC_API_BASE` overrides both (tests, remote daemon).
 
@@ -24,7 +24,7 @@ export function apiBase(): string {
   if (typeof window === "undefined") return "";
   const { port } = window.location;
   if (port === "3000" || port === "3001") {
-    return `${window.location.protocol}//${window.location.hostname}:7420`;
+    return `${window.location.protocol}//${window.location.hostname}:57804`;
   }
   return "";
 }
@@ -33,7 +33,7 @@ export function apiBase(): string {
 export function wsUrl(): string {
   const base = apiBase();
   if (base) return base.replace(/^http/, "ws") + "/ws";
-  if (typeof window === "undefined") return "ws://127.0.0.1:7420/ws";
+  if (typeof window === "undefined") return "ws://127.0.0.1:57804/ws";
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
   return `${scheme}://${window.location.host}/ws`;
 }
