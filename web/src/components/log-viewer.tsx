@@ -37,19 +37,19 @@ export default function LogViewer({ taskId }: { taskId: string }) {
   const empty = !lines || lines.length === 0;
 
   return (
-    <div className="flex flex-col rounded-md border border-zinc-800 bg-black/60 overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-800 bg-zinc-900/60">
-        <span className="text-[11px] font-mono uppercase tracking-wide text-zinc-500">
+    <div className="flex flex-col overflow-hidden border-[3px] border-ink bg-contrast">
+      <div className="flex items-center gap-2 border-b-[3px] border-ink bg-ground px-3 py-1.5">
+        <span className="text-[11px] font-black uppercase tracking-[0.1em]">
           output
         </span>
         {running && (
-          <span className="flex items-center gap-1 text-[11px] text-amber-400">
-            <span className="inline-block size-1.5 rounded-full bg-amber-400 animate-pulse" />
+          <span className="flex items-center gap-1 border-2 border-ink bg-emphasis px-1.5 py-0.5 text-[10px] font-black uppercase tracking-[0.06em]">
+            <span className="inline-block size-2 border border-ink bg-signal animate-pulse motion-reduce:animate-none" />
             running
           </span>
         )}
         {!empty && (
-          <span className="ml-auto text-[11px] font-mono text-zinc-600">
+          <span className="ml-auto font-mono text-[11px] font-bold text-ink/60">
             {lines.length} line{lines.length === 1 ? "" : "s"}
           </span>
         )}
@@ -59,7 +59,7 @@ export default function LogViewer({ taskId }: { taskId: string }) {
         className="p-2.5 font-mono text-[12px] leading-relaxed overflow-auto max-h-64 min-h-[4rem]"
       >
         {empty ? (
-          <p className="text-zinc-600 italic">
+          <p className="font-medium italic text-ink/60">
             {running ? "waiting for output…" : "no output captured"}
           </p>
         ) : (
@@ -72,7 +72,9 @@ export default function LogViewer({ taskId }: { taskId: string }) {
               ) : (
                 <span
                   className={
-                    l.stream === "stderr" ? "text-red-400" : "text-zinc-300"
+                    l.stream === "stderr"
+                      ? "font-bold text-signal-ink"
+                      : "text-ink/85"
                   }
                 >
                   {l.line}

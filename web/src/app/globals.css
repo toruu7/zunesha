@@ -1,26 +1,155 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   Neo Brutalism press sheet.
+
+   Authoritative design tokens live here once; Tailwind v4 turns the @theme
+   entries into utilities (`bg-ground`, `text-ink`, `border-ink`,
+   `shadow-brutal`, …), so components stay plain Tailwind like the rest of the
+   app. Square corners and flat, hard offset shadows only — no blur, no
+   gradients, no glass.
+   ------------------------------------------------------------------------ */
+
+@theme {
+  --color-ground: #fff4ec;
+  --color-ink: #000000;
+  --color-emphasis: #ffd400;
+  --color-signal: #e8412f;
+  --color-field: #ffc9ba;
+  --color-contrast: #ffffff;
+  /* Deep signal for small text and alerts (7.5:1 against white). */
+  --color-signal-ink: #a61b0e;
+
+  --shadow-brutal-sm: 3px 3px 0 0 #000000;
+  --shadow-brutal: 6px 6px 0 0 #000000;
+  --shadow-brutal-lg: 9px 9px 0 0 #000000;
+
+  --font-sans: var(--font-host-grotesk), "NeoBrutalismHost", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+/* Token table verbatim, for anything that reads the design system directly. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --dp-color-ground: #fff4ec;
+  --dp-color-ink: #000000;
+  --dp-color-emphasis: #ffd400;
+  --dp-color-signal: #e8412f;
+  --dp-color-field: #ffc9ba;
+  --dp-color-contrast: #ffffff;
+  --dp-typography-face: "NeoBrutalismHost", sans-serif;
+  --dp-typography-body: 17px;
+  --dp-typography-reading: 16px;
+  --dp-typography-small: 14px;
+  --dp-typography-metadata: 13px;
+  --dp-typography-label: 12px;
+  --dp-typography-reading-weight: 700;
+  --dp-typography-emphasis-weight: 800;
+  --dp-typography-display-weight: 900;
+  --dp-typography-display-tracking: -0.065em;
+  --dp-spacing-gap: 24px;
+  --dp-spacing-gap-compact: 18px;
+  --dp-radius-control: 0;
+  --dp-border-panel: 4px;
+  --dp-border-divider: 3px;
+  --dp-border-annotation: 2px;
+  --dp-motion-interaction: 0s;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+/* Base rules live in Tailwind's base layer so utilities can override them. */
+@layer base {
+  html {
+    color-scheme: light;
+    background: var(--color-ground);
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  body {
+    background: var(--color-ground);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+  }
+
+  ::selection {
+    background: var(--color-emphasis);
+    color: var(--color-ink);
+  }
+
+  /* One visible focus treatment for every control. The ink ring reads on every
+     surface; a few large controls widen it via utilities. */
+  :focus-visible {
+    outline: 3px solid var(--color-ink);
+    outline-offset: 2px;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* --- React Flow canvas: square handles, inked controls ------------------- */
+
+.react-flow {
+  --xy-background-color: var(--color-ground);
+}
+
+/* The `.react-flow` prefix outranks @xyflow's own stylesheet, which the DAG
+   view imports after this file. */
+.react-flow .react-flow__handle {
+  width: 10px;
+  height: 10px;
+  min-width: 10px;
+  min-height: 10px;
+  border: 2px solid var(--color-ground);
+  border-radius: 0;
+  background: var(--color-ink);
+}
+
+.react-flow .react-flow__edge-path {
+  stroke-width: 3px;
+}
+
+.react-flow .react-flow__controls {
+  overflow: hidden;
+  border: 3px solid var(--color-ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 0 var(--color-ink);
+}
+
+.react-flow .react-flow__controls-button {
+  width: 28px;
+  height: 28px;
+  border-bottom: 2px solid var(--color-ink);
+  border-radius: 0;
+  background: var(--color-contrast);
+  color: var(--color-ink);
+}
+
+.react-flow .react-flow__controls-button:last-child {
+  border-bottom: 0;
+}
+
+.react-flow .react-flow__controls-button:hover {
+  background: var(--color-emphasis);
+}
+
+.react-flow .react-flow__controls-button svg {
+  max-width: 12px;
+  max-height: 12px;
+  fill: var(--color-ink);
+}
+
+.react-flow .react-flow__attribution {
+  border: 2px solid var(--color-ink);
+  background: var(--color-ground);
+  color: var(--color-ink);
+}
+
+.react-flow .react-flow__attribution a {
+  color: var(--color-ink);
 }

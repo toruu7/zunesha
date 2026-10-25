@@ -28,19 +28,30 @@ export default function PlanBar() {
     setPrompt("");
   };
 
+  const action =
+    "h-11 shrink-0 justify-center border-4 border-ink px-5 text-sm font-black uppercase tracking-[0.06em] shadow-brutal-sm hover:-translate-y-0.5 hover:shadow-brutal active:translate-y-0 active:shadow-brutal-sm disabled:translate-y-0 disabled:bg-ground disabled:border-ink/40 disabled:text-ink/40 disabled:shadow-none";
+
   return (
-    <form onSubmit={submit} className="flex items-center gap-2 w-full">
+    <form
+      onSubmit={submit}
+      className="flex w-full flex-col gap-2 sm:flex-row sm:items-center"
+    >
+      <label htmlFor="plan-prompt" className="sr-only">
+        Feature request
+      </label>
       <input
+        id="plan-prompt"
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
         placeholder="Describe a feature to decompose into a task DAG…"
         disabled={busy}
-        className="flex-1 min-w-0 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-emerald-600/60 focus:border-emerald-600 disabled:opacity-50"
+        className="h-11 min-w-0 flex-1 border-4 border-ink bg-contrast px-3 text-base font-bold text-ink shadow-brutal-sm placeholder:text-ink/40 disabled:opacity-50"
       />
       <button
         type="submit"
         disabled={busy || !prompt.trim()}
-        className="shrink-0 rounded-md bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:hover:bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition-colors"
+        aria-label={busy ? "Planning…" : "Plan"}
+        className={`${action} bg-emphasis text-ink`}
       >
         {busy ? "…" : "Plan"}
       </button>
@@ -53,7 +64,7 @@ export default function PlanBar() {
             ? "No TODO tasks are ready to run"
             : `Run ${todoCount} ready task${todoCount === 1 ? "" : "s"}`
         }
-        className="shrink-0 rounded-md border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors"
+        className={`${action} bg-signal text-ink`}
       >
         Run{todoCount > 0 ? ` (${todoCount})` : ""}
       </button>

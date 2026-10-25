@@ -37,21 +37,21 @@ function TaskNode({ id }: NodeProps) {
   return (
     <button
       onClick={() => select(task.id)}
-      className="group w-56 text-left rounded-md border border-zinc-800 bg-zinc-900/90 hover:border-zinc-600 hover:bg-zinc-800/80 transition-colors overflow-hidden cursor-pointer"
+      className="group w-56 text-left border-4 border-ink bg-contrast shadow-brutal-sm hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-brutal active:translate-x-0 active:translate-y-0 active:shadow-brutal-sm focus-visible:outline-4 cursor-pointer"
     >
       <Handle type="target" position={Position.Left} />
       <div className="flex">
-        <div className={`w-1 shrink-0 ${ACCENT[task.status]}`} />
+        <div className={`w-2 shrink-0 border-r-[3px] border-ink ${ACCENT[task.status]}`} />
         <div className="p-2 min-w-0">
           <div className="flex items-center gap-1.5">
-            <code className="text-[10px] text-zinc-500 font-mono shrink-0">
+            <code className="shrink-0 border border-ink bg-ground px-1 font-mono text-[10px] font-bold uppercase">
               {task.id}
             </code>
             {isActive(task.status) && (
-              <span className="inline-block size-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+              <span className="inline-block size-2 shrink-0 border border-ink bg-signal animate-pulse motion-reduce:animate-none" />
             )}
           </div>
-          <p className="text-xs text-zinc-100 leading-snug mt-0.5 line-clamp-2 break-words">
+          <p className="text-xs font-bold leading-snug mt-1 line-clamp-2 break-words">
             {task.title}
           </p>
         </div>
@@ -103,15 +103,21 @@ export default function DagView() {
         id: e.id,
         source: e.source,
         target: e.target,
-        markerEnd: { type: MarkerType.ArrowClosed },
+        style: { stroke: "#000000", strokeWidth: 3 },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: "#000000",
+          width: 18,
+          height: 18,
+        },
       })),
     );
   }, [graph, setNodes, setEdges]);
 
   if (tasks.length === 0) {
     return (
-      <div className="flex-1 min-h-0 flex items-center justify-center rounded-lg border border-dashed border-zinc-800">
-        <p className="text-sm text-zinc-600">
+      <div className="flex-1 min-h-0 flex items-center justify-center border-4 border-ink bg-contrast shadow-brutal-sm">
+        <p className="px-6 text-center text-sm font-bold text-ink/60">
           no tasks yet — plan a feature to draw its graph
         </p>
       </div>
@@ -119,7 +125,7 @@ export default function DagView() {
   }
 
   return (
-    <div className="flex-1 min-h-0 rounded-lg border border-zinc-800 overflow-hidden">
+    <div className="flex-1 min-h-0 border-4 border-ink bg-ground shadow-brutal-sm overflow-hidden">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -129,13 +135,13 @@ export default function DagView() {
         onNodeClick={(_, node) => select(node.id)}
         fitView
         minZoom={0.2}
-        colorMode="dark"
+        colorMode="light"
         // The DAG is the engine's, not the user's to rewire: pan, zoom, and
         // drag are fine, but nothing here can create or delete edges.
         nodesConnectable={false}
         deleteKeyCode={null}
       >
-        <Background gap={18} color="#27272a" />
+        <Background gap={20} color="#00000022" />
         <Controls showInteractive={false} />
       </ReactFlow>
     </div>

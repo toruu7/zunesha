@@ -12,20 +12,20 @@ function TaskCard({ id }: { id: string }) {
   return (
     <button
       onClick={() => select(task.id)}
-      className="group w-full text-left rounded-md border border-zinc-800 bg-zinc-900/60 hover:border-zinc-600 hover:bg-zinc-800/70 transition-colors overflow-hidden"
+      className="group w-full text-left border-[3px] border-ink bg-contrast shadow-brutal-sm hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-brutal active:translate-x-0 active:translate-y-0 active:shadow-brutal-sm focus-visible:outline-4"
     >
       <div className="flex">
-        <div className={`w-1 shrink-0 ${ACCENT[task.status]}`} />
+        <div className={`w-2 shrink-0 border-r-[3px] border-ink ${ACCENT[task.status]}`} />
         <div className="p-2.5 min-w-0">
           <div className="flex items-center gap-1.5">
-            <code className="text-[10px] text-zinc-500 font-mono shrink-0">
+            <code className="shrink-0 border border-ink bg-ground px-1 font-mono text-[10px] font-bold uppercase">
               {task.id}
             </code>
             {isActive(task.status) && (
-              <span className="inline-block size-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+              <span className="inline-block size-2 shrink-0 border border-ink bg-signal animate-pulse motion-reduce:animate-none" />
             )}
           </div>
-          <p className="text-sm text-zinc-100 leading-snug mt-0.5 line-clamp-2 break-words">
+          <p className="text-[13px] font-bold leading-snug mt-1 line-clamp-2 break-words">
             {task.title}
           </p>
         </div>
@@ -38,27 +38,31 @@ export default function Board() {
   const tasks = useZou((s) => s.tasks);
   const counts = countsFrom(tasks);
 
+  // Below xl the sheet stacks and the page scrolls; at xl+ the columns fill
+  // the viewport and scroll their own card lists.
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8 gap-3 flex-1 min-h-0">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8 gap-3 xl:flex-1 xl:min-h-0">
       {STATUSES.map((status) => {
         const column = tasks.filter((t) => t.status === status);
         return (
           <section
             key={status}
-            className="flex flex-col rounded-lg border border-zinc-800 bg-zinc-900/30 min-h-[12rem]"
+            className="flex flex-col border-4 border-ink bg-contrast shadow-brutal-sm min-h-[12rem]"
           >
-            <header className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
-              <span className={`size-2 rounded-full ${ACCENT[status]}`} />
-              <h2 className="text-xs font-semibold tracking-wide text-zinc-300">
+            <header className="flex items-center gap-2 border-b-4 border-ink bg-ink px-2.5 py-2">
+              <span
+                className={`size-3 shrink-0 border-2 border-contrast ${ACCENT[status]}`}
+              />
+              <h2 className="text-[11px] font-black uppercase tracking-[0.08em] text-contrast">
                 {status.replaceAll("_", " ")}
               </h2>
-              <span className="ml-auto text-[11px] font-mono text-zinc-500">
+              <span className="ml-auto border-2 border-ink bg-emphasis px-1.5 py-0.5 text-[10px] font-black text-ink">
                 {counts[status]}
               </span>
             </header>
             <div className="flex flex-col gap-2 p-2 overflow-y-auto flex-1">
               {column.length === 0 ? (
-                <p className="text-[11px] text-zinc-600 px-1 py-2 italic">
+                <p className="px-1 py-2 text-[10px] font-black uppercase tracking-[0.12em] text-ink/60">
                   empty
                 </p>
               ) : (

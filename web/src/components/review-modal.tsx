@@ -6,35 +6,46 @@ import { useZou } from "@/lib/store";
 import type { Task } from "@/lib/types";
 import LogViewer from "./log-viewer";
 
-/** Color a unified diff line: additions green, deletions red, headers dim. */
+/** Colour a unified diff line within the press-sheet palette. */
 function diffLineClass(line: string): string {
-  if (line.startsWith("+++") || line.startsWith("---")) return "text-zinc-500";
+  if (line.startsWith("+++") || line.startsWith("---")) return "text-ink/60";
   if (line.startsWith("diff ") || line.startsWith("index "))
-    return "text-zinc-500 font-semibold";
-  if (line.startsWith("@@")) return "text-sky-400";
-  if (line.startsWith("+")) return "text-emerald-400";
-  if (line.startsWith("-")) return "text-red-400";
-  return "text-zinc-300";
+    return "text-ink/65 font-bold";
+  if (line.startsWith("@@")) return "bg-field font-bold text-ink";
+  if (line.startsWith("+")) return "bg-emphasis/60 text-ink";
+  if (line.startsWith("-")) return "bg-signal/15 text-signal-ink";
+  return "text-ink/85";
 }
 
 function DiffView({ diff }: { diff: string }) {
   if (!diff.trim()) {
     return (
-      <p className="text-sm text-zinc-600 italic p-3">
+      <p className="border-[3px] border-ink bg-contrast p-3 text-sm font-medium italic text-ink/60">
         No changes captured for this task.
       </p>
     );
   }
   return (
-    <pre className="p-3 font-mono text-[12px] leading-relaxed overflow-auto max-h-72 bg-black/60">
+    <pre className="border-[3px] border-ink bg-contrast p-3 font-mono text-[12px] leading-relaxed overflow-auto max-h-72">
       {diff.split("\n").map((line, i) => (
-        <div key={i} className={`whitespace-pre-wrap break-all ${diffLineClass(line)}`}>
+        <div
+          key={i}
+          className={`whitespace-pre-wrap break-all px-1 ${diffLineClass(line)}`}
+        >
           {line || " "}
         </div>
       ))}
     </pre>
   );
 }
+
+// Shared heavy control: square, inked, with a hard shadow that lifts on hover
+// and settles back when pressed. Feedback is immediate (no transition).
+const ACTION =
+  "border-4 border-ink px-4 py-2 text-sm font-black uppercase tracking-[0.06em] text-ink shadow-brutal-sm hover:-translate-y-0.5 hover:shadow-brutal active:translate-y-0 active:shadow-brutal-sm disabled:translate-y-0 disabled:bg-ground disabled:border-ink/40 disabled:text-ink/40 disabled:shadow-none";
+
+const LABEL =
+  "block border-b-[3px] border-ink pb-1 text-[11px] font-black uppercase tracking-[0.1em]";
 
 /**
  * The human-in-the-loop review surface.
@@ -78,60 +89,62 @@ export default function ReviewModal({ task }: { task: Task }) {
   return (
     // Backdrop
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-ink/75 p-2 sm:p-6"
       onClick={close}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label={`Review task ${task.id}`}
-        className="w-full max-w-3xl max-h-[85vh] flex flex-col rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl"
+        className="flex w-full max-w-3xl max-h-[calc(100dvh-1rem)] flex-col border-4 border-ink bg-ground shadow-[10px_10px_0_0_#000000] sm:max-h-[88vh]"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <header className="flex items-start gap-3 px-4 py-3 border-b border-zinc-800">
+        {/* Header: the task's own signal strip. */}
+        <header className="flex items-start gap-3 border-b-4 border-ink bg-signal px-3 py-3 sm:px-4">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <code className="text-xs text-zinc-500 font-mono">{task.id}</code>
-              <span className="text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">
+            <div className="flex flex-wrap items-center gap-2">
+              <code className="border-2 border-ink bg-ink px-1.5 py-0.5 font-mono text-[11px] font-bold text-emphasis">
+                {task.id}
+              </code>
+              <span className="border-2 border-ink bg-contrast px-1.5 py-0.5 text-[10px] font-black uppercase tracking-[0.06em]">
                 {task.status.replaceAll("_", " ")}
               </span>
               {task.retry_count > 0 && (
                 <span
                   title="Failed validations in the current review cycle (max 3)"
-                  className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-900"
+                  className="border-2 border-ink bg-contrast px-1.5 py-0.5 font-mono text-[10px] font-bold text-signal-ink"
                 >
                   retries {task.retry_count}/3
                 </span>
               )}
             </div>
-            <h2 className="text-base font-semibold text-zinc-100 mt-1 break-words">
+            <h2 className="mt-1.5 break-words text-lg font-black leading-tight tracking-[-0.02em] sm:text-xl">
               {task.title}
             </h2>
           </div>
           <button
             onClick={close}
             aria-label="Close"
-            className="shrink-0 rounded p-1 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
+            className="grid size-9 shrink-0 place-items-center border-2 border-ink bg-contrast shadow-brutal-sm hover:bg-emphasis focus-visible:outline-4"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path
                 d="M4 4l8 8M12 4l-8 8"
                 stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
+                strokeWidth="2.5"
+                strokeLinecap="square"
               />
             </svg>
           </button>
         </header>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-3 space-y-4 sm:p-4">
           {/* Phase 9: why this task left REVIEW without the human's diff
               landing — shown while the auto-merge agent runs. */}
           {task.status === "RESOLVING_CONFLICTS" && (
-            <section className="rounded-md border border-orange-800 bg-orange-950/50 px-3 py-2 text-xs leading-relaxed text-orange-200">
-              <strong className="font-semibold">Merge conflict detected.</strong>{" "}
+            <section className="border-4 border-ink bg-field px-3 py-2.5 text-[13px] font-medium leading-relaxed text-ink shadow-brutal-sm">
+              <strong className="font-black">Merge conflict detected.</strong>{" "}
               The repository changed while this task was running, so the
               approved diff no longer applied. Its workspace has been rebased
               onto the current code with conflict markers and an agent is
@@ -142,10 +155,8 @@ export default function ReviewModal({ task }: { task: Task }) {
 
           {task.description.trim() && (
             <section>
-              <h3 className="text-[11px] font-mono uppercase tracking-wide text-zinc-500 mb-1.5">
-                Description
-              </h3>
-              <p className="text-sm text-zinc-300 whitespace-pre-wrap leading-relaxed">
+              <h3 className={`${LABEL} mb-1.5`}>Description</h3>
+              <p className="text-[14px] font-medium leading-relaxed whitespace-pre-wrap">
                 {task.description}
               </p>
             </section>
@@ -153,15 +164,16 @@ export default function ReviewModal({ task }: { task: Task }) {
 
           {/* Diff / logs tabs */}
           <section>
-            <div className="flex gap-1 mb-1.5">
+            <div className="flex gap-1 mb-2">
               {(["diff", "logs"] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
-                  className={`px-2.5 py-1 text-[11px] font-mono uppercase tracking-wide rounded ${
+                  aria-pressed={tab === t}
+                  className={`border-2 border-ink px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.08em] ${
                     tab === t
-                      ? "bg-zinc-800 text-zinc-100"
-                      : "text-zinc-500 hover:text-zinc-300"
+                      ? "bg-ink text-emphasis"
+                      : "bg-contrast text-ink hover:bg-emphasis"
                   }`}
                 >
                   {t}
@@ -179,10 +191,7 @@ export default function ReviewModal({ task }: { task: Task }) {
               tasks — both feed the next attempt via the reject endpoint */}
           {(isReview || isFailed) && (
             <section className="space-y-2">
-              <label
-                htmlFor="feedback"
-                className="block text-[11px] font-mono uppercase tracking-wide text-zinc-500"
-              >
+              <label htmlFor="feedback" className={LABEL}>
                 {isFailed
                   ? "What should happen next? (optional — feeds the next attempt)"
                   : "Reviewer feedback (optional — feeds the next attempt)"}
@@ -197,7 +206,7 @@ export default function ReviewModal({ task }: { task: Task }) {
                     ? "Validation failed 3 times. Why, and what should the agent do differently?"
                     : "Why is this rejected? What should the agent do differently?"
                 }
-                className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-600/50 resize-y"
+                className="w-full border-[3px] border-ink bg-contrast px-3 py-2 text-sm font-medium text-ink shadow-brutal-sm placeholder:text-ink/40 resize-y"
               />
             </section>
           )}
@@ -207,15 +216,15 @@ export default function ReviewModal({ task }: { task: Task }) {
             is a full-screen overlay, so the banner alone would be hidden at
             exactly the moment it matters (a merge conflict on Approve). */}
         {error && (
-          <div className="px-4 pb-3">
+          <div className="px-3 pb-3 sm:px-4">
             <div
               role="alert"
-              className="rounded-md border border-red-800 bg-red-950/60 px-3 py-2 text-xs leading-relaxed text-red-200 break-words"
+              className="flex flex-wrap items-center gap-2 border-4 border-ink bg-signal-ink px-3 py-2 text-[12px] font-bold leading-relaxed text-contrast break-words"
             >
-              {error}
+              <span className="flex-1">{error}</span>
               <button
                 onClick={clearError}
-                className="ml-2 font-medium text-red-400 hover:text-red-200"
+                className="border-2 border-ink bg-ink px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.08em] text-emphasis hover:bg-contrast hover:text-ink focus-visible:outline-contrast"
               >
                 dismiss
               </button>
@@ -224,20 +233,20 @@ export default function ReviewModal({ task }: { task: Task }) {
         )}
 
         {/* Footer actions */}
-        <footer className="flex items-center gap-2 px-4 py-3 border-t border-zinc-800">
+        <footer className="flex flex-wrap items-center gap-2 border-t-4 border-ink px-3 py-3 sm:px-4">
           {isReview ? (
             <>
               <button
                 onClick={() => void approve(task.id)}
                 disabled={busy}
-                className="rounded-md bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-4 py-2 text-sm font-medium text-white transition-colors"
+                className={`${ACTION} bg-emphasis`}
               >
                 Approve
               </button>
               <button
                 onClick={() => void reject(task.id, feedback)}
                 disabled={busy}
-                className="rounded-md bg-red-800 hover:bg-red-700 disabled:opacity-40 px-4 py-2 text-sm font-medium text-white transition-colors"
+                className={`${ACTION} bg-signal`}
               >
                 Reject
               </button>
@@ -246,7 +255,7 @@ export default function ReviewModal({ task }: { task: Task }) {
             <button
               onClick={() => void runOne(task.id)}
               disabled={busy}
-              className="rounded-md bg-amber-700 hover:bg-amber-600 disabled:opacity-40 px-4 py-2 text-sm font-medium text-white transition-colors"
+              className={`${ACTION} bg-signal`}
             >
               Run agent
             </button>
@@ -255,7 +264,7 @@ export default function ReviewModal({ task }: { task: Task }) {
               onClick={() => void reject(task.id, feedback)}
               disabled={busy}
               title="Send the parked task back to the queue with a fresh retry budget (workspace kept)."
-              className="rounded-md bg-amber-700 hover:bg-amber-600 disabled:opacity-40 px-4 py-2 text-sm font-medium text-white transition-colors"
+              className={`${ACTION} bg-field`}
             >
               Send back to queue
             </button>
@@ -264,14 +273,14 @@ export default function ReviewModal({ task }: { task: Task }) {
               onClick={() => void recover(task.id)}
               disabled={busy}
               title="Worker died or was interrupted? Free its claim so the task can run again (workspace kept)."
-              className="rounded-md bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 px-4 py-2 text-sm font-medium text-zinc-100 transition-colors"
+              className={`${ACTION} bg-contrast`}
             >
               Release stuck task
             </button>
           ) : null}
           <button
             onClick={close}
-            className="ml-auto rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-800 transition-colors"
+            className={`${ACTION} ml-auto bg-contrast`}
           >
             Close
           </button>
