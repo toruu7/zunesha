@@ -30,9 +30,9 @@ tutorials, agent/planner configuration, troubleshooting, and this README as
 the complete reference. **Live at <https://zunesha-docs.vercel.app>**.
 
 ```sh
-cargo install mdbook --locked   # one-time
-mdbook serve docs               # http://localhost:3000
-mdbook build docs               # static site in docs/book/
+sh scripts/build-docs.sh        # fetch the pinned mdBook, build → docs/book/
+cargo install mdbook --locked   # or install it once…
+mdbook serve docs               # …and preview at http://localhost:3000
 ```
 
 Every push builds the book in CI, and `master` is deployed by **Vercel's Git
