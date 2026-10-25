@@ -1,7 +1,6 @@
 # Zunesha (zou) — Local-first AI Coding Orchestrator
 
 [![ci](https://github.com/toruu7/zunesha/actions/workflows/ci.yml/badge.svg)](https://github.com/toruu7/zunesha/actions/workflows/ci.yml)
-[![docs](https://github.com/toruu7/zunesha/actions/workflows/docs.yml/badge.svg)](https://toruu7.github.io/zunesha/)
 
 A local-first, parallelized AI coding orchestrator (in the spirit of *fold*).
 You give it a feature request; it plans a **DAG of tasks**, spins up **isolated
@@ -35,8 +34,12 @@ mdbook serve docs               # http://localhost:3000
 mdbook build docs               # static site in docs/book/
 ```
 
-Published at <https://toruu7.github.io/zunesha/> on every push to `master`
-(the Pages workflow lives in `.github/workflows/docs.yml`).
+Every push that touches `docs/` or this README builds the book and uploads it
+as a Pages artifact. Publishing is opt-in: enable Pages
+(**Settings → Pages → Source: GitHub Actions**) and set the repository
+variable `PUBLISH_DOCS=true`; the site then appears at
+`https://<owner>.github.io/<repo>/`. Pages is not available for private repos
+on free plans, but `mdbook serve docs` works everywhere.
 
 ## Usage
 
@@ -69,8 +72,10 @@ sh install.sh --tarball file:///tmp/rel/zou-linux-amd64.tar.gz --prefix ~/.local
 
 Releases are built by `.github/workflows/release.yml` on every `v*` tag
 (`zou-linux-amd64`, `zou-macos-arm64`, `zou-macos-amd64`; each tarball holds
-`zou` + `web/out`). A private fork must point `--repo` / `--release-base` at
-URLs it can read.
+`zou` + `web/out`). While this repository is **private**, the public URLs above
+are not readable — run the installer from a checkout instead
+(`sh install.sh --source --repo "$PWD"`), or point `--repo` / `--release-base`
+at a mirror you can authenticate to.
 
 | Flag | Default | Purpose |
 |------|---------|---------|

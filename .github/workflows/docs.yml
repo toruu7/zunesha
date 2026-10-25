@@ -1,10 +1,15 @@
 name: docs
 
-# Builds the mdBook in docs/ and publishes it to GitHub Pages.
+# Builds the mdBook in docs/ on every push/PR (the build job proves the site
+# is valid and uploads it as a downloadable Pages artifact).
 #
-# One-time setup: repository Settings → Pages → Build and deployment →
-# Source: "GitHub Actions". The site then lives at
-# https://<owner>.github.io/<repo>/.
+# Publishing to GitHub Pages is opt-in, because Pages is not available on
+# every plan/repo (private repos need a paid plan) and the default
+# GITHUB_TOKEN cannot enable it. To turn it on:
+#   1. Settings → Pages → Build and deployment → Source: "GitHub Actions"
+#   2. Settings → Secrets and variables → Actions → Variables →
+#      new variable PUBLISH_DOCS = true
+# The site then lives at https://<owner>.github.io/<repo>/.
 
 on:
   push:
@@ -13,15 +18,18 @@ on:
       - "docs/**"
       - "README.md"
       - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "README.md"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: docs-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -32,22 +40,26 @@ jobs:
       - uses: peaceiris/actions-mdbook@v2
         with:
           mdbook-version: "0.5.4"
-      - run: mdbook build docs
-      - uses: actions/configure-pages@v5
-        with:
-          # First run on a fresh repo: enable Pages (Actions source) instead of
-          # failing with "Get Pages site failed". No-op once enabled.
-          enablement: true
-      - uses: actions/upload-pages-artifact@v3
+      - name: Build the book
+        run: mdbook build docs
+      - name: Upload the Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
           path: docs/book
 
   deploy:
     needs: build
+    if: vars.PUBLISH_DOCS == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - id: deployment
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Deploy
+        id: deployment
         uses: actions/deploy-pages@v4

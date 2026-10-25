@@ -17,8 +17,14 @@ curl -fsSL https://raw.githubusercontent.com/toruu7/zunesha/master/install.sh | 
 # dashboard → ~/.local/web/out (found automatically by the daemon)
 ```
 
-Or from a checkout: `sh install.sh --source --repo "$PWD"` (forces a local
-source build). Both routes install the dashboard with the binary.
+While the repository is private, run the installer from a checkout instead
+(the raw URL above is not reachable without credentials):
+
+```sh
+sh install.sh --source --repo "$PWD"
+```
+
+Both routes install the dashboard with the binary.
 
 `cargo install --git https://github.com/toruu7/zunesha.git zunesha-cli` works
 too, but installs the binary only — see the
