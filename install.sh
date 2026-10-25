@@ -1,9 +1,9 @@
 #!/bin/sh
 # install.sh — install `zou`, the local-first AI coding orchestrator.
 #
-# The classic one-liner (from the repo that publishes releases):
+# The classic one-liner:
 #
-#   curl -fsSL <REPLACE_WITH_INSTALL_SCRIPT_URL> | sh
+#   curl -fsSL https://raw.githubusercontent.com/toruu7/zunesha/master/install.sh | sh
 #
 # Every URL is a flag, so a mirror, a fork, or a local checkout works the
 # same — pass flags after `sh -s --`:
@@ -24,10 +24,10 @@
 # the executable, so no environment variables are needed.
 set -eu
 
-# --- defaults (placeholders: override with flags) --------------------------
+# --- defaults (override with flags) -----------------------------------------
 PREFIX="${HOME}/.local"
-REPO="REPLACE_WITH_YOUR_REPO_URL"          # --repo
-RELEASE_BASE="REPLACE_WITH_RELEASES_BASE_URL"  # --release-base
+REPO="https://github.com/toruu7/zunesha"       # --repo
+RELEASE_BASE="https://github.com/toruu7/zunesha/releases/latest/download"  # --release-base
 TAG=""                                     # --version (optional path segment)
 TARBALL=""                                 # --tarball (full URL override)
 PROFILE="release"                          # --profile
@@ -53,6 +53,7 @@ Usage: install.sh [flags]
                       pinned:  .../releases/download  +  --version v1.2.3
   --version TAG       Optional release tag (inserted as a path segment).
   --tarball URL       Full URL of the prebuilt tarball (overrides the above).
+  --source            Skip the prebuilt and build from source (--repo).
   --profile NAME      cargo profile for source builds (default: release;
                       use dev for a much faster local build).
   --no-dashboard      Do not build/serve the web dashboard.
@@ -60,8 +61,9 @@ Usage: install.sh [flags]
   --help              This text.
 
 Examples:
-  curl -fsSL <URL> | sh -s -- --repo https://github.com/you/zunesha
-  sh install.sh --repo ../zunesha --profile dev --no-dashboard
+  curl -fsSL https://raw.githubusercontent.com/toruu7/zunesha/master/install.sh | sh
+  sh install.sh --source --repo https://github.com/you/zunesha
+  sh install.sh --repo ../zunesha --source --profile dev --no-dashboard
 EOF
 }
 
@@ -75,6 +77,7 @@ while [ $# -gt 0 ]; do
         --repo=*)          REPO=${1#*=}; shift ;;
         --release-base)    need_value "$1" "$#"; RELEASE_BASE=$2; shift 2 ;;
         --release-base=*)  RELEASE_BASE=${1#*=}; shift ;;
+        --source)          RELEASE_BASE=""; TARBALL=""; shift ;;
         --version)         need_value "$1" "$#"; TAG=$2; shift 2 ;;
         --version=*)       TAG=${1#*=}; shift ;;
         --tarball)         need_value "$1" "$#"; TARBALL=$2; shift 2 ;;
@@ -237,4 +240,4 @@ esac
 [ -d "$DASH_DIR" ] && note "dashboard: $DASH_DIR (auto-discovered by \`zou start\`)" \
                   || note "no dashboard installed (daemon-only; build it later from web/ or pass --release-base with a bundled tarball)"
 
-printf '\nNext steps:\n  cd your-project && zou init\n  zou plan "your feature request"\n  zou start          # dashboard on http://127.0.0.1:7420\n'
+printf '\nNext steps:\n  cd your-project && zou init\n  zou plan "your feature request"\n  zou start          # dashboard on http://127.0.0.1:57804\n'

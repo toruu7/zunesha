@@ -14,6 +14,7 @@ environment variables read **at launch** (so set them before `zou run` /
 | `ZOU_PLANNER_TIMEOUT_SECS` | Wall-clock limit for one plan | `120` |
 | `ZOU_EVAL_TIMEOUT_SECS` | Wall-clock limit for one validation run | `600` |
 | `ZOU_DASHBOARD_DIR` | Built dashboard directory | auto-discover `web/out` |
+| `ZOU_PORT` | Port for `zou start` (`--port` wins) | `57804` |
 | `NEXT_PUBLIC_API_BASE` | Daemon origin when the UI runs under `next dev` | `127.0.0.1:57804` |
 
 Commands are parsed with POSIX quoting (single/double quotes, backslash

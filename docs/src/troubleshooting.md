@@ -7,6 +7,7 @@ service). Pick another port:
 
 ```sh
 zou start --port 8080
+ZOU_PORT=8080 zou start      # same, via the environment
 ```
 
 The dashboard follows the daemon automatically — it is served from the same

@@ -1,0 +1,90 @@
+name: release
+
+# Builds `zou-<os>-<arch>.tar.gz` tarballs (binary + dashboard) that
+# install.sh downloads: the layout is `zou` at the tarball root and
+# `web/out/` next to it.
+#
+# Trigger: push a tag (git tag v0.1.0 && git push origin v0.1.0).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to attach the assets to
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: linux-amd64
+          # Apple Silicon runner; the x86_64 build cross-compiles on it.
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset: macos-amd64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the dashboard (static export)
+        working-directory: web
+        run: npm ci && npm run build
+
+      - name: Build the binary
+        run: cargo build --release --target ${{ matrix.target }} -p zunesha-cli
+
+      - name: Stage binary + dashboard
+        run: |
+          mkdir -p stage/web
+          cp "target/${{ matrix.target }}/release/zou" stage/zou
+          cp -R web/out stage/web/out
+          tar -czf "zou-${{ matrix.asset }}.tar.gz" -C stage .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zou-${{ matrix.asset }}
+          path: zou-${{ matrix.asset }}.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true
+          # workflow_dispatch: attach to the tag typed by the user.
+          tag_name: ${{ inputs.tag || github.ref_name }}

@@ -34,6 +34,10 @@ jobs:
           mdbook-version: "0.5.4"
       - run: mdbook build docs
       - uses: actions/configure-pages@v5
+        with:
+          # First run on a fresh repo: enable Pages (Actions source) instead of
+          # failing with "Get Pages site failed". No-op once enabled.
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/book

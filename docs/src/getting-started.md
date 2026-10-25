@@ -11,13 +11,18 @@
 
 ## Install
 
-From a checkout:
-
 ```sh
-sh install.sh --repo "$PWD"
+curl -fsSL https://raw.githubusercontent.com/toruu7/zunesha/master/install.sh | sh
 # binary → ~/.local/bin/zou
 # dashboard → ~/.local/web/out (found automatically by the daemon)
 ```
+
+Or from a checkout: `sh install.sh --source --repo "$PWD"` (forces a local
+source build). Both routes install the dashboard with the binary.
+
+`cargo install --git https://github.com/toruu7/zunesha.git zunesha-cli` works
+too, but installs the binary only — see the
+[reference](reference.md#install-with-cargo) for the dashboard step.
 
 Or build in place:
 

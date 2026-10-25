@@ -102,8 +102,8 @@ enum Commands {
         /// Interface to bind.
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
-        /// Port to bind.
-        #[arg(long, default_value_t = zunesha_api::DEFAULT_PORT)]
+        /// Port to bind (`--port`, else `ZOU_PORT`, else 57804).
+        #[arg(long, env = "ZOU_PORT", default_value_t = zunesha_api::DEFAULT_PORT)]
         port: u16,
         /// Cap on simultaneously running agents.
         #[arg(long, default_value_t = zunesha_core::DEFAULT_MAX_CONCURRENCY)]

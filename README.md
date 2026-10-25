@@ -1,5 +1,8 @@
 # Zunesha (zou) — Local-first AI Coding Orchestrator
 
+[![ci](https://github.com/toruu7/zunesha/actions/workflows/ci.yml/badge.svg)](https://github.com/toruu7/zunesha/actions/workflows/ci.yml)
+[![docs](https://github.com/toruu7/zunesha/actions/workflows/docs.yml/badge.svg)](https://toruu7.github.io/zunesha/)
+
 A local-first, parallelized AI coding orchestrator (in the spirit of *fold*).
 You give it a feature request; it plans a **DAG of tasks**, spins up **isolated
 workspaces**, runs **AI coding agents in parallel**, collects their **diffs**,
@@ -40,25 +43,34 @@ Published at <https://toruu7.github.io/zunesha/> on every push to `master`
 ### Install
 
 ```sh
-curl -fsSL <REPLACE_WITH_INSTALL_SCRIPT_URL> | sh
+curl -fsSL https://raw.githubusercontent.com/toruu7/zunesha/master/install.sh | sh
 ```
 
-The script tries the **prebuilt binary** for your OS/arch first, then falls
-back to a **source build** (`git clone` + `cargo build`) on any miss. Every
-URL is a flag, so mirrors, forks, and local checkouts work identically —
-flags go after `sh -s --`:
+The script tries the **prebuilt tarball** for your OS/arch first (binary +
+dashboard), then falls back to a **source build** (`git clone` + `cargo
+build`) on any miss. Every URL is a flag, so mirrors, forks, and local
+checkouts work identically — flags go after `sh -s --`:
 
 ```sh
-# Build from a specific repo (no prebuilt configured):
-curl -fsSL <URL> | sh -s -- --repo https://github.com/you/zunesha
+# …or run the installer from a checkout:
+sh install.sh
 
-# Prebuilt from a GitHub release (latest, or pinned):
-curl -fsSL <URL> | sh -s -- --release-base https://github.com/you/zunesha/releases/latest/download
-curl -fsSL <URL> | sh -s -- --release-base https://github.com/you/zunesha/releases/download --version v0.1.0
+# Build from a fork (skip the prebuilt; add --repo "$PWD" for a local checkout):
+curl -fsSL https://raw.githubusercontent.com/toruu7/zunesha/master/install.sh \
+  | sh -s -- --source --repo https://github.com/you/zunesha
+
+# Pin a prebuilt release instead of "latest":
+curl -fsSL https://raw.githubusercontent.com/toruu7/zunesha/master/install.sh \
+  | sh -s -- --release-base https://github.com/toruu7/zunesha/releases/download --version v0.1.0
 
 # Fully local:
 sh install.sh --tarball file:///tmp/rel/zou-linux-amd64.tar.gz --prefix ~/.local
 ```
+
+Releases are built by `.github/workflows/release.yml` on every `v*` tag
+(`zou-linux-amd64`, `zou-macos-arm64`, `zou-macos-amd64`; each tarball holds
+`zou` + `web/out`). A private fork must point `--repo` / `--release-base` at
+URLs it can read.
 
 | Flag | Default | Purpose |
 |------|---------|---------|
@@ -67,6 +79,7 @@ sh install.sh --tarball file:///tmp/rel/zou-linux-amd64.tar.gz --prefix ~/.local
 | `--release-base URL` | placeholder | Base for prebuilt tarballs (`[/VERSION/]zou-<os>-<arch>.tar.gz`). |
 | `--version TAG` | — | Release tag (path segment for the tarball, or clone branch). |
 | `--tarball URL` | — | Full tarball URL override. |
+| `--source` | off | Skip the prebuilt and build from `--repo` instead. |
 | `--profile NAME` | `release` | cargo profile for source builds (`dev` = much faster). |
 | `--no-dashboard` | off | Daemon-only install. |
 | `--uninstall` | — | Remove the binary and dashboard from the prefix. |
@@ -75,6 +88,27 @@ The daemon finds the dashboard by walking up from the executable, so
 `<prefix>/web/out` needs no environment variables. The script prints a PATH
 hint if `<prefix>/bin` isn't on your PATH. Source builds skip the dashboard
 with a warning when node/npm are absent.
+
+### Install with cargo
+
+```sh
+cargo install --git https://github.com/toruu7/zunesha.git zunesha-cli
+# or over SSH:
+cargo install --git git@github.com:toruu7/zunesha.git zunesha-cli
+```
+
+This installs the **binary only** — Rust packages cannot ship the static
+dashboard. Build it once from a checkout and point the daemon at it (or use
+`install.sh`, which bundles both):
+
+```sh
+git clone https://github.com/toruu7/zunesha.git
+cd zunesha/web && npm install && npm run build
+export ZOU_DASHBOARD_DIR="$PWD/out"
+```
+
+A release build straight from a checkout is just `cargo build --release`
+(the binary lands in `target/release/zou`).
 
 ### Build (from a checkout)
 
@@ -241,10 +275,11 @@ switched off.
 | `ZOU_EVAL_CMD`       | CLI / daemon     | Validation command template; unset = auto-detect (see above). |
 | `ZOU_EVAL_TIMEOUT_SECS` | CLI / daemon  | Per-validation time limit (default `600`).     |
 | `ZOU_DASHBOARD_DIR`  | daemon at start  | Built dashboard dir; else auto-discovers `web/out`. |
+| `ZOU_PORT`           | `zou start`      | Port to bind (default `57804`); `--port` wins over it. |
 | `NEXT_PUBLIC_API_BASE`| `next dev`/build | Daemon origin when the dashboard runs under Next's dev server. |
 
-Ports and caps are flags: `zou start --host --port --jobs`, `zou run --jobs`.
-The default API/dashboard port is `57804`, default concurrency cap is `3`.
+Ports and caps: `zou start --host --port --jobs` (`--port` falls back to
+`ZOU_PORT`, default `57804`), `zou run --jobs`.
 
 ## Repository layout
 
@@ -253,7 +288,7 @@ zunesha/
 ├── Cargo.toml                      # cargo workspace + build profiles
 ├── install.sh                      # curl-able installer (prebuilt → source)
 ├── docs/                           # mdBook site (guides + this README as reference)
-├── .github/workflows/              # CI + docs deployment to GitHub Pages
+├── .github/workflows/              # CI, release tarballs, docs deployment
 ├── crates/
 │   ├── zunesha-core/          # state, DAG, workspaces, workers, merge
 │   │   └── src/
@@ -302,7 +337,7 @@ zou run     [--jobs N] [--follow]       # run the agent on ready tasks, in paral
 zou approve <TASK_ID>                   # merge reviewed work into the repo (auto-resolves conflicts, Phase 9)
 zou recover [TASK_ID]                   # release stuck IN_PROGRESS/EVALUATING/RESOLVING_CONFLICTS tasks (crash recovery)
 zou status  [--path <PATH>]             # per-status counts + task list
-zou start   [--host H] [--port N] [--jobs N] [--no-resume]  # serve the local API + dashboard (auto-resumes crashed work unless --no-resume)
+zou start   [--host H] [--port N] [--jobs N] [--no-resume]  # serve the local API + dashboard (port: --port or ZOU_PORT)
 ```
 
 `init` refuses to run outside a git work tree unless `--force` is passed, and

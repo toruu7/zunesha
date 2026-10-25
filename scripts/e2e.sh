@@ -295,6 +295,23 @@ assert_contains "a cyclic plan fails with a clear error" "$(cat "$AG/plan-bad.tx
 [ "$(count_in TODO)$(count_in BACKLOG)" = "00" ] \
   && pass "a rejected plan writes nothing" || fail "a rejected plan left tasks behind"
 
+# ZOU_PORT supplies the bind port when --port is absent (flag > env > default).
+ZOU_PORT="$PORT2" "$ZOU" start > "$AG/port-env.log" 2>&1 &
+DAEMON_PID=$!
+i=0; code=000
+while [ "$i" -lt 20 ]; do
+  code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT2/health" || true)
+  [ "$code" = "200" ] && break
+  i=$((i + 1)); sleep 1
+done
+[ "$code" = "200" ] && pass "ZOU_PORT binds the daemon without --port" \
+  || fail "ZOU_PORT was ignored"
+kill "$DAEMON_PID"; wait "$DAEMON_PID" 2>/dev/null || true; DAEMON_PID=
+if ZOU_PORT=not-a-port "$ZOU" start > "$AG/bad-port.txt" 2>&1; then
+  fail "an invalid ZOU_PORT was accepted"
+fi
+assert_contains "an invalid ZOU_PORT fails loudly" "$(cat "$AG/bad-port.txt")" "invalid value"
+
 say "daemon boot auto-resumes work a crash left claimed (Phase 11)"
 new_repo
 "$ZOU" plan "survive a daemon crash" > /dev/null
