@@ -46,7 +46,7 @@ pub use eval::{EvalCommand, EvalOutcome};
 pub use init::{init_project, InitReport};
 pub use integrator::{approve_task, ApproveOutcome, Integrator, MergeOutcome};
 pub use paths::ZuneshaPaths;
-pub use planner::plan;
+pub use planner::{plan, plan_with, Planner, MAX_PLAN_TASKS};
 pub use task::{Task, TaskStatus, MAX_EVAL_RETRIES};
 pub use worker::{AgentCommand, StreamKind, WorkerEvent, WorkerPool, DEFAULT_MAX_CONCURRENCY};
 pub use workspace::{branch_name, ConflictPrep, Workspace, WorkspaceManager};

@@ -76,7 +76,7 @@ cd web && npm install && npm run build && cd ..
 ```sh
 cd /path/to/your-repo
 zou init                      # creates .zou/ (+ .gitignore entry)
-zou plan "add rate limiting"  # mock planner → a 3-task chain; head is TODO
+zou plan "add rate limiting"  # 3-task chain (built-in) or a real DAG via ZOU_PLANNER_CMD
 zou status                    # per-status counts + task ids
 
 # --- drive it from the terminal ---
@@ -112,6 +112,46 @@ ZOU_AGENT_CMD='opencode run --auto {prompt}' zou run --jobs 5
 
 The spec is parsed with full POSIX quoting (single/double quotes, backslash
 escapes). The daemon reads it **at launch**, so set it before `zou start`.
+
+### Configure the planner (LLM-backed)
+
+`zou plan` turns a feature request into a DAG of tasks. The default is a
+deterministic mock (a fixed 3-task chain); set **`ZOU_PLANNER_CMD`** to any
+command that reads the planning prompt on **stdin** and prints one JSON object
+on **stdout** — an LLM CLI, a wrapper script, anything:
+
+```sh
+# any CLI that reads stdin and answers on stdout works:
+ZOU_PLANNER_CMD='llm -m claude-sonnet-4' zou plan "add rate limiting"
+ZOU_PLANNER_CMD='ollama run qwen2.5-coder' zou plan "add rate limiting"
+ZOU_PLANNER_CMD='sh scripts/plan-with-my-api.sh' zou start   # daemon reads it at launch
+```
+
+The prompt Zunesha sends contains the feature request, a **bounded repository
+map** (the same tree agents get, so file paths are real) and the output
+schema. The model must answer with **one JSON object**:
+
+```json
+{"tasks":[
+  {"key":"schema","title":"Add the rate-limit table",
+   "description":"Migration and model for per-key counters.","depends_on":[]},
+  {"key":"middleware","title":"Enforce the limit",
+   "description":"Token bucket in the request path, keyed by API key.","depends_on":["schema"]}
+]}
+```
+
+* `key` — short unique slug, referenced by other tasks' `depends_on`
+* `title` / `description` — what the agent sees; write descriptions that stand alone
+* `depends_on` — keys that must be `DONE` first; omit for parallel work
+
+Nothing is written until the draft passes validation: **unique keys, known
+dependencies, no self-edges, an acyclic graph, at most 32 tasks**. A bad answer
+fails `zou plan` with the reason (and the daemon answers `400`), so a confused
+model can never leave a half-built DAG behind. Markdown fences and surrounding
+prose are tolerated (the first JSON value wins), `dependsOn` is accepted as an
+alias, `null`/missing `depends_on` means "no prerequisites", and a missing
+description falls back to the title. `ZOU_PLANNER_TIMEOUT_SECS` caps one run
+(default `120`); the command runs with the repo root as its working directory.
 
 ### Configure validation (self-healing loop)
 
@@ -181,6 +221,8 @@ switched off.
 | Variable              | Read by          | Purpose                                        |
 |-----------------------|------------------|------------------------------------------------|
 | `ZOU_AGENT_CMD`      | CLI / daemon     | Agent command template (see above).            |
+| `ZOU_PLANNER_CMD`    | CLI / daemon     | Planning command: prompt on stdin, JSON plan on stdout; unset = built-in planner (see above). |
+| `ZOU_PLANNER_TIMEOUT_SECS` | CLI / daemon | Per-plan time limit (default `120`).          |
 | `ZOU_EVAL_CMD`       | CLI / daemon     | Validation command template; unset = auto-detect (see above). |
 | `ZOU_EVAL_TIMEOUT_SECS` | CLI / daemon  | Per-validation time limit (default `600`).     |
 | `ZOU_DASHBOARD_DIR`  | daemon at start  | Built dashboard dir; else auto-discovers `web/out`. |
@@ -208,7 +250,7 @@ zunesha/
 │   │       ├── init.rs              # `zou init` implementation
 │   │       ├── integrator.rs        # approval-time merge (the only write)
 │   │       ├── paths.rs             # `.zou/` layout
-│   │       ├── planner.rs           # mock planner (LLM hook: plan())
+│   │       ├── planner.rs           # built-in planner + external ZOU_PLANNER_CMD plans
 │   │       ├── task.rs              # TaskStatus lifecycle enum
 │   │       ├── worker.rs            # bounded tokio agent pool + eval loop
 │   │       └── workspace.rs         # isolated clones + diff capture
@@ -236,7 +278,7 @@ zunesha/
 
 ```
 zou init    [--path <PATH>] [--force]   # bootstrap .zou/ + SQLite
-zou plan    "<prompt>" [--path <PATH>]  # plan a feature into a task DAG (mock)
+zou plan    "<prompt>" [--path <PATH>]  # plan a feature into a task DAG (built-in, or ZOU_PLANNER_CMD)
 zou work    <TASK_ID> [--activate]      # spin up isolated workspace for a task
 zou diff    <TASK_ID>                   # show the task workspace's diff
 zou run     [--jobs N] [--follow]       # run the agent on ready tasks, in parallel
@@ -294,9 +336,12 @@ in-flight work (`IN_PROGRESS`/`EVALUATING`/`REVIEW`/`RESOLVING_CONFLICTS`/
 Dependency edges are guarded against cycles: `add_dependency` refuses any edge
 that would close a loop, so the graph is a true DAG by construction.
 
-The current **planner** is a mock (Phase 2): it turns any prompt into a fixed
-three-step chain (`Analyze → Implement → Test & document`). The public
-`plan(db, prompt)` signature is what a future LLM-backed planner will implement.
+The **planner** turns a prompt into a DAG. By default it is a deterministic
+mock (Phase 2): a fixed three-step chain (`Analyze → Implement → Test &
+document`). Set `ZOU_PLANNER_CMD` to hand planning to a real LLM — see
+[Configure the planner](#configure-the-planner-llm-backed). Either way the
+draft is validated (unique keys, known dependencies, acyclic, ≤ 32 tasks)
+before the first task row is written.
 
 ### Integrity guarantees
 
@@ -507,7 +552,7 @@ the agent's prompt contains both the map heading and a tree entry, and
 | GET    | `/api/status`            | Per-status counts + concurrency cap.       |
 | GET    | `/api/tasks`             | Every task, the dependency DAG (`dependencies`), and per-status counts. |
 | GET    | `/api/tasks/:id`         | One task (captured logs + diff included).  |
-| POST   | `/api/plan`              | `{"prompt": "..."}` → DAG of tasks.        |
+| POST   | `/api/plan`              | `{"prompt": "..."}` → DAG of tasks (built-in or `ZOU_PLANNER_CMD`; `400` when the model's plan is invalid). |
 | POST   | `/api/run`               | Start agents on all ready (`TODO`) tasks.  |
 | POST   | `/api/tasks/:id/run`     | Start the agent on one ready task.         |
 | POST   | `/api/tasks/:id/approve` | Merge approved diff → repo; `REVIEW→DONE` (a conflict queues auto-resolution, `REVIEW→RESOLVING_CONFLICTS`). |
@@ -743,7 +788,7 @@ connection pool.
 | Phase | Scope                                              | Status |
 |-------|----------------------------------------------------|--------|
 | 1     | CLI foundation, `init`, SQLite schema              | ✅ done |
-| 2     | DAG engine, state transitions, mock planner        | ✅ done |
+| 2     | DAG engine, state transitions, planner seam        | ✅ done |
 | 3     | Workspace + git manager (isolated clones, diffs)   | ✅ done |
 | 4     | Agent process orchestration (tokio worker pool)    | ✅ done |
 | 5     | Axum REST API + WebSockets on `localhost:57804`    | ✅ done |
@@ -753,3 +798,7 @@ connection pool.
 | 9     | Auto-merge conflict resolution (`RESOLVING_CONFLICTS`) | ✅ done |
 | 10    | Codebase map injected into agent prompts           | ✅ done |
 | 11    | Interactive DAG view + automatic crash resumption  | ✅ done |
+
+Beyond the blueprint: a real **external planner** (`ZOU_PLANNER_CMD` — any LLM
+CLI that reads a prompt on stdin and prints a JSON plan; see
+[Configure the planner](#configure-the-planner-llm-backed)).

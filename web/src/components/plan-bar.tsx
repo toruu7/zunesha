@@ -7,8 +7,9 @@ import { useZou } from "@/lib/store";
 /**
  * The planning input: type a feature request, submit to `POST /api/plan`.
  *
- * The daemon's planner is a Phase-2 mock (a fixed 3-task chain) today; this
- * box is the seam a real LLM planner drops into without any UI change.
+ * The daemon plans with its built-in planner, or with `ZOU_PLANNER_CMD` (any
+ * LLM CLI that prints a JSON plan) when the launch environment sets it — the
+ * UI is identical either way.
  */
 export default function PlanBar() {
   const [prompt, setPrompt] = useState("");

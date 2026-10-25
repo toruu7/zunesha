@@ -21,7 +21,7 @@
 //! | GET    | `/api/status`             | Per-status counts + concurrency cap.     |
 //! | GET    | `/api/tasks`              | Every task, the dependency DAG, and per-status counts. |
 //! | GET    | `/api/tasks/:id`          | One task (logs + diff included).         |
-//! | POST   | `/api/plan`               | Decompose a prompt into a task DAG.      |
+//! | POST   | `/api/plan`               | Decompose a prompt into a task DAG (built-in or `ZOU_PLANNER_CMD`). |
 //! | POST   | `/api/run`                | Start agents on all ready (`TODO`) tasks.|
 //! | POST   | `/api/tasks/:id/run`      | Start the agent on one ready task.       |
 //! | POST   | `/api/tasks/:id/approve`  | Accept reviewed work; merge or auto-resolve a conflict. |

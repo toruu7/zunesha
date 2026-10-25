@@ -53,6 +53,10 @@ pub enum Error {
         depends_on_id: String,
     },
 
+    /// The planner failed: a bad command, a timeout, or an invalid plan.
+    #[error("planner error: {0}")]
+    Planner(String),
+
     /// A workspace operation failed (invalid state, missing directory, ...).
     #[error("workspace error: {0}")]
     Workspace(String),

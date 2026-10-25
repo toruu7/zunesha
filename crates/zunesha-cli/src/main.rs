@@ -47,7 +47,7 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Plan a feature into a DAG of tasks (mock planner).
+    /// Plan a feature into a DAG of tasks (built-in, or `ZOU_PLANNER_CMD`).
     Plan {
         /// Feature request to plan.
         prompt: String,
@@ -181,18 +181,20 @@ fn cmd_init(target: &Path, force: bool) -> zunesha_core::Result<()> {
     Ok(())
 }
 
-/// `zou plan` – run the (mock) planner over a feature prompt.
+/// `zou plan` – run the planner (built-in; `ZOU_PLANNER_CMD` overrides) over a
+/// feature prompt.
 fn cmd_plan(target: &Path, prompt: &str) -> zunesha_core::Result<()> {
     let paths = discover(target)?;
     let db = Database::open(&paths.state_db())?;
 
-    let ids = zunesha_core::plan(&db, prompt)?;
+    let planner = zunesha_core::Planner::from_env();
+    let ids = zunesha_core::plan_with(&db, prompt, &planner, paths.root())?;
     if ids.is_empty() {
         println!("nothing to plan: prompt was empty");
         return Ok(());
     }
 
-    println!("planned {} tasks (mock planner):", ids.len());
+    println!("planned {} tasks ({}):", ids.len(), planner.label());
     for (i, id) in ids.iter().enumerate() {
         let task = db.require_task(id)?;
         let deps = db.dependencies_of(id)?;

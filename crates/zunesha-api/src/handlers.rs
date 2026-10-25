@@ -57,7 +57,8 @@ impl ApiError {
 ///   conflict instead queues [`MergeOutcome::ConflictResolutionQueued`] with a
 ///   200.
 /// * `NotInitialized` → 503, telling the user to run `zou init`.
-/// * Validation-ish errors (`CycleDetected`, `Workspace`, `Git`) → 400.
+/// * Validation-ish errors (`CycleDetected`, `Planner`, `Workspace`, `Git`) →
+///   400: the request was well-formed but the outcome is unusable.
 impl From<Error> for ApiError {
     fn from(err: Error) -> Self {
         use Error as E;
@@ -68,6 +69,7 @@ impl From<Error> for ApiError {
                 StatusCode::SERVICE_UNAVAILABLE
             }
             E::CycleDetected { .. }
+            | E::Planner(_)
             | E::UnknownTaskStatus(_)
             | E::Workspace(_)
             | E::Git(_)
@@ -234,7 +236,7 @@ pub async fn plan_feature(
     let paths = state.paths.clone();
     let task_ids = tokio::task::spawn_blocking(move || {
         let db = Database::open(&paths.state_db())?;
-        plan(&db, &body.prompt)
+        plan(&db, &body.prompt, paths.root())
     })
     .await??;
 

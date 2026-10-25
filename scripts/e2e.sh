@@ -3,7 +3,8 @@
 #
 # Covers what unit tests can't: the CLI surface, the human-gated DAG walk,
 # the Phase 8 self-healing validation loop, Phase 9 auto-merge conflict
-# resolution, crash recovery, and live WebSocket streaming.
+# resolution, crash recovery, the external (LLM-command) planner, and live
+# WebSocket streaming.
 #
 # Usage: sh scripts/e2e.sh          (from anywhere; needs a prior `cargo build`)
 set -e
@@ -236,6 +237,63 @@ assert_contains "conflicted approve wrote nothing to the tree" "$(cat a.txt)" "v
 assert_contains "auto-resolved content landed" "$(cat a.txt)" "v2-$H2"
 [ -d ".zou/ws/$H2" ] && fail "resolution workspace left behind" || pass "workspace reaped after final approve"
 unset ZOU_AGENT_CMD
+
+say "planner: ZOU_PLANNER_CMD turns a model's JSON into a DAG (CLI + daemon)"
+new_repo
+# A stand-in for an LLM CLI: the planning prompt arrives on stdin, the plan
+# goes to stdout. The prompt is saved so the test can inspect what the model saw.
+cat > "$AG/planner-two.sh" <<'EOF'
+#!/bin/sh
+cat > "$PLANNER_PROMPT_OUT"
+printf '%s' '{"tasks":[
+  {"key":"api","title":"Add the API","description":"Implement the endpoint","depends_on":[]},
+  {"key":"ui","title":"Add the UI","description":"Wire the dashboard","depends_on":["api"]}
+]}'
+EOF
+PROMPT_OUT="$AG/planner-prompt.txt"
+ZOU_PLANNER_CMD="sh $AG/planner-two.sh" PLANNER_PROMPT_OUT="$PROMPT_OUT" \
+  "$ZOU" plan "two steps please" > "$AG/plan-cli.txt"
+assert_contains "external planner plans the model's 2 tasks" "$(cat "$AG/plan-cli.txt")" "planned 2 tasks"
+assert_contains "external planner is named in the output" "$(cat "$AG/plan-cli.txt")" "ZOU_PLANNER_CMD"
+[ "$(count_in TODO)" = "1" ] && [ "$(count_in BACKLOG)" = "1" ] \
+  && pass "only the root task is ready" || fail "wrong statuses after the external plan"
+assert_contains "planner received the request on stdin" "$(cat "$PROMPT_OUT")" "two steps please"
+assert_contains "planner received a repository map" "$(cat "$PROMPT_OUT")" "a.txt"
+
+# The daemon reads the same variable from its launch environment.
+ZOU_PLANNER_CMD="sh $AG/planner-two.sh" PLANNER_PROMPT_OUT="$PROMPT_OUT" \
+  "$ZOU" start --port "$PORT" > "$AG/planner-daemon.log" 2>&1 &
+DAEMON_PID=$!
+i=0; code=000
+while [ "$i" -lt 20 ]; do
+  code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/health" || true)
+  [ "$code" = "200" ] && break
+  i=$((i + 1)); sleep 1
+done
+[ "$code" = "200" ] || fail "planner daemon not healthy"
+PLANNED=$(curl -s -X POST -H 'content-type: application/json' \
+  -d '{"prompt":"a second feature"}' "http://127.0.0.1:$PORT/api/plan")
+[ "$(printf '%s' "$PLANNED" | grep -o 'task-' | wc -l)" = "2" ] \
+  && pass "the daemon plans through ZOU_PLANNER_CMD too" || fail "api/plan ignored the planner: $PLANNED"
+assert_contains "the daemon's planner saw the request" "$(cat "$PROMPT_OUT")" "a second feature"
+kill "$DAEMON_PID"; wait "$DAEMON_PID" 2>/dev/null || true; DAEMON_PID=
+
+# A confused model must fail loudly and leave the database untouched.
+cat > "$AG/planner-bad.sh" <<'EOF'
+#!/bin/sh
+cat > /dev/null
+printf '%s' '{"tasks":[
+  {"key":"a","title":"A","depends_on":["b"]},
+  {"key":"b","title":"B","depends_on":["a"]}
+]}'
+EOF
+new_repo
+if ZOU_PLANNER_CMD="sh $AG/planner-bad.sh" "$ZOU" plan "impossible" > "$AG/plan-bad.txt" 2>&1; then
+  fail "a cyclic plan was accepted"
+fi
+assert_contains "a cyclic plan fails with a clear error" "$(cat "$AG/plan-bad.txt")" "cycle"
+[ "$(count_in TODO)$(count_in BACKLOG)" = "00" ] \
+  && pass "a rejected plan writes nothing" || fail "a rejected plan left tasks behind"
 
 say "daemon boot auto-resumes work a crash left claimed (Phase 11)"
 new_repo
