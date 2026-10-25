@@ -35,11 +35,11 @@ mdbook serve docs               # http://localhost:3000
 mdbook build docs               # static site in docs/book/
 ```
 
-Every push that touches `docs/` or this README builds the book in CI, and
-`master` deploys the prebuilt site to **Vercel** once the repository has the
-`VERCEL_DEPLOY` variable set to `true` (plus the `VERCEL_TOKEN` secret and
-`VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` variables). Details are in
-`.github/workflows/docs.yml`; `mdbook serve docs` works locally with no setup.
+Every push builds the book in CI, and `master` is deployed by **Vercel's Git
+integration** (`vercel.json` runs `scripts/build-docs.sh`, which fetches the
+pinned mdBook binary). No secrets to configure: the project is linked to this
+repository, so docs edits go live automatically. `mdbook serve docs` still
+works locally with no setup.
 
 ## Usage
 

@@ -15,3 +15,6 @@
 
 # Vercel CLI project link (local)
 /.vercel/
+
+# Pinned mdBook download used by scripts/build-docs.sh
+/.cache/

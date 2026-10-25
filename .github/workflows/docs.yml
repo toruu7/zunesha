@@ -1,18 +1,14 @@
 name: docs
 
-# Builds the mdBook in docs/ on every push/PR (so the site is always
-# validated), then deploys the prebuilt output to Vercel on master.
+# Validates the mdBook in docs/ on every push/PR.
 #
-# One-time setup — Settings → Secrets and variables → Actions:
-#   secret    VERCEL_TOKEN               (https://vercel.com/account/tokens)
-#   variable  VERCEL_ORG_ID              (team id)
-#   variable  VERCEL_PROJECT_ID          (project id)
-#   variable  VERCEL_DEPLOY = true       (switch deploys on)
+# Deployment is handled by Vercel's Git integration: pushes to master build
+# the site with vercel.json → scripts/build-docs.sh (pinned mdBook) and
+# publish it to https://zunesha-docs.vercel.app. This workflow exists so a
+# broken book fails CI even before Vercel sees it, and so PRs are checked.
 #
-# Both ids are printed by `npx vercel@latest link` in .vercel/project.json
-# (orgId / projectId), or live in the project's Settings → General page.
-# The Vercel project does not need a Git connection: this workflow is the
-# only deployer.
+# Local preview: `mdbook serve docs` (or `sh scripts/build-docs.sh` for the
+# no-install route).
 
 on:
   push:
@@ -20,11 +16,15 @@ on:
     paths:
       - "docs/**"
       - "README.md"
+      - "scripts/build-docs.sh"
+      - "vercel.json"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
       - "README.md"
+      - "scripts/build-docs.sh"
+      - "vercel.json"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -45,38 +45,9 @@ jobs:
           mdbook-version: "0.5.4"
       - name: Build the book
         run: mdbook build docs
-      - name: Upload the site
+      - name: Upload the built book
         uses: actions/upload-artifact@v4
         with:
           name: docs-book
           path: docs/book
           if-no-files-found: error
-
-  deploy:
-    needs: build
-    if: vars.VERCEL_DEPLOY == 'true' && github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
-    env:
-      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: docs-book
-          path: site
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Link the Vercel project
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: npx --yes vercel@latest pull --yes --environment=production --token "$VERCEL_TOKEN"
-      - name: Package the prebuilt output
-        run: |
-          mkdir -p .vercel/output/static
-          cp -R site/. .vercel/output/static/
-          printf '{"version":3}\n' > .vercel/output/config.json
-      - name: Deploy to Vercel
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: npx --yes vercel@latest deploy --prebuilt --prod --yes --token "$VERCEL_TOKEN"
