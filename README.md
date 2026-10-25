@@ -1,6 +1,7 @@
 # Zunesha (zou) — Local-first AI Coding Orchestrator
 
 [![ci](https://github.com/toruu7/zunesha/actions/workflows/ci.yml/badge.svg)](https://github.com/toruu7/zunesha/actions/workflows/ci.yml)
+[![docs](https://img.shields.io/badge/docs-live-black?logo=vercel&logoColor=white)](https://zunesha-docs.vercel.app)
 
 A local-first, parallelized AI coding orchestrator (in the spirit of *fold*).
 You give it a feature request; it plans a **DAG of tasks**, spins up **isolated
@@ -26,7 +27,7 @@ and — after **human approval** — merges approved work back into your project
 
 The full docs are an [mdBook](https://rust-lang.github.io/mdBook/) —
 tutorials, agent/planner configuration, troubleshooting, and this README as
-the complete reference:
+the complete reference. **Live at <https://zunesha-docs.vercel.app>**.
 
 ```sh
 cargo install mdbook --locked   # one-time
