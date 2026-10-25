@@ -20,6 +20,21 @@ and — after **human approval** — merges approved work back into your project
 3. **Local first.** Everything (state, dashboard, daemon) runs on localhost.
 4. **Human in the loop.** Tasks pause in `REVIEW` until you approve them.
 
+## Documentation
+
+The full docs are an [mdBook](https://rust-lang.github.io/mdBook/) —
+tutorials, agent/planner configuration, troubleshooting, and this README as
+the complete reference:
+
+```sh
+cargo install mdbook --locked   # one-time
+mdbook serve docs               # http://localhost:3000
+mdbook build docs               # static site in docs/book/
+```
+
+Published at <https://toruu7.github.io/zunesha/> on every push to `master`
+(the Pages workflow lives in `.github/workflows/docs.yml`).
+
 ## Usage
 
 ### Install
@@ -237,6 +252,8 @@ The default API/dashboard port is `57804`, default concurrency cap is `3`.
 zunesha/
 ├── Cargo.toml                      # cargo workspace + build profiles
 ├── install.sh                      # curl-able installer (prebuilt → source)
+├── docs/                           # mdBook site (guides + this README as reference)
+├── .github/workflows/              # CI + docs deployment to GitHub Pages
 ├── crates/
 │   ├── zunesha-core/          # state, DAG, workspaces, workers, merge
 │   │   └── src/
@@ -801,4 +818,6 @@ connection pool.
 
 Beyond the blueprint: a real **external planner** (`ZOU_PLANNER_CMD` — any LLM
 CLI that reads a prompt on stdin and prints a JSON plan; see
-[Configure the planner](#configure-the-planner-llm-backed)).
+[Configure the planner](#configure-the-planner-llm-backed)) and a
+**docs site** (mdBook: guides + this README as the reference — see
+[Documentation](#documentation)).

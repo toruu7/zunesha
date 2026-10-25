@@ -9,3 +9,6 @@
 
 # Zunesha's own control directory (if this repo is orch/zou-initialized)
 /.zou/
+
+# mdBook output
+/docs/book/

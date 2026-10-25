@@ -1,0 +1,20 @@
+[book]
+title = "Zunesha"
+description = "Local-first, parallelized AI coding orchestrator"
+authors = ["muhtadeetaron"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/toruu7/zunesha"
+edit-url-template = "https://github.com/toruu7/zunesha/edit/master/docs/src/{path}"
+site-url = "/zunesha/"
+default-theme = "rust"
+preferred-dark-theme = "navy"
+
+[output.html.search]
+limit-results = 30
