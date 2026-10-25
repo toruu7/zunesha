@@ -1,6 +1,5 @@
 # Zunesha (zou) — Local-first AI Coding Orchestrator
 
-[![ci](https://github.com/toruu7/zunesha/actions/workflows/ci.yml/badge.svg)](https://github.com/toruu7/zunesha/actions/workflows/ci.yml)
 [![docs](https://img.shields.io/badge/docs-live-black?logo=vercel&logoColor=white)](https://zunesha-docs.vercel.app)
 
 A local-first, parallelized AI coding orchestrator (in the spirit of *fold*).

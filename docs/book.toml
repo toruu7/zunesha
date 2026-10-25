@@ -12,8 +12,9 @@ create-missing = false
 [output.html]
 git-repository-url = "https://github.com/toruu7/zunesha"
 edit-url-template = "https://github.com/toruu7/zunesha/edit/master/docs/src/{path}"
-default-theme = "rust"
-preferred-dark-theme = "navy"
+default-theme = "light"
+preferred-dark-theme = "light"
+additional-css = ["theme/neobrutalism.css"]
 
 [output.html.search]
 limit-results = 30

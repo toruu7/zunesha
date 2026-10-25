@@ -1,0 +1,965 @@
+/* ---------------------------------------------------------------------------
+   Zunesha docs — Neo Brutalism press sheet.
+
+   Loaded after mdBook's own stylesheets (book.toml: additional-css), so these
+   rules override the default theme. Palette, type, borders and shadows follow
+   the same tokens as the dashboard: warm paper, ink outlines, a vermilion
+   masthead, yellow highlights, flat offset shadows, square corners. No blur,
+   gradients, or glass.
+   ------------------------------------------------------------------------ */
+
+:root,
+.light,
+.rust,
+.coal,
+.navy,
+.ayu {
+  --nb-ground: #fff4ec;
+  --nb-ink: #000000;
+  --nb-yellow: #ffd400;
+  --nb-red: #e8412f;
+  --nb-blush: #ffc9ba;
+  --nb-white: #ffffff;
+  --nb-signal-ink: #a61b0e;
+
+  --dp-color-ground: #fff4ec;
+  --dp-color-ink: #000000;
+  --dp-color-emphasis: #ffd400;
+  --dp-color-signal: #e8412f;
+  --dp-color-field: #ffc9ba;
+  --dp-color-contrast: #ffffff;
+  --dp-typography-face: "NeoBrutalismHost", sans-serif;
+  --dp-typography-body: 17px;
+  --dp-typography-reading: 16px;
+  --dp-typography-small: 14px;
+  --dp-typography-metadata: 13px;
+  --dp-typography-label: 12px;
+  --dp-typography-reading-weight: 700;
+  --dp-typography-emphasis-weight: 800;
+  --dp-typography-display-weight: 900;
+  --dp-typography-display-tracking: -0.065em;
+  --dp-spacing-gap: 24px;
+  --dp-spacing-gap-compact: 18px;
+  --dp-radius-control: 0;
+  --dp-border-panel: 4px;
+  --dp-border-divider: 3px;
+  --dp-border-annotation: 2px;
+  --dp-motion-interaction: 0s;
+
+  /* mdBook chrome */
+  --bg: var(--nb-ground);
+  --fg: var(--nb-ink);
+  --sidebar-bg: var(--nb-ground);
+  --sidebar-fg: var(--nb-ink);
+  --sidebar-non-existant: rgb(0 0 0 / 45%);
+  --sidebar-active: var(--nb-ink);
+  --sidebar-spacer: var(--nb-ink);
+  --scrollbar: var(--nb-ink);
+  --icons: var(--nb-ink);
+  --icons-hover: var(--nb-ink);
+  --links: var(--nb-ink);
+  --inline-code-color: var(--nb-ink);
+  --theme-popup-bg: var(--nb-white);
+  --theme-popup-border: var(--nb-ink);
+  --theme-hover: var(--nb-yellow);
+  --quote-bg: var(--nb-blush);
+  --quote-border: var(--nb-ink);
+  --warning-border: var(--nb-red);
+  --table-border-color: var(--nb-ink);
+  --table-header-bg: var(--nb-ink);
+  --table-alternate-bg: var(--nb-ground);
+  --searchbar-border-color: var(--nb-ink);
+  --searchbar-bg: var(--nb-white);
+  --searchbar-fg: var(--nb-ink);
+  --searchbar-shadow-color: var(--nb-ink);
+  --searchresults-header-fg: var(--nb-yellow);
+  --searchresults-border-color: var(--nb-ink);
+  --searchresults-li-bg: var(--nb-yellow);
+  --search-mark-bg: var(--nb-yellow);
+  --color-scheme: light;
+  --copy-button-filter: none;
+  --copy-button-filter-hover: none;
+  --footnote-highlight: var(--nb-yellow);
+  --overlay-bg: rgb(0 0 0 / 70%);
+  --sidebar-header-border-color: var(--nb-ink);
+  --blockquote-note-color: var(--nb-ink);
+  --blockquote-tip-color: var(--nb-ink);
+  --blockquote-important-color: var(--nb-ink);
+  --blockquote-warning-color: var(--nb-ink);
+  --blockquote-caution-color: var(--nb-ink);
+
+  --sidebar-target-width: 290px;
+  /* No drag handle: the sidebar and the sheet meet at a clean 4px seam. */
+  --sidebar-resize-indicator-width: 0px;
+  --sidebar-resize-indicator-space: 0px;
+  --content-max-width: 800px;
+  --page-padding: 24px;
+  --menu-bar-height: 76px;
+}
+
+html {
+  /* Open Sans (bundled with mdBook) and Source Code Pro supply glyphs Host
+     Grotesk's latin subset lacks, notably arrows in code samples. */
+  font-family: "Host Grotesk", "Open Sans", "Source Code Pro",
+    var(--dp-typography-face);
+  background: var(--nb-ground);
+  color: var(--nb-ink);
+}
+
+body {
+  background: var(--nb-ground);
+  color: var(--nb-ink);
+  font-size: 1.7rem;
+  font-weight: 600;
+}
+
+.page-wrapper {
+  background: var(--nb-ground);
+}
+
+::selection {
+  background: var(--nb-yellow);
+  color: var(--nb-ink);
+}
+
+:focus-visible {
+  outline: 3px solid var(--nb-ink);
+  outline-offset: 2px;
+}
+
+/* --- Menu bar: the red poster strip ----------------------------------- */
+
+#mdbook-menu-bar {
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  min-height: var(--menu-bar-height);
+  padding: 8px 12px;
+  background: var(--nb-red);
+  border-bottom: 4px solid var(--nb-ink);
+  box-shadow: none;
+}
+
+#mdbook-menu-bar.bordered {
+  border-bottom-color: var(--nb-ink);
+}
+
+#mdbook-menu-bar-hover-placeholder {
+  height: var(--menu-bar-height);
+}
+
+#mdbook-menu-bar .left-buttons,
+#mdbook-menu-bar .right-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+#mdbook-menu-bar .right-buttons {
+  margin-left: auto;
+}
+
+#mdbook-menu-bar .icon-button,
+#mdbook-menu-bar .right-buttons a {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 3px solid var(--nb-ink);
+  border-radius: 0;
+  background: var(--nb-white);
+  color: var(--nb-ink);
+  line-height: 1;
+  box-shadow: 3px 3px 0 0 var(--nb-ink);
+}
+
+#mdbook-menu-bar .icon-button:hover,
+#mdbook-menu-bar .right-buttons a:hover {
+  background: var(--nb-ink);
+  color: var(--nb-yellow);
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 0 var(--nb-ink);
+}
+
+#mdbook-menu-bar .fa-svg,
+#mdbook-menu-bar .icon-button .fa-svg {
+  padding: 0;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+#mdbook-menu-bar .fa-svg path {
+  fill: currentColor;
+}
+
+.menu-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding-inline: 8px;
+  font-family: inherit;
+  font-size: 3.2rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.065em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.menu-title-chip {
+  display: inline-block;
+  padding: 3px 7px;
+  border: 2px solid var(--nb-ink);
+  background: var(--nb-ink);
+  color: var(--nb-yellow);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  transform: rotate(-2deg);
+}
+
+.menu-title-arrow {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--nb-ink);
+  background: var(--nb-ink);
+  color: var(--nb-yellow);
+  box-shadow: 2px 2px 0 0 var(--nb-ink);
+}
+
+/* The palette is light-only; the toggle stays in the DOM for book.js. */
+#mdbook-theme-toggle,
+#mdbook-theme-list {
+  display: none !important;
+}
+
+/* --- Sidebar: a ruled paper column ------------------------------------ */
+
+.sidebar {
+  background: var(--nb-ground);
+  border-right: 4px solid var(--nb-ink);
+  font-size: 1.5rem;
+}
+
+.sidebar::before {
+  content: "Contents";
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: var(--menu-bar-height);
+  padding: 0 14px;
+  border-bottom: 4px solid var(--nb-ink);
+  background: var(--nb-ink);
+  color: var(--nb-yellow);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.sidebar .sidebar-scrollbox {
+  top: var(--menu-bar-height);
+  padding: 12px 10px 24px;
+}
+
+.sidebar .chapter {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sidebar .chapter-item {
+  margin: 0 0 6px;
+}
+
+/* Only the chapter's own link, not the "on this page" links nested below it. */
+.sidebar .chapter-item > .chapter-link-wrapper > a {
+  display: block;
+  padding: 7px 10px;
+  border: 2px solid transparent;
+  color: var(--nb-ink);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-decoration: none;
+}
+
+.sidebar .chapter-item > .chapter-link-wrapper > a:hover {
+  border-color: var(--nb-ink);
+  background: var(--nb-blush);
+}
+
+.sidebar .chapter-item > .chapter-link-wrapper > a.active,
+.sidebar .chapter-item > .chapter-link-wrapper > a[aria-current="page"] {
+  border-color: var(--nb-ink);
+  background: var(--nb-red);
+  box-shadow: 2px 2px 0 0 var(--nb-ink);
+  font-weight: 800;
+}
+
+.sidebar .chapter-item strong {
+  display: inline-block;
+  min-width: 16px;
+  margin-right: 5px;
+  padding: 0 3px;
+  border: 2px solid var(--nb-ink);
+  background: var(--nb-ink);
+  color: var(--nb-yellow);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.sidebar .on-this-page {
+  margin: 2px 0 10px 10px;
+  padding-left: 10px;
+  border-left: 3px solid var(--nb-ink);
+}
+
+.sidebar .header-item {
+  margin: 0;
+}
+
+.sidebar .header-item a {
+  display: block;
+  padding: 3px 6px;
+  border: 0;
+  color: var(--nb-ink);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  text-decoration: none;
+}
+
+.sidebar .header-item a:hover {
+  background: var(--nb-blush);
+}
+
+.sidebar .header-item a.current-header {
+  background: var(--nb-blush);
+  font-weight: 800;
+}
+
+.sidebar .part-title {
+  margin: 16px 0 8px;
+  padding: 0 4px 6px;
+  border-bottom: 3px solid var(--nb-ink);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.sidebar .spacer {
+  width: 100%;
+  height: 3px;
+  margin: 10px 0;
+  background: var(--nb-ink);
+}
+
+.sidebar .sidebar-resize-handle {
+  display: none;
+}
+
+/* --- Search ------------------------------------------------------------ */
+
+#mdbook-search-wrapper {
+  padding: 12px var(--page-padding);
+  border-bottom: 4px solid var(--nb-ink);
+  background: var(--nb-ground);
+}
+
+#mdbook-searchbar {
+  width: 100%;
+  height: 42px;
+  padding: 8px 12px;
+  border: 3px solid var(--nb-ink);
+  border-radius: 0;
+  background: var(--nb-white);
+  color: var(--nb-ink);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  box-shadow: 3px 3px 0 0 var(--nb-ink);
+}
+
+#mdbook-searchbar::placeholder {
+  color: rgb(0 0 0 / 45%);
+}
+
+#mdbook-searchresults-outer {
+  margin-top: 10px;
+  border: 4px solid var(--nb-ink);
+  background: var(--nb-white);
+  box-shadow: 6px 6px 0 0 var(--nb-ink);
+}
+
+#mdbook-searchresults-header {
+  padding: 6px 10px;
+  background: var(--nb-ink);
+  color: var(--nb-yellow);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+#mdbook-searchresults li {
+  border-bottom: 2px solid var(--nb-ink);
+}
+
+#mdbook-searchresults li.focus {
+  background: var(--nb-yellow);
+}
+
+#mdbook-searchresults a {
+  color: var(--nb-ink);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+#mdbook-searchresults .teaser em {
+  padding: 0 2px;
+  background: var(--nb-yellow);
+  color: var(--nb-ink);
+  font-style: normal;
+  font-weight: 800;
+}
+
+mark {
+  padding: 0 2px;
+  background: var(--nb-yellow);
+  color: var(--nb-ink);
+}
+
+/* --- Content: a white sheet on cream ----------------------------------- */
+
+.content {
+  padding: 0 0 64px;
+}
+
+.content main {
+  margin: 24px auto;
+  max-width: var(--content-max-width);
+  padding: 30px 34px 36px;
+  border: 4px solid var(--nb-ink);
+  background: var(--nb-white);
+  box-shadow: 6px 6px 0 0 var(--nb-ink);
+}
+
+/* The page title is the red poster strip: full-bleed inside the sheet. */
+.content main > h1:first-of-type {
+  margin: -30px -34px 26px;
+  padding: 22px 34px 20px;
+  border-bottom: 4px solid var(--nb-ink);
+  background: var(--nb-red);
+  color: var(--nb-ink);
+  font-size: clamp(30px, 3.6vw, 40px);
+  font-weight: 800;
+  line-height: 0.98;
+  letter-spacing: -0.05em;
+  text-transform: uppercase;
+}
+
+.content main > h1:first-of-type .header {
+  color: var(--nb-ink);
+  text-decoration: none;
+}
+
+.content main h2 {
+  margin-top: 36px;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 3px solid var(--nb-ink);
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+}
+
+.content main h3 {
+  margin-top: 26px;
+  margin-bottom: 8px;
+  font-size: 19px;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.content main h4 {
+  margin-top: 22px;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.content main p,
+.content main li {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.7;
+}
+
+.content main p {
+  margin: 14px 0;
+}
+
+.content main ul,
+.content main ol {
+  margin: 14px 0;
+  padding-inline-start: 26px;
+}
+
+.content main li {
+  margin: 6px 0;
+}
+
+.content main ul > li::marker {
+  color: var(--nb-ink);
+}
+
+.content main ol > li::marker {
+  font-weight: 800;
+}
+
+.content main a,
+.content main a:link,
+.content main a:visited {
+  color: var(--nb-signal-ink);
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.content main a:hover {
+  background: var(--nb-yellow);
+  color: var(--nb-ink);
+}
+
+/* Heading self-links stay ink so the red is reserved for references. */
+.content main .header,
+.content main .header:link,
+.content main .header:visited {
+  color: var(--nb-ink);
+  text-decoration: none;
+}
+
+.content main hr {
+  margin: 30px 0;
+  border: 0;
+  border-top: 4px solid var(--nb-ink);
+}
+
+.content main strong {
+  font-weight: 800;
+}
+
+/* Inline code: a yellow highlight chip. */
+.content main :not(pre) > code {
+  padding: 1px 5px;
+  border: 2px solid var(--nb-ink);
+  border-radius: 0;
+  background: var(--nb-yellow);
+  color: var(--nb-ink);
+  font-size: 0.84em;
+  font-weight: 700;
+}
+
+.content main img {
+  max-width: 100%;
+}
+
+/* Preformatted blocks: a white clipping with a hard shadow. */
+.content main pre {
+  position: relative;
+  margin: 20px 0;
+  border: 4px solid var(--nb-ink);
+  border-radius: 0;
+  background: var(--nb-white);
+  box-shadow: 4px 4px 0 0 var(--nb-ink);
+  overflow: auto;
+}
+
+.content main pre > code,
+.content main pre .hljs {
+  padding: 16px;
+  background: transparent;
+  color: var(--nb-ink);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.content main pre > .buttons {
+  top: 6px;
+  right: 6px;
+}
+
+.content main pre > .buttons button {
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 2px 0 0;
+  border: 2px solid var(--nb-ink);
+  border-radius: 0;
+  background: var(--nb-white);
+  box-shadow: 2px 2px 0 0 var(--nb-ink);
+}
+
+.content main pre > .buttons button:hover {
+  background: var(--nb-yellow);
+}
+
+.content main pre > .buttons button.clip-button::before {
+  filter: none;
+}
+
+.content main pre:focus-within > .buttons {
+  visibility: visible;
+  opacity: 1;
+}
+
+/* Tables: a ruled ledger. */
+.content main .table-wrapper {
+  margin: 22px 0;
+  box-shadow: 4px 4px 0 0 var(--nb-ink);
+}
+
+.content main table {
+  width: 100%;
+  margin: 0;
+  border: 4px solid var(--nb-ink);
+  border-collapse: collapse;
+  background: var(--nb-white);
+  font-size: 14px;
+}
+
+.content main th,
+.content main td {
+  padding: 8px 12px;
+  border: 3px solid var(--nb-ink);
+  text-align: left;
+  vertical-align: top;
+}
+
+.content main thead th,
+.content main thead td {
+  background: var(--nb-ink);
+  color: var(--nb-yellow);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.content main tbody tr:nth-child(even) {
+  background: var(--nb-ground);
+}
+
+/* Blockquotes: a blush band (unused today, kept for future notes). */
+.content main blockquote {
+  margin: 22px 0;
+  padding: 12px 16px;
+  border: 4px solid var(--nb-ink);
+  border-inline-start-width: 10px;
+  border-inline-start-color: var(--nb-red);
+  background: var(--nb-blush);
+  box-shadow: 4px 4px 0 0 var(--nb-ink);
+  color: var(--nb-ink);
+}
+
+.content main blockquote p {
+  margin: 6px 0;
+}
+
+.content main kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  border: 2px solid var(--nb-ink);
+  border-radius: 0;
+  background: var(--nb-white);
+  box-shadow: 2px 2px 0 0 var(--nb-ink);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* --- Page navigation & footer ----------------------------------------- */
+
+.nav-chapters,
+.mobile-nav-chapters {
+  width: 44px;
+  height: 44px;
+  border: 4px solid var(--nb-ink);
+  border-radius: 0;
+  background: var(--nb-red);
+  color: var(--nb-ink);
+  box-shadow: 4px 4px 0 0 var(--nb-ink);
+}
+
+.nav-chapters:hover,
+.mobile-nav-chapters:hover {
+  background: var(--nb-ink);
+  color: var(--nb-yellow);
+}
+
+/* Close the white sheet with a red field band, edge to edge. */
+.content main .zou-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  margin: 40px -34px -36px;
+  padding: 14px 34px;
+  border: 0;
+  border-top: 4px solid var(--nb-ink);
+  background: var(--nb-red);
+  color: var(--nb-ink);
+  box-shadow: none;
+}
+
+.zou-footer-brand {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.zou-footer-brand strong {
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.zou-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.zou-footer-links a,
+.zou-footer-links a:link,
+.zou-footer-links a:visited {
+  display: inline-block;
+  padding: 4px 8px;
+  border: 2px solid var(--nb-ink);
+  background: var(--nb-yellow);
+  color: var(--nb-ink);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.zou-footer-links a:hover,
+.zou-footer-links a:focus-visible {
+  background: var(--nb-ink);
+  color: var(--nb-yellow);
+}
+
+/* --- Responsive -------------------------------------------------------- */
+
+@media (max-width: 1080px) {
+  :root,
+  .light,
+  .rust,
+  .coal,
+  .navy,
+  .ayu {
+    --page-padding: 16px;
+    --content-max-width: 760px;
+  }
+
+  .content main {
+    margin: 16px auto;
+    padding: 22px 20px 28px;
+  }
+
+  .content main > h1:first-of-type {
+    margin: -22px -20px 18px;
+    padding: 18px 20px;
+  }
+
+  .content main .zou-footer {
+    margin: 32px -20px -28px;
+    padding: 12px 20px;
+  }
+}
+
+@media (max-width: 720px) {
+  :root,
+  .light,
+  .rust,
+  .coal,
+  .navy,
+  .ayu {
+    --page-padding: 10px;
+    --menu-bar-height: 60px;
+  }
+
+  body {
+    font-size: 1.6rem;
+  }
+
+  #mdbook-menu-bar {
+    gap: 5px;
+    padding: 6px 8px;
+  }
+
+  #mdbook-menu-bar .left-buttons,
+  #mdbook-menu-bar .right-buttons {
+    gap: 5px;
+  }
+
+  #mdbook-menu-bar .right-buttons a[title="Print this book"],
+  #mdbook-menu-bar .right-buttons a[rel="edit"] {
+    display: none;
+  }
+
+  .menu-title {
+    gap: 6px;
+    padding-inline: 4px;
+    font-size: 22px;
+  }
+
+  .menu-title-arrow {
+    display: none;
+  }
+
+  .menu-title-chip {
+    padding: 2px 5px;
+    font-size: 9px;
+  }
+
+  .content main {
+    margin: 10px auto;
+    padding: 18px 14px 22px;
+    border-width: 3px;
+    box-shadow: 3px 3px 0 0 var(--nb-ink);
+  }
+
+  .content main > h1:first-of-type {
+    margin: -18px -14px 16px;
+    padding: 15px 14px;
+    font-size: 26px;
+  }
+
+  .content main h2 {
+    margin-top: 28px;
+    font-size: 21px;
+  }
+
+  .content main h3 {
+    margin-top: 22px;
+    font-size: 17px;
+  }
+
+  .content main p,
+  .content main li {
+    font-size: 15px;
+  }
+
+  .content main pre {
+    box-shadow: 3px 3px 0 0 var(--nb-ink);
+  }
+
+  .content main table {
+    font-size: 13px;
+  }
+
+  .content main th,
+  .content main td {
+    padding: 6px 8px;
+  }
+
+  .zou-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .content main .zou-footer {
+    margin: 28px -14px -22px;
+    padding: 12px 14px;
+  }
+}
+
+@media (max-width: 560px) {
+  .content main table {
+    font-size: 12px;
+  }
+
+  .content main th,
+  .content main td {
+    padding: 5px 5px;
+  }
+
+  /* Flags are reference values: never break them mid-token. */
+  .content main td:first-child code {
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 400px) {
+  .menu-title-chip {
+    display: none;
+  }
+
+  .content main > h1:first-of-type {
+    font-size: 23px;
+  }
+}
+
+/* --- Motion & print ---------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+*, *::before, *::after {
+  transition-duration: 0s;
+}
+
+@media print {
+  .menu-bar,
+  .sidebar,
+  .nav-chapters,
+  .mobile-nav-chapters,
+  .zou-footer {
+    display: none !important;
+  }
+
+  .content main {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .content main > h1:first-of-type {
+    margin: 0 0 18px;
+    padding: 0;
+    border-bottom: 3px solid var(--nb-ink);
+    background: transparent;
+  }
+}
