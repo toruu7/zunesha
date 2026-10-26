@@ -22,6 +22,11 @@
 # The binary lands in <prefix>/bin/zou and the dashboard in
 # <prefix>/web/out — the daemon auto-discovers `web/out` by walking up from
 # the executable, so no environment variables are needed.
+#
+# If <prefix>/bin is not on PATH, the installer adds one idempotent line to
+# the startup file(s) for your shell (bash, zsh, fish, or ~/.profile) and
+# prints the reload command. Use --no-modify-path to leave startup files
+# untouched.
 set -eu
 
 # --- defaults (override with flags) -----------------------------------------
@@ -32,6 +37,7 @@ TAG=""                                     # --version (optional path segment)
 TARBALL=""                                 # --tarball (full URL override)
 PROFILE="release"                          # --profile
 DASHBOARD=1                                # --no-dashboard to disable
+MODIFY_PATH=1                              # --no-modify-path to disable
 UNINSTALL=0
 
 die()  { printf 'install.sh: error: %s\n' "$1" >&2; exit 1; }
@@ -57,7 +63,8 @@ Usage: install.sh [flags]
   --profile NAME      cargo profile for source builds (default: release;
                       use dev for a much faster local build).
   --no-dashboard      Do not build/serve the web dashboard.
-  --uninstall         Remove the binary and dashboard from --prefix.
+  --no-modify-path    Do not edit shell startup files; print the PATH line.
+  --uninstall         Remove the binary, dashboard, and managed PATH entry.
   --help              This text.
 
 Examples:
@@ -85,6 +92,7 @@ while [ $# -gt 0 ]; do
         --profile)         need_value "$1" "$#"; PROFILE=$2; shift 2 ;;
         --profile=*)       PROFILE=${1#*=}; shift ;;
         --no-dashboard)    DASHBOARD=0; shift ;;
+        --no-modify-path)  MODIFY_PATH=0; shift ;;
         --uninstall)       UNINSTALL=1; shift ;;
         --help|-h)         usage; exit 0 ;;
         *)                 die "unknown flag: $1 (see --help)" ;;
@@ -95,12 +103,141 @@ BIN_DIR="$PREFIX/bin"
 BIN="$BIN_DIR/zou"
 DASH_DIR="$PREFIX/web/out"
 
+# --- shell PATH integration ------------------------------------------------
+# install.sh runs as a child process, so it cannot change the calling shell's
+# PATH. When <prefix>/bin is missing, append an idempotent line to the startup
+# file(s) the user's shell reads next time. The line checks PATH first, so
+# sourcing both .bashrc and .profile cannot add the directory twice.
+sh_quote() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+SHELL_NAME=${SHELL:-}
+SHELL_NAME=${SHELL_NAME##*/}
+ZSH_DIR=${ZDOTDIR:-$HOME}
+FISH_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish"
+
+POSIX_PATH_LINE="case \":\$PATH:\" in *:$(sh_quote "$BIN_DIR"):*) ;; *) PATH=$(sh_quote "$BIN_DIR"):\"\$PATH\" ;; esac; export PATH"
+FISH_PATH_LINE="if not contains $(sh_quote "$BIN_DIR") \$PATH; set -gx PATH $(sh_quote "$BIN_DIR") \$PATH; end"
+PATH_MARKER="# zou: PATH entry for $BIN_DIR (managed by install.sh)"
+
+path_is_set() {
+    case ":$PATH:" in
+        *":$BIN_DIR:"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+PATH_ADDED=0
+PATH_FOUND=0
+
+add_path_line() { # $1 = startup file, $2 = line to add
+    rc=$1
+    line=$2
+    [ -n "$rc" ] || return 0
+    if [ -f "$rc" ] && grep -Fqx "$line" "$rc" 2>/dev/null; then
+        PATH_FOUND=1
+        return 0
+    fi
+    rcdir=$(dirname "$rc")
+    if [ ! -d "$rcdir" ]; then
+        mkdir -p "$rcdir" 2>/dev/null || {
+            warn "could not create $rcdir; add this line manually:"
+            warn "  $line"
+            return 1
+        }
+    fi
+    if { printf '\n%s\n%s\n' "$PATH_MARKER" "$line" >> "$rc"; } 2>/dev/null; then
+        PATH_ADDED=1
+        note "added PATH entry to $rc"
+    else
+        warn "could not write $rc; add this line manually:"
+        warn "  $line"
+    fi
+}
+
+add_path_to_shell_rcs() {
+    case "$SHELL_NAME" in
+        bash)
+            add_path_line "$HOME/.bashrc" "$POSIX_PATH_LINE"
+            # A login bash reads the first of these; interactive shells read
+            # .bashrc. Add to both sides so either kind of shell gets PATH.
+            if [ -f "$HOME/.bash_profile" ]; then
+                add_path_line "$HOME/.bash_profile" "$POSIX_PATH_LINE"
+            elif [ -f "$HOME/.bash_login" ]; then
+                add_path_line "$HOME/.bash_login" "$POSIX_PATH_LINE"
+            else
+                add_path_line "$HOME/.profile" "$POSIX_PATH_LINE"
+            fi
+            ;;
+        zsh)
+            add_path_line "$ZSH_DIR/.zshrc" "$POSIX_PATH_LINE"
+            add_path_line "$ZSH_DIR/.zprofile" "$POSIX_PATH_LINE"
+            ;;
+        fish)
+            add_path_line "$FISH_CONFIG" "$FISH_PATH_LINE"
+            ;;
+        *)
+            add_path_line "$HOME/.profile" "$POSIX_PATH_LINE"
+            ;;
+    esac
+}
+
+remove_path_line() { # $1 = startup file
+    rc=$1
+    [ -f "$rc" ] || return 0
+    grep -Fqx "$PATH_MARKER" "$rc" 2>/dev/null || return 0
+    tmp="$rc.zou.$$"
+    if cp -p "$rc" "$tmp" 2>/dev/null \
+        && awk -v m="$PATH_MARKER" -v p="$POSIX_PATH_LINE" -v f="$FISH_PATH_LINE" \
+            '$0 != m && $0 != p && $0 != f' "$rc" > "$tmp" 2>/dev/null; then
+        if [ -L "$rc" ]; then
+            # Write through dotfile symlinks instead of replacing the link.
+            if cat "$tmp" > "$rc" 2>/dev/null; then
+                rm -f "$tmp"
+                note "removed PATH entry from $rc"
+            else
+                rm -f "$tmp"
+                warn "could not clean PATH entry from $rc"
+            fi
+        else
+            if mv "$tmp" "$rc" 2>/dev/null; then
+                note "removed PATH entry from $rc"
+            else
+                rm -f "$tmp"
+                warn "could not clean PATH entry from $rc"
+            fi
+        fi
+    else
+        rm -f "$tmp"
+        warn "could not clean PATH entry from $rc"
+    fi
+}
+
+remove_path_everywhere() {
+    remove_path_line "$HOME/.bashrc"
+    remove_path_line "$HOME/.profile"
+    remove_path_line "$HOME/.bash_profile"
+    remove_path_line "$HOME/.bash_login"
+    remove_path_line "$HOME/.zshrc"
+    remove_path_line "$HOME/.zprofile"
+    if [ "$ZSH_DIR" != "$HOME" ]; then
+        remove_path_line "$ZSH_DIR/.zshrc"
+        remove_path_line "$ZSH_DIR/.zprofile"
+    fi
+    remove_path_line "$HOME/.config/fish/config.fish"
+    if [ "$FISH_CONFIG" != "$HOME/.config/fish/config.fish" ]; then
+        remove_path_line "$FISH_CONFIG"
+    fi
+}
+
 # --- uninstall -------------------------------------------------------------
 if [ "$UNINSTALL" = 1 ]; then
     removed=0
     for path in "$BIN" "$PREFIX/web"; do
         if [ -e "$path" ]; then rm -rf "$path"; removed=1; fi
     done
+    remove_path_everywhere
     [ "$removed" = 1 ] && note "removed zou from $PREFIX" || note "nothing to remove in $PREFIX"
     exit 0
 fi
@@ -230,14 +367,62 @@ fi
 "$BIN" --version >/dev/null 2>&1 || die "installed binary failed to run ($BIN)"
 note "installed $("$BIN" --version 2>/dev/null || echo zou) → $BIN"
 
-case ":$PATH:" in
-    *":$BIN_DIR:"*) ;;
-    *) warn "$BIN_DIR is not on your PATH; add it for this shell:
-      export PATH=\"$BIN_DIR:\$PATH\"
-    (and put that line in ~/.profile or your shell rc to make it permanent)" ;;
-esac
+PATH_READY=0
+PATH_RELOAD=0
+PATH_MANUAL=0
+
+if path_is_set; then
+    PATH_READY=1
+elif [ "$MODIFY_PATH" = 1 ]; then
+    PATH_ADDED=0
+    PATH_FOUND=0
+    add_path_to_shell_rcs
+    if [ "$PATH_ADDED" = 1 ]; then
+        PATH_RELOAD=1
+        note "PATH updated for new shells."
+    elif [ "$PATH_FOUND" = 1 ]; then
+        PATH_RELOAD=1
+        note "$BIN_DIR is already configured in your shell startup files."
+    else
+        PATH_MANUAL=1
+    fi
+else
+    PATH_MANUAL=1
+    note "skipping shell startup edits (--no-modify-path)."
+fi
+
+if [ "$PATH_MANUAL" = 1 ]; then
+    warn "$BIN_DIR is not on PATH; add this line to your shell startup file:"
+    if [ "$SHELL_NAME" = fish ]; then
+        warn "  $FISH_PATH_LINE"
+    else
+        warn "  export PATH=$(sh_quote "$BIN_DIR"):\"\$PATH\""
+    fi
+fi
+
+if [ "$PATH_RELOAD" = 1 ]; then
+    if [ -n "${SHELL:-}" ]; then
+        note "reload this shell to use zou now: exec \"$SHELL\" -l"
+    else
+        note "open a new terminal to use zou now."
+    fi
+fi
 
 [ -d "$DASH_DIR" ] && note "dashboard: $DASH_DIR (auto-discovered by \`zou start\`)" \
                   || note "no dashboard installed (daemon-only; build it later from web/ or pass --release-base with a bundled tarball)"
 
-printf '\nNext steps:\n  cd your-project && zou init\n  zou plan "your feature request"\n  zou start          # dashboard on http://127.0.0.1:57804\n'
+printf '\nNext steps:\n'
+if [ "$PATH_READY" = 0 ]; then
+    if [ "$PATH_RELOAD" = 1 ]; then
+        if [ -n "${SHELL:-}" ]; then
+            printf '  exec "%s" -l   # reload PATH (or open a new terminal)\n' "$SHELL"
+        else
+            printf '  open a new terminal to reload PATH\n'
+        fi
+    elif [ "$SHELL_NAME" = fish ]; then
+        printf '  %s   # add to your fish config, then reopen\n' "$FISH_PATH_LINE"
+    else
+        printf '  export PATH=%s:"$PATH"   # add to your shell rc, then reopen\n' "$(sh_quote "$BIN_DIR")"
+    fi
+fi
+printf '  cd your-project && zou init\n  zou plan "your feature request"\n  zou start          # dashboard on http://127.0.0.1:57804\n'

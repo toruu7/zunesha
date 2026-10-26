@@ -86,12 +86,17 @@ at a mirror you can authenticate to.
 | `--source` | off | Skip the prebuilt and build from `--repo` instead. |
 | `--profile NAME` | `release` | cargo profile for source builds (`dev` = much faster). |
 | `--no-dashboard` | off | Daemon-only install. |
-| `--uninstall` | — | Remove the binary and dashboard from the prefix. |
+| `--no-modify-path` | off | Leave shell startup files alone; print the PATH line. |
+| `--uninstall` | — | Remove the binary, dashboard, and managed PATH entry. |
 
 The daemon finds the dashboard by walking up from the executable, so
-`<prefix>/web/out` needs no environment variables. The script prints a PATH
-hint if `<prefix>/bin` isn't on your PATH. Source builds skip the dashboard
-with a warning when node/npm are absent.
+`<prefix>/web/out` needs no environment variables. If `<prefix>/bin` is not
+on PATH, the script adds an idempotent entry to the startup file(s) for your
+shell — `~/.bashrc` plus the login file for bash, `~/.zshrc` and
+`~/.zprofile` for zsh, `config.fish` for fish, or `~/.profile` otherwise —
+and prints the command to reload the shell. Pass `--no-modify-path` to leave
+startup files untouched. `--uninstall` removes the managed PATH entry too.
+Source builds skip the dashboard with a warning when node/npm are absent.
 
 ### Install with cargo
 
@@ -800,6 +805,7 @@ npm run build       # static export → web/out
 
 # End-to-end (needs a built `zou`; exercises git, the daemon, WebSockets)
 sh scripts/e2e.sh
+sh scripts/test-install.sh   # installer PATH + uninstall (fake tarball)
 node scripts/bench.mjs   # runtime + memory benchmarks
 ```
 

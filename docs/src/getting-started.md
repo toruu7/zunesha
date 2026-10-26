@@ -17,6 +17,11 @@ curl -fsSL https://raw.githubusercontent.com/toruu7/zunesha/master/install.sh | 
 # dashboard → ~/.local/web/out (found automatically by the daemon)
 ```
 
+If `~/.local/bin` is not already on PATH, the installer adds an idempotent
+entry to your shell startup files and prints the reload command. Open a new
+terminal (or run `exec "$SHELL" -l`) before running `zou`; pass
+`--no-modify-path` to leave startup files untouched.
+
 While the repository is private, run the installer from a checkout instead
 (the raw URL above is not reachable without credentials):
 

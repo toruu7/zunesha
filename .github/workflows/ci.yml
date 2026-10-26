@@ -66,6 +66,13 @@ jobs:
       - name: End-to-end sweep (git + daemon + WebSockets)
         run: sh scripts/e2e.sh
 
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installer PATH integration
+        run: sh scripts/test-install.sh
+
   docs:
     runs-on: ubuntu-latest
     steps:
