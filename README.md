@@ -139,9 +139,9 @@ workspace and dashboard. Every push that changes the project bumps
 ```sh
 sh scripts/bump-version.sh minor   # major|minor|patch, or an explicit X.Y.Z
 git add Cargo.toml Cargo.lock web/package.json web/package-lock.json
-git commit -m "release: v0.4.0"
-git tag v0.4.0
-git push origin master v0.4.0      # tag triggers the release workflow
+git commit -m "release: v0.4.1"
+git tag v0.4.1
+git push origin master v0.4.1      # tag triggers the release workflow
 ```
 
 The script keeps `Cargo.toml`, `Cargo.lock`, `web/package.json`, and
@@ -551,7 +551,10 @@ every ready (`TODO`) task:
   count and asserts it never exceeds the cap.
 - **Isolated execution** — each agent runs as its own process *inside*
   `.zou/ws/<task_id>` (never the user's tree), with piped
-  stdin/stdout/stderr.
+  stdin/stdout/stderr. The child is pinned with `PWD`/`INIT_CWD`, and parent
+  agent-session markers (`OPENCODE*`, `CLAUDECODE`, `CLAUDE_CODE_*`) are
+  stripped, so starting `zou` from inside another agent cannot retarget the
+  child at the caller's checkout.
 - **Live log capture** — both streams are read line-by-line, broadcast on a
   `tokio::sync::broadcast` channel (the daemon relays this to the dashboard),
   and periodically flushed to the task's `worker_logs` column. OpenCode's

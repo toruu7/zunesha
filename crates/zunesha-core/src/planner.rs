@@ -231,12 +231,14 @@ fn run_planner(
     let err_path = scratch.path().join("stderr");
 
     let prompt = build_prompt(request, repo_root);
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
-        .current_dir(repo_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(std::fs::File::create(&out_path)?))
-        .stderr(Stdio::from(std::fs::File::create(&err_path)?))
+        .stderr(Stdio::from(std::fs::File::create(&err_path)?));
+    crate::child_env::prepare(&mut command, repo_root);
+    let mut child = command
         .spawn()
         .map_err(|e| Error::Planner(format!("failed to start planner `{program}`: {e}")))?;
 

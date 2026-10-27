@@ -814,14 +814,18 @@ async fn run_agent_once(
 ) -> Result<bool> {
     let (program, args) = pool.agent.render(prompt, ws_dir);
 
-    // Spawn the agent with piped output, running inside the workspace.
-    let mut child = Command::new(&program)
+    // Spawn the agent with piped output, running inside the workspace. The
+    // environment is pinned too: inheriting a parent OpenCode/Claude session
+    // can make the CLI resolve the caller's project instead of this workspace.
+    let mut command = Command::new(&program);
+    command
         .args(&args)
-        .current_dir(ws_dir)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    crate::child_env::prepare(&mut command, Path::new(ws_dir));
+    let mut child = command
         .spawn()
         .map_err(|e| Error::Workspace(format!("failed to spawn agent `{program}`: {e}")))?;
 
@@ -1475,6 +1479,37 @@ mod tests {
             "the map is reference material and rides last: {logs:?}"
         );
         assert_eq!(status_of(&db, "t0"), TaskStatus::Review);
+    }
+
+    #[tokio::test]
+    async fn agents_run_with_workspace_pwd_and_without_parent_session_markers() {
+        let (_repo, paths) = scratch_install();
+        let db = Database::open(&paths.state_db()).unwrap();
+        ready_tasks(&db, 1);
+
+        std::env::set_var("OPENCODE_ZOU_WORKER_LEAK", "parent-session");
+
+        let pool = WorkerPool::new(
+            paths.clone(),
+            1,
+            AgentCommand::shell(
+                "echo \"pwd-ok=$(test \\\"$PWD\\\" = \\\"$(pwd)\\\" && echo yes || echo no)\"; \
+                 echo \"leak=${OPENCODE_ZOU_WORKER_LEAK-unset}\"",
+            ),
+        );
+
+        let handle = pool.spawn_task("t0".into()).await.unwrap();
+        assert!(handle.await.unwrap().unwrap(), "agent exit 0 => success");
+
+        let db = Database::open(&paths.state_db()).unwrap();
+        let logs = db.get_task("t0").unwrap().unwrap().worker_logs;
+        assert!(logs.contains("pwd-ok=yes"), "PWD must match cwd: {logs:?}");
+        assert!(
+            logs.contains("leak=unset"),
+            "parent session env leaked into the agent: {logs:?}"
+        );
+
+        std::env::remove_var("OPENCODE_ZOU_WORKER_LEAK");
     }
 
     #[tokio::test]

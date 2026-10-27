@@ -178,17 +178,17 @@ pub async fn run_evaluation(
         };
     };
 
-    let mut child = match Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
-        .current_dir(workspace)
         .env("CI", "1")
         .env("NO_COLOR", "1")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-    {
+        .kill_on_drop(true);
+    crate::child_env::prepare(&mut command, workspace);
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
             return EvalOutcome {

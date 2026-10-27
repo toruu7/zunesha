@@ -29,6 +29,8 @@
 //! record of uncommitted work and instruction files another agent left in the
 //! source checkout, injected into planner and worker prompts.
 
+mod child_env;
+
 pub mod codebase_map;
 pub mod config;
 pub mod dag;
