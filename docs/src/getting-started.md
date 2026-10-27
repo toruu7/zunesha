@@ -48,6 +48,25 @@ cd web && npm install && npm run build   # → web/out, served by the daemon
 locates `<prefix>/web/out` by walking up from its own binary, so no
 environment variables are needed.
 
+## Update
+
+Check for a newer release and install it:
+
+```sh
+zou update           # check, then prompt before updating
+zou update --check   # report only
+zou update --yes     # no prompt
+```
+
+The install records its source in `<prefix>/share/zou/install.json`.
+`zou update` compares the running version with the highest `vX.Y.Z` Git tag
+in that source, says `up to date` when there is nothing newer, and otherwise
+runs the newer tag's `install.sh` after confirmation. Use
+`--repo <checkout-or-url>` (or `ZOU_UPDATE_REPO`) if the source moved, and
+restart `zou start` after updating. See
+[versioning and release steps](reference.md#versioning) for how to publish a
+new version.
+
 ## Choose a model
 
 The default agent is OpenCode. Pick a model once — the choice is saved

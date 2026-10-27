@@ -11,7 +11,10 @@
 //! * `recover` – release stuck tasks (mid-run/mid-validation/mid-merge) after
 //!   a crash.
 //! * `status`  – print task counts and installation info.
+//! * `update`  – check release tags and optionally reinstall.
 //! * `start`   – serve the local API, WebSockets, and dashboard.
+
+mod update;
 
 use std::collections::HashSet;
 use std::io::{self, Write};
@@ -117,6 +120,29 @@ enum Commands {
         #[arg(long)]
         clear: bool,
     },
+    /// Check for a newer release and update this installation.
+    ///
+    /// Compares the running binary's version with the highest `vX.Y.Z` tag in
+    /// the source recorded at install time. When a newer tag exists it asks
+    /// before running that tag's `install.sh`; an installed version that is
+    /// already current prints `up to date`.
+    Update {
+        /// Source checkout or Git URL to check instead of the install record.
+        #[arg(long, value_name = "URL|PATH")]
+        repo: Option<String>,
+        /// Install root to update (defaults to the running binary's prefix).
+        #[arg(long, value_name = "DIR")]
+        prefix: Option<PathBuf>,
+        /// Only report whether a newer release exists.
+        #[arg(long)]
+        check: bool,
+        /// Install without asking for confirmation.
+        #[arg(long, short = 'y')]
+        yes: bool,
+        /// Do not rebuild/install the dashboard.
+        #[arg(long)]
+        no_dashboard: bool,
+    },
     /// Start the local API + WebSocket server (and agent pool).
     ///
     /// Serves the dashboard and REST/WebSocket API on localhost until Ctrl-C.
@@ -165,6 +191,19 @@ fn main() -> ExitCode {
             show,
             clear,
         } => cmd_model(model.as_deref(), list, show, clear),
+        Commands::Update {
+            repo,
+            prefix,
+            check,
+            yes,
+            no_dashboard,
+        } => update::run(update::Options {
+            repo,
+            prefix,
+            check,
+            yes,
+            no_dashboard,
+        }),
         Commands::Start {
             host,
             port,

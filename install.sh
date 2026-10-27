@@ -27,6 +27,9 @@
 # the startup file(s) for your shell (bash, zsh, fish, or ~/.profile) and
 # prints the reload command. Use --no-modify-path to leave startup files
 # untouched.
+#
+# The source, prefix, release feed, and installed version are recorded in
+# <prefix>/share/zou/install.json so `zou update` can find newer release tags.
 set -eu
 
 # --- defaults (override with flags) -----------------------------------------
@@ -102,6 +105,68 @@ done
 BIN_DIR="$PREFIX/bin"
 BIN="$BIN_DIR/zou"
 DASH_DIR="$PREFIX/web/out"
+INSTALL_RECORD="$PREFIX/share/zou/install.json"
+
+# A relative local checkout would break when the updater clones from its temp
+# directory; make it absolute before it is recorded in the install metadata.
+if [ -d "$REPO" ]; then
+    REPO=$(CDPATH= cd -- "$REPO" && pwd)
+fi
+
+# Escape a value for a JSON string. Newlines/tabs are flattened: they cannot
+# occur in a practical install path and the record must stay valid JSON.
+json_escape() {
+    printf '%s' "$1" | tr '\n\r\t' '   ' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+# The remote recorded for updates: origin for a local checkout, otherwise the
+# repo URL itself (a prebuilt-only install uses the default repo URL).
+source_remote() {
+    if [ -d "$REPO" ] && has_git; then
+        remote=$(git -C "$REPO" remote get-url origin 2>/dev/null || true)
+        if [ -n "$remote" ]; then
+            printf '%s' "$remote"
+            return 0
+        fi
+    fi
+    printf '%s' "$REPO"
+}
+
+has_git() { command -v git >/dev/null 2>&1; }
+
+# The feed to use for pinned updates. `latest/download` becomes
+# `releases/download` so `--version vX.Y.Z` can be inserted; a direct
+# --tarball has no feed, so future updates fall back to a source build.
+update_release_base() {
+    [ -z "$TARBALL" ] || return 0
+    is_placeholder "$RELEASE_BASE" && return 0
+    case "$RELEASE_BASE" in
+        */releases/latest/download) printf '%s' "${RELEASE_BASE%/latest/download}/download" ;;
+        *) printf '%s' "$RELEASE_BASE" ;;
+    esac
+}
+
+write_install_record() {
+    mkdir -p "$(dirname "$INSTALL_RECORD")" 2>/dev/null || {
+        warn "could not create $(dirname "$INSTALL_RECORD"); \`zou update\` will need --repo"
+        return 0
+    }
+    version=$("$BIN" --version 2>/dev/null | sed -n '1s/^[^ ]* //p' || true)
+    remote=$(source_remote)
+    release_base=$(update_release_base)
+    installed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)
+    cat > "$INSTALL_RECORD" <<EOF
+{
+  "version": "$(json_escape "$version")",
+  "tag": "$(json_escape "$TAG")",
+  "prefix": "$(json_escape "$PREFIX")",
+  "repo": "$(json_escape "$REPO")",
+  "remote": "$(json_escape "$remote")",
+  "release_base": "$(json_escape "$release_base")",
+  "installed_at": "$(json_escape "$installed_at")"
+}
+EOF
+}
 
 # --- shell PATH integration ------------------------------------------------
 # install.sh runs as a child process, so it cannot change the calling shell's
@@ -234,7 +299,7 @@ remove_path_everywhere() {
 # --- uninstall -------------------------------------------------------------
 if [ "$UNINSTALL" = 1 ]; then
     removed=0
-    for path in "$BIN" "$PREFIX/web"; do
+    for path in "$BIN" "$PREFIX/web" "$PREFIX/share/zou"; do
         if [ -e "$path" ]; then rm -rf "$path"; removed=1; fi
     done
     remove_path_everywhere
@@ -366,6 +431,7 @@ fi
 # --- verify + report -------------------------------------------------------
 "$BIN" --version >/dev/null 2>&1 || die "installed binary failed to run ($BIN)"
 note "installed $("$BIN" --version 2>/dev/null || echo zou) → $BIN"
+write_install_record
 
 PATH_READY=0
 PATH_RELOAD=0
@@ -425,4 +491,4 @@ if [ "$PATH_READY" = 0 ]; then
         printf '  export PATH=%s:"$PATH"   # add to your shell rc, then reopen\n' "$(sh_quote "$BIN_DIR")"
     fi
 fi
-printf '  zou model          # choose the OpenCode model used by the agent\n  cd your-project && zou init\n  zou plan "your feature request"\n  zou start          # dashboard on http://127.0.0.1:57804\n'
+printf '  zou model          # choose the OpenCode model used by the agent\n  zou update         # check for newer releases later\n  cd your-project && zou init\n  zou plan "your feature request"\n  zou start          # dashboard on http://127.0.0.1:57804\n'

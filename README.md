@@ -63,7 +63,7 @@ curl -fsSL https://raw.githubusercontent.com/toruu7/zunesha/master/install.sh \
 
 # Pin a prebuilt release instead of "latest":
 curl -fsSL https://raw.githubusercontent.com/toruu7/zunesha/master/install.sh \
-  | sh -s -- --release-base https://github.com/toruu7/zunesha/releases/download --version v0.1.0
+  | sh -s -- --release-base https://github.com/toruu7/zunesha/releases/download --version v0.2.0
 
 # Fully local:
 sh install.sh --tarball file:///tmp/rel/zou-linux-amd64.tar.gz --prefix ~/.local
@@ -97,6 +97,56 @@ shell — `~/.bashrc` plus the login file for bash, `~/.zshrc` and
 and prints the command to reload the shell. Pass `--no-modify-path` to leave
 startup files untouched. `--uninstall` removes the managed PATH entry too.
 Source builds skip the dashboard with a warning when node/npm are absent.
+
+### Updates
+
+After installing, `zou update` checks the release tags in the source recorded
+by `install.sh` and compares them with the running binary:
+
+```sh
+zou update           # check; prompt before installing a newer release
+zou update --check   # only report (no prompt, no install)
+zou update --yes     # install without prompting
+```
+
+If the installed version is current it prints `✔ up to date`; when a newer
+tag exists it shows the old/new versions and asks before rebuilding. A
+running daemon keeps the old binary, so restart `zou start` afterwards.
+
+The installer records its source in
+`<prefix>/share/zou/install.json` (for example `~/.local/share/zou/install.json`).
+If that checkout moved, override it:
+
+```sh
+zou update --repo /path/to/zunesha        # local checkout
+zou update --repo git@github.com:you/zunesha.git
+# or set ZOU_UPDATE_REPO once
+```
+
+`zou update` uses the same `install.sh` and `--prefix` as the original
+install; pass `--prefix DIR` or `--no-dashboard` to adjust the update.
+
+### Versioning
+
+Zunesha uses semantic versioning with one version shared by the Rust
+workspace and dashboard. Every push that changes the project bumps
+`[workspace.package].version` and gets a matching `vX.Y.Z` tag:
+
+- **major** — breaking changes;
+- **minor** — new features or behavior;
+- **patch** — fixes, docs, tests, and housekeeping.
+
+```sh
+sh scripts/bump-version.sh minor   # major|minor|patch, or an explicit X.Y.Z
+git add Cargo.toml Cargo.lock web/package.json web/package-lock.json
+git commit -m "release: v0.3.0"
+git tag v0.3.0
+git push origin master v0.3.0      # tag triggers the release workflow
+```
+
+The script keeps `Cargo.toml`, `Cargo.lock`, `web/package.json`, and
+`web/package-lock.json` in sync. `zou update` and
+`.github/workflows/release.yml` both key off the tags.
 
 ### Install with cargo
 
@@ -302,6 +352,7 @@ switched off.
 |-----------------------|------------------|------------------------------------------------|
 | `ZOU_AGENT_CMD`      | CLI / daemon     | Agent command template; overrides the model saved by `zou model` (see above). |
 | `ZOU_CONFIG_FILE`    | CLI / daemon     | Override the user-wide config path (default `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`). |
+| `ZOU_UPDATE_REPO`    | `zou update`     | Source checkout or Git URL to check instead of the install record. |
 | `ZOU_PLANNER_CMD`    | CLI / daemon     | Planning command: prompt on stdin, JSON plan on stdout; unset = built-in planner (see above). |
 | `ZOU_PLANNER_TIMEOUT_SECS` | CLI / daemon | Per-plan time limit (default `120`).          |
 | `ZOU_EVAL_CMD`       | CLI / daemon     | Validation command template; unset = auto-detect (see above). |
@@ -369,6 +420,8 @@ zou run     [--jobs N] [--follow]       # run the agent on ready tasks, in paral
 zou approve <TASK_ID>                   # merge reviewed work into the repo (auto-resolves conflicts, Phase 9)
 zou recover [TASK_ID]                   # release stuck IN_PROGRESS/EVALUATING/RESOLVING_CONFLICTS tasks (crash recovery)
 zou model   [MODEL] [--list|--show|--clear]  # choose/save the OpenCode model used by the agent
+zou update  [--check] [--yes] [--repo URL|PATH] [--prefix DIR] [--no-dashboard]
+                                        # check release tags; prompt before updating
 zou status  [--path <PATH>]             # per-status counts + task list
 zou start   [--host H] [--port N] [--jobs N] [--no-resume]  # serve the local API + dashboard (port: --port or ZOU_PORT)
 ```

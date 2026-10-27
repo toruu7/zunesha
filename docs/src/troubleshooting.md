@@ -27,6 +27,23 @@ cd web && npm install && npm run build && cd ..
 If it lives somewhere unusual, pass `--dashboard <dir>` or set
 `ZOU_DASHBOARD_DIR` before `zou start`.
 
+## `zou update` cannot check for updates
+
+`zou update` runs `git ls-remote` against the source recorded by the
+installer. A checkout that moved, a private remote you cannot authenticate to,
+or a missing tag all produce an error rather than a silent no-op. Point it at
+a source you can read:
+
+```sh
+zou update --repo /path/to/zunesha
+zou update --repo git@github.com:toruu7/zunesha.git
+ZOU_UPDATE_REPO=/path/to/zunesha zou update
+```
+
+The installer records this automatically in
+`<prefix>/share/zou/install.json`; reinstalling repairs a stale or malformed
+record. `zou update --check` reports availability without installing.
+
 ## A task is stuck in `IN_PROGRESS` / `EVALUATING` / `RESOLVING_CONFLICTS`
 
 That is what a crash (or Ctrl-C, or a reboot) leaves behind: the claim is

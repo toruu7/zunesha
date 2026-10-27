@@ -67,6 +67,8 @@ assert_file_has "$H/.bashrc" "$H/.local/bin" "bash .bashrc path"
 assert_file_has "$H/.profile" "$H/.local/bin" "bash .profile path"
 assert_file_has "$ROOT/h1.out" "added PATH entry to $H/.bashrc" "bash reports .bashrc update"
 assert_file_has "$ROOT/h1.out" "reload this shell" "bash reports reload"
+assert_file_has "$H/.local/share/zou/install.json" '"version": "9.9.9-test"' "install record records version"
+assert_file_has "$H/.local/share/zou/install.json" "\"prefix\": \"$H/.local\"" "install record records prefix"
 
 # Sourcing both files must leave exactly one copy of the directory.
 PATH_OUT=$(env -i HOME="$H" PATH=/usr/bin:/bin bash --noprofile --norc -c \
@@ -196,7 +198,15 @@ HOME="$H" SHELL=/bin/bash sh "$REPO/install.sh" --uninstall --prefix "$H/.local"
 [ -L "$H/.bashrc" ] && ok "symlink survives uninstall" || bad "symlink lost on uninstall"
 assert_file_lacks "$H/dotfiles/bashrc" "# zou: PATH entry" "symlink target cleaned on uninstall"
 
-# --- 10. help mentions the opt-out ----------------------------------------
+# --- 10. install record includes the requested release tag -----------------
+H="$ROOT/h10"
+mkdir -p "$H"
+run_install "$H" --version v9.9.9 > "$ROOT/h10.out" 2>&1 || fail "tagged install failed"
+assert_file_has "$H/.local/share/zou/install.json" '"tag": "v9.9.9"' "install record records tag"
+HOME="$H" SHELL=/bin/bash sh "$REPO/install.sh" --uninstall --prefix "$H/.local" > "$ROOT/h10-un.out" 2>&1 || fail "tagged uninstall failed"
+[ ! -e "$H/.local/share/zou/install.json" ] && ok "uninstall removes install record" || bad "uninstall left install record"
+
+# --- 11. help mentions the opt-out ----------------------------------------
 if sh "$REPO/install.sh" --help | grep -Fq "no-modify-path"; then ok "help documents --no-modify-path"; else bad "help lacks --no-modify-path"; fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
