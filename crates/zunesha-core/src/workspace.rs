@@ -12,6 +12,7 @@
 //! .zou/ws/<task_id>/
 //! ├── <copy of the repo, respecting .gitignore>
 //! ├── CODEBASE_MAP.md        # Phase 10 orientation tree; git-excluded
+//! ├── PRIOR_AGENT_CONTEXT.md # Phase 12 prior work; git-excluded
 //! └── .git/                  # fresh repo; baseline commit; branch zou/<task_id>
 //! ```
 
@@ -22,6 +23,7 @@ use crate::codebase_map;
 use crate::db::{Database, WorkspaceRecord};
 use crate::error::{Error, Result};
 use crate::paths::ZuneshaPaths;
+use crate::prior_context;
 use crate::task::TaskStatus;
 
 /// Branch prefix for task workspaces.
@@ -72,16 +74,17 @@ impl WorkspaceManager {
     /// 2. Copy the current repo state (tracked + untracked, excluding anything
     ///    `.gitignore`d, plus `.git` and `.zou`) into
     ///    `.zou/ws/<task_id>`.
-    /// 3. `git init` there, write the Phase 10 `CODEBASE_MAP.md` (excluded
-    ///    from this repo only, so it never enters the baseline or a diff),
-    ///    commit the snapshot as a baseline, and check out a dedicated branch
+    /// 3. `git init` there, write the Phase 10 `CODEBASE_MAP.md` and the
+    ///    Phase 12 `PRIOR_AGENT_CONTEXT.md` (both excluded from this repo
+    ///    only, so they never enter the baseline or a diff), commit the
+    ///    snapshot as a baseline, and check out a dedicated branch
     ///    `zou/<task_id>`.
     /// 4. Record the workspace in the database.
     ///
     /// Idempotent: if the workspace already exists and is recorded, it is
-    /// returned unchanged (upgrading a pre-Phase 10 workspace with the map if
-    /// it lacks one). The caller is responsible for moving the task to
-    /// `IN_PROGRESS`.
+    /// returned unchanged (upgrading a pre-Phase 10 workspace with the map, or
+    /// a pre-Phase 12 one with the prior-context document, if missing). The
+    /// caller is responsible for moving the task to `IN_PROGRESS`.
     pub fn create(&self, db: &Database, task_id: &str) -> Result<WorkspaceRecord> {
         validate_task_id(task_id)?;
 
@@ -97,10 +100,18 @@ impl WorkspaceManager {
         if let Some(existing) = db.get_workspace(task_id)? {
             let ws = Path::new(&existing.path);
             if ws.is_dir() {
-                // Self-heal: workspaces from before Phase 10 get the map on
-                // first reuse (install is idempotent and cheap).
+                // Self-heal: workspaces from before Phase 10 / 12 get their
+                // scaffolding on first reuse (install is idempotent and cheap).
                 if !ws.join(codebase_map::MAP_FILE).is_file() {
                     codebase_map::install(ws, self.paths.root())?;
+                }
+                if !ws.join(prior_context::CONTEXT_FILE).is_file()
+                    && prior_context::snapshot_matches(ws, self.paths.root())
+                {
+                    // Only describe source changes this workspace actually
+                    // contains. A stale workspace must not be told to build
+                    // on work that is absent from its snapshot.
+                    prior_context::install(ws, self.paths.root())?;
                 }
                 return Ok(existing);
             }
@@ -122,9 +133,11 @@ impl WorkspaceManager {
         git(&ws_dir, &["init", "--quiet"])?;
         git(&ws_dir, &["config", "user.name", WORKSPACE_GIT_NAME])?;
         git(&ws_dir, &["config", "user.email", WORKSPACE_GIT_EMAIL])?;
-        // Phase 10: orientation map, written before staging so the exclude
-        // rule keeps it out of the baseline (scaffolding, never the code).
+        // Phase 10 / 12: orientation and prior-work scaffolding, written
+        // before staging so the exclude rules keep them out of the baseline
+        // (scaffolding, never the code).
         codebase_map::install(&ws_dir, self.paths.root())?;
+        prior_context::install(&ws_dir, self.paths.root())?;
         git(&ws_dir, &["add", "--all"])?;
         // `--allow-empty` keeps this robust for (near-)empty repositories.
         git(
@@ -175,9 +188,9 @@ impl WorkspaceManager {
 
         // Make sure even untracked files show up in the diff.
         git(ws_dir, &["add", "--all"])?;
-        // Phase 10: scaffolding must never reach the reviewed diff, even if
-        // an agent force-added the map past the exclude rule.
-        untrack_map(ws_dir)?;
+        // Phase 10 / 12: scaffolding must never reach the reviewed diff, even
+        // if an agent force-added it past the exclude rules.
+        untrack_scaffolding(ws_dir)?;
         let output = git(
             ws_dir,
             &["diff", "--cached", "--binary", &record.base_commit, "--"],
@@ -234,9 +247,10 @@ impl WorkspaceManager {
 
         // 1. Ensure the agent's work is committed as `A` (child of `B`).
         git(&ws_dir, &["add", "--all"])?;
-        // Same Phase 10 guard as diff generation: a force-added map must not
-        // enter the commit (it would follow the task through the merge).
-        untrack_map(&ws_dir)?;
+        // Same Phase 10 / 12 guard as diff generation: force-added scaffolding
+        // must not enter the commit (it would follow the task through the
+        // merge).
+        untrack_scaffolding(&ws_dir)?;
         // `--allow-empty` keeps this robust when the workspace already matches
         // its base (e.g. a repeat conflict with no new edits); the merge base
         // is still correct either way, and it also completes a pending merge.
@@ -258,9 +272,11 @@ impl WorkspaceManager {
         )?;
         clear_worktree_except_git(&ws_dir)?;
         copy_repo_snapshot(self.paths.root(), &ws_dir)?;
-        // Phase 10: the rebuild wiped the map — regenerate it for the new
-        // snapshot (the exclude entry survived in `.git/info/exclude`).
+        // Phase 10 / 12: the rebuild wiped the scaffolding — regenerate it for
+        // the new snapshot (the exclude entries survived in
+        // `.git/info/exclude`).
         codebase_map::install(&ws_dir, self.paths.root())?;
+        prior_context::install(&ws_dir, self.paths.root())?;
         git(&ws_dir, &["add", "--all"])?;
         git(
             &ws_dir,
@@ -348,14 +364,14 @@ fn baseline_message(task_id: &str) -> String {
     format!("orchestrator: baseline snapshot for task {task_id}")
 }
 
-/// Drop the orientation map from the workspace index if it got tracked.
+/// Drop generated scaffolding from the workspace index if it got tracked.
 ///
-/// `codebase_map::install` excludes `CODEBASE_MAP.md` from ordinary adds,
-/// but an agent can still force it in (`git add -f`), and a tracked map
-/// would leak into diffs, commits, and merges. `--ignore-unmatch` makes this
-/// a cheap no-op in the normal untracked case; the working-tree file stays
-/// (and stays ignored).
-fn untrack_map(ws_dir: &Path) -> Result<()> {
+/// `codebase_map::install` and `prior_context::install` exclude their files
+/// from ordinary adds, but an agent can still force one in (`git add -f`),
+/// and a tracked scaffold would leak into diffs, commits, and merges.
+/// `--ignore-unmatch` makes this a cheap no-op in the normal untracked case;
+/// the working-tree files stay (and stay ignored).
+fn untrack_scaffolding(ws_dir: &Path) -> Result<()> {
     git(
         ws_dir,
         &[
@@ -364,6 +380,7 @@ fn untrack_map(ws_dir: &Path) -> Result<()> {
             "--quiet",
             "--ignore-unmatch",
             codebase_map::MAP_FILE,
+            prior_context::CONTEXT_FILE,
         ],
     )?;
     Ok(())
@@ -1027,12 +1044,92 @@ mod tests {
     }
 
     #[test]
+    fn create_installs_prior_agent_context_and_keeps_it_out_of_git() {
+        let repo = scratch_repo();
+        let db = Database::open_in_memory().unwrap();
+        let paths = ZuneshaPaths::new(repo.path());
+        std::fs::create_dir_all(paths.workspaces_dir()).unwrap();
+        let mgr = WorkspaceManager::new(paths);
+
+        // Another agent left a tracked edit, an untracked file, and notes.
+        std::fs::write(repo.path().join("app.rs"), "fn main() { /* prior */ }\n").unwrap();
+        std::fs::write(repo.path().join("CLAUDE.md"), "Use two spaces.\n").unwrap();
+
+        db.insert_task(&Task::new("t1", "t", "")).unwrap();
+        db.set_status("t1", TaskStatus::Todo).unwrap();
+        let record = mgr.create(&db, "t1").unwrap();
+        let ws = Path::new(&record.path);
+
+        let context = std::fs::read_to_string(ws.join(prior_context::CONTEXT_FILE)).unwrap();
+        assert!(context.contains("# Prior agent context"), "{context}");
+        assert!(context.contains("Use two spaces."), "{context}");
+        assert!(context.contains("+fn main() { /* prior */ }"), "{context}");
+        assert!(context.contains("notes.md"), "{context}");
+
+        // Invisible to git: clean status, empty first diff, and absent even
+        // if an agent force-adds it.
+        assert_eq!(git_captured(ws, &["status", "--porcelain"]), "");
+        assert!(mgr.generate_diff(&db, "t1").unwrap().is_empty());
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(ws)
+            .args(["add", "-f", prior_context::CONTEXT_FILE])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let diff = mgr.generate_diff(&db, "t1").unwrap();
+        assert!(
+            !diff.contains(prior_context::CONTEXT_FILE),
+            "prior context must never appear in a diff: {diff}"
+        );
+
+        // Exactly one exclude entry, and self-heal restores a lost document.
+        let exclude =
+            std::fs::read_to_string(ws.join(".git").join("info").join("exclude")).unwrap();
+        assert_eq!(
+            exclude.matches(prior_context::CONTEXT_FILE).count(),
+            1,
+            "{exclude}"
+        );
+        std::fs::remove_file(ws.join(prior_context::CONTEXT_FILE)).unwrap();
+        mgr.create(&db, "t1").unwrap();
+        assert!(ws.join(prior_context::CONTEXT_FILE).is_file());
+    }
+
+    #[test]
+    fn self_heal_does_not_describe_source_changes_missing_from_the_snapshot() {
+        let repo = scratch_repo();
+        let db = Database::open_in_memory().unwrap();
+        let paths = ZuneshaPaths::new(repo.path());
+        std::fs::create_dir_all(paths.workspaces_dir()).unwrap();
+        let mgr = WorkspaceManager::new(paths);
+
+        db.insert_task(&Task::new("t1", "t", "")).unwrap();
+        db.set_status("t1", TaskStatus::Todo).unwrap();
+        let record = mgr.create(&db, "t1").unwrap();
+        let ws = Path::new(&record.path);
+
+        // Simulate a pre-Phase 12 workspace without the document, then let the
+        // source move on. Reusing the stale workspace must not inject context
+        // for a change it does not contain.
+        std::fs::remove_file(ws.join(prior_context::CONTEXT_FILE)).unwrap();
+        std::fs::write(repo.path().join("app.rs"), "fn main() { /* newer */ }\n").unwrap();
+        mgr.create(&db, "t1").unwrap();
+
+        assert!(
+            !ws.join(prior_context::CONTEXT_FILE).exists(),
+            "stale workspaces must not be told about absent source changes"
+        );
+    }
+
+    #[test]
     fn conflict_prep_regenerates_the_map_for_the_updated_snapshot() {
         let (repo, paths, db) = agent_workspace();
 
-        // The repository moves on: a new file enters the snapshot, which the
-        // old map (written at create time) cannot know about.
+        // The repository moves on: a new file enters the snapshot which the
+        // old map cannot know about, and an external agent leaves a rule.
         std::fs::write(repo.path().join("fresh.rs"), "fn fresh() {}\n").unwrap();
+        std::fs::write(repo.path().join("CLAUDE.md"), "Validate every migration.\n").unwrap();
 
         let mgr = WorkspaceManager::new(paths.clone());
         let prep = mgr.prepare_conflict_resolution(&db, "t1").unwrap();
@@ -1043,6 +1140,11 @@ mod tests {
         assert!(
             map.contains("fresh.rs (1 line)"),
             "regenerated for the rebuilt snapshot: {map}"
+        );
+        let context = std::fs::read_to_string(ws.join(prior_context::CONTEXT_FILE)).unwrap();
+        assert!(
+            context.contains("Validate every migration."),
+            "prior context regenerated for the rebuilt snapshot: {context}"
         );
 
         // Still exactly one exclude entry (no duplicate appends across

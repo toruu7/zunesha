@@ -139,9 +139,9 @@ workspace and dashboard. Every push that changes the project bumps
 ```sh
 sh scripts/bump-version.sh minor   # major|minor|patch, or an explicit X.Y.Z
 git add Cargo.toml Cargo.lock web/package.json web/package-lock.json
-git commit -m "release: v0.3.0"
-git tag v0.3.0
-git push origin master v0.3.0      # tag triggers the release workflow
+git commit -m "release: v0.4.0"
+git tag v0.4.0
+git push origin master v0.4.0      # tag triggers the release workflow
 ```
 
 The script keeps `Cargo.toml`, `Cargo.lock`, `web/package.json`, and
@@ -261,9 +261,10 @@ ZOU_PLANNER_CMD='ollama run qwen2.5-coder' zou plan "add rate limiting"
 ZOU_PLANNER_CMD='sh scripts/plan-with-my-api.sh' zou start   # daemon reads it at launch
 ```
 
-The prompt Zunesha sends contains the feature request, a **bounded repository
-map** (the same tree agents get, so file paths are real) and the output
-schema. The model must answer with **one JSON object**:
+The prompt Zunesha sends contains the feature request, any **prior-agent
+context** from uncommitted work (Phase 12), a **bounded repository map** (the
+same tree agents get, so file paths are real) and the output schema. The
+model must answer with **one JSON object**:
 
 ```json
 {"tasks":[
@@ -390,6 +391,7 @@ zunesha/
 │   │       ├── integrator.rs        # approval-time merge (the only write)
 │   │       ├── paths.rs             # `.zou/` layout
 │   │       ├── planner.rs           # built-in planner + external ZOU_PLANNER_CMD plans
+│   │       ├── prior_context.rs     # Phase 12: prior work + instruction files
 │   │       ├── task.rs              # TaskStatus lifecycle enum
 │   │       ├── worker.rs            # bounded tokio agent pool + eval loop
 │   │       └── workspace.rs         # isolated clones + diff capture
@@ -528,6 +530,10 @@ into `.zou/ws/<task_id>`:
   agent, excluded via the workspace's *own* `.git/info/exclude` so it never
   shows in `git status`, the baseline, or any diff; see
   [Codebase map (Phase 10)](#codebase-map-phase-10).
+- **`PRIOR_AGENT_CONTEXT.md`** (Phase 12) — a bounded record of uncommitted
+  work and agent instruction files found in the source checkout, excluded
+  the same way and injected into planner/worker prompts; see
+  [Prior agent context (Phase 12)](#prior-agent-context-phase-12).
 - Task ids are validated (`[A-Za-z0-9._-]`, no leading `.`) so a malicious id
   can never escape the `ws/` directory.
 
@@ -566,9 +572,11 @@ every ready (`TODO`) task:
   still works; its full output remains in Logs.
 - **Prompt shape** — task title + description (including any
   `## Validation failure` tail from Phase 8), the conflict instruction when
-  running in Phase 9's resolution mode, then the codebase map appended last
-  (Phase 10 — reference material rides at the end; see
-  [Codebase map (Phase 10)](#codebase-map-phase-10)).
+  running in Phase 9's resolution mode, prior-agent context when the source
+  checkout had uncommitted work (Phase 12), then the codebase map appended
+  last (Phase 10 — reference material rides at the end; see
+  [Codebase map (Phase 10)](#codebase-map-phase-10) and
+  [Prior agent context (Phase 12)](#prior-agent-context-phase-12)).
 
 Because `rusqlite::Connection` is not `Sync`, each worker opens its *own*
 database connection rather than sharing one — safe now that Phase 3's audit
@@ -688,6 +696,48 @@ prompt, without a single tool call:
 The e2e sweep asserts the full path: the file exists in a live workspace,
 the agent's prompt contains both the map heading and a tree entry, and
 `CODEBASE_MAP.md` never appears in your repository after approvals.
+
+## Prior agent context (Phase 12)
+
+A repository is often already mid-change when you point Zunesha at it:
+Claude Code, Cursor, Copilot, or a previous Zunesha run may have left
+uncommitted edits, new files, and instruction notes. The workspace snapshot
+contains that work, but the fresh baseline makes it invisible to `git diff`,
+so a new agent can accidentally revert or duplicate it.
+
+Phase 12 captures that state before the baseline commit:
+
+- **Working-tree status and diff** — `git status --short` plus a unified diff
+  against `HEAD` (staged and unstaged tracked changes together). Untracked
+  files are listed by path and size, but their contents are deliberately not
+  copied into the prompt (they are the most likely place for secrets); the
+  agent can read them in the workspace when the task needs them.
+- **Agent instruction files** — known bridge files are included as text:
+  `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `CODEX.md`, `.cursorrules`,
+  `.windsurfrules`, `.clinerules`,
+  `.github/copilot-instructions.md`, `.claude/CLAUDE.md`,
+  `.codex/instructions.md`, plus markdown in `.cursor/rules/` and
+  `.github/instructions/`. Binary and oversized files are skipped.
+- **Bounded** — the document is capped at 32 KB (4 KB status, 18 KB diff,
+  3 KB untracked list, 10 KB instructions), so reference material never
+  crowds out the task. Truncation is called out in the document.
+- **Scaffolding, not code** — `PRIOR_AGENT_CONTEXT.md` is written into the
+  workspace before the baseline and excluded through `.git/info/exclude`,
+  exactly like the codebase map. It never enters `git status`, a baseline,
+  a diff, or an approval; conflict prep regenerates it for the rebuilt
+  snapshot, and the defensive `git rm --cached` guard drops it even if an
+  agent force-adds it. Your real tree never sees the file.
+
+The planner receives it too: a plan for a partially implemented request is
+asked to cover only the remaining delta instead of redoing completed work.
+At task time the context is appended to the prompt just before the codebase
+map, with the explicit instruction to build on the existing work, not
+revert or redo it. Workspaces created before Phase 12 get the document on
+their next `zou run`/`zou work` only when their snapshot still contains every
+change the source checkout reports; a workspace that has diverged is left
+alone (remove it, or let conflict prep rebuild it) rather than being told to
+build on work it does not contain. A source checkout with no uncommitted
+changes and no instruction files simply produces no document.
 
 ## Local API & WebSockets (Phase 5)
 
@@ -951,6 +1001,7 @@ connection pool.
 | 9     | Auto-merge conflict resolution (`RESOLVING_CONFLICTS`) | ✅ done |
 | 10    | Codebase map injected into agent prompts           | ✅ done |
 | 11    | Interactive DAG view + automatic crash resumption  | ✅ done |
+| 12    | Prior-agent context from uncommitted work          | ✅ done |
 
 Beyond the blueprint: a real **external planner** (`ZOU_PLANNER_CMD` — any LLM
 CLI that reads a prompt on stdin and prints a JSON plan; see

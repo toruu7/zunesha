@@ -24,6 +24,10 @@
 //! Phase 10 added [`codebase_map`] — `CODEBASE_MAP.md`, a bounded repository
 //! tree written into every workspace (git-excluded, so it never reaches a
 //! diff) and appended to every agent prompt.
+//!
+//! Phase 12 added [`prior_context`] — `PRIOR_AGENT_CONTEXT.md`, a bounded
+//! record of uncommitted work and instruction files another agent left in the
+//! source checkout, injected into planner and worker prompts.
 
 pub mod codebase_map;
 pub mod config;
@@ -36,6 +40,7 @@ pub mod init;
 pub mod integrator;
 pub mod paths;
 pub mod planner;
+pub mod prior_context;
 pub mod task;
 pub mod worker;
 pub mod workspace;

@@ -131,10 +131,13 @@ fn collect(root: &Path) -> Vec<Node> {
         .hidden(false)
         // The root is the boundary; do not inherit ignore rules from above.
         .parents(false)
-        // Control directories and the map itself are invisible scaffolding.
+        // Control directories and generated scaffolding are invisible.
         .filter_entry(|entry| {
             let name = entry.file_name().to_string_lossy();
-            name != ".git" && name != ".zou" && name != MAP_FILE
+            name != ".git"
+                && name != ".zou"
+                && name != MAP_FILE
+                && name != crate::prior_context::CONTEXT_FILE
         });
 
     for entry in builder.build() {

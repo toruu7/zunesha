@@ -38,6 +38,7 @@ use crate::codebase_map;
 use crate::dag;
 use crate::db::Database;
 use crate::error::{Error, Result};
+use crate::prior_context;
 use crate::task::Task;
 use crate::worker::split_command_line;
 
@@ -290,7 +291,8 @@ fn read_lossy(path: &Path) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-/// The planning prompt: instructions, the request, and the repository map.
+/// The planning prompt: instructions, the request, prior work, and the
+/// repository map.
 fn build_prompt(request: &str, repo_root: &Path) -> String {
     let request = truncate_bytes(request.trim(), MAX_REQUEST_BYTES);
     let map = codebase_map::generate(repo_root);
@@ -299,6 +301,19 @@ fn build_prompt(request: &str, repo_root: &Path) -> String {
     } else {
         map
     };
+    let prior = prior_context::generate(repo_root)
+        .map(|context| {
+            format!(
+                "Prior agent context (work already present in the checkout; plan around\n\
+                 it, do not ask an agent to redo it):\n\
+                 \"\"\"\n\
+                 {context}\n\
+                 \"\"\"\n\
+                 \n\
+                 "
+            )
+        })
+        .unwrap_or_default();
 
     format!(
         "You are the planner stage of Zunesha, a local-first coding orchestrator.\n\
@@ -312,6 +327,7 @@ fn build_prompt(request: &str, repo_root: &Path) -> String {
          {request}\n\
          \"\"\"\n\
          \n\
+         {prior}\
          Repository map (paths relative to the repo root):\n\
          \"\"\"\n\
          {map}\n\
@@ -325,6 +341,8 @@ fn build_prompt(request: &str, repo_root: &Path) -> String {
          - `depends_on` lists the keys of tasks that must be merged first. Tasks\n\
            touching the same files must be sequenced; independent tasks may run in\n\
            parallel.\n\
+         - Treat prior agent context as existing work. Do not plan tasks that\n\
+           revert or duplicate it; plan only the remaining delta.\n\
          - Do not add review or merge tasks; humans do that.\n\
          - The graph must be acyclic.\n\
          \n\
@@ -678,6 +696,20 @@ mod tests {
         format!("sh {}", path.display())
     }
 
+    fn git(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
     fn mock_plan(db: &Database, prompt: &str) -> Vec<String> {
         plan_with(db, prompt, &Planner::Mock, Path::new(".")).unwrap()
     }
@@ -832,6 +864,59 @@ printf '%s' '{"tasks":[
         assert!(
             prompt.contains("\"tasks\""),
             "schema hint missing: {prompt}"
+        );
+    }
+
+    #[test]
+    fn external_plan_receives_prior_agent_context_on_stdin() {
+        let (dir, _) = scratch();
+        let root = dir.path();
+        git(root, &["init", "--quiet"]);
+        git(root, &["config", "user.email", "t@t.local"]);
+        git(root, &["config", "user.name", "T"]);
+        git(root, &["add", "--all"]);
+        git(root, &["commit", "--quiet", "-m", "baseline"]);
+        std::fs::write(root.join("hello.txt"), "hi from a prior agent\n").unwrap();
+        std::fs::write(root.join("CLAUDE.md"), "Keep the public API stable.\n").unwrap();
+        std::fs::write(root.join("plan.md"), "scratch plan\n").unwrap();
+
+        let marker = root.join("prompt.txt");
+        let spec = script(
+            root,
+            &format!(
+                "#!/bin/sh\ncat > '{}'\nprintf '%s' '{{\"tasks\":[{{\"key\":\"a\",\"title\":\"One\",\"description\":\"D\"}}]}}'\n",
+                marker.display()
+            ),
+        );
+
+        let db = db();
+        let ids = plan_with(&db, "add rate limiting", &Planner::command(&spec), root).unwrap();
+        assert_eq!(ids.len(), 1);
+
+        let prompt = std::fs::read_to_string(&marker).unwrap();
+        assert!(
+            prompt.contains("Prior agent context"),
+            "prior context missing: {prompt}"
+        );
+        assert!(
+            prompt.contains("Keep the public API stable."),
+            "CLAUDE.md not included: {prompt}"
+        );
+        assert!(
+            prompt.contains("+hi from a prior agent"),
+            "uncommitted diff not included: {prompt}"
+        );
+        assert!(
+            prompt.contains("plan.md"),
+            "untracked file list not included: {prompt}"
+        );
+        assert!(
+            prompt.contains("hello.txt"),
+            "repository map still present: {prompt}"
+        );
+        assert!(
+            prompt.rfind("Prior agent context").unwrap() < prompt.find("Repository map").unwrap(),
+            "prior context should precede the map"
         );
     }
 

@@ -606,42 +606,46 @@ impl WorkerHandle {
 /// (it exists, holding the conflict markers), the prompt is the conflict
 /// prompt, and both failure exits become `FAILED_NEEDS_HUMAN` /
 /// `RESOLVING_CONFLICTS` instead of `TODO` / `IN_PROGRESS`.
-/// In both modes the workspace's Phase 10 `CODEBASE_MAP.md` is appended to
-/// the prompt, read once during setup.
+/// In both modes the workspace's Phase 10 `CODEBASE_MAP.md` is appended last
+/// to the prompt, and the Phase 12 `PRIOR_AGENT_CONTEXT.md` rides just before
+/// it; both are read once during setup.
 async fn run_one(pool: &Arc<WorkerHandle>, task: Task, mode: RunMode) -> Result<bool> {
     let task_id = task.id.clone();
 
     // Workspace setup does blocking filesystem + git work; keep it off the
-    // async runtime. The Phase 10 codebase map is read here too — once per
-    // run, identical for every prompt of that run.
-    let (ws_dir, codebase_map) = {
+    // async runtime. The Phase 10 / 12 reference documents are read here too —
+    // once per run, identical for every prompt of that run.
+    let (ws_dir, codebase_map, prior_context) = {
         let pool = pool.clone();
         let task_id = task_id.clone();
-        tokio::task::spawn_blocking(move || -> Result<(String, Option<String>)> {
-            let db = pool.open_db()?;
-            let mgr = WorkspaceManager::new(pool.paths.clone());
-            let ws_dir = match mode {
-                RunMode::Normal => mgr.create(&db, &task_id)?.path,
-                RunMode::ResolveConflicts => {
-                    // The workspace (and its conflict markers / rebased base)
-                    // must be used exactly as `approve_task` left it.
-                    let record = db.get_workspace(&task_id)?.ok_or_else(|| {
-                        Error::Workspace(format!(
-                            "no workspace to resolve conflicts for task {task_id}"
-                        ))
-                    })?;
-                    if !Path::new(&record.path).is_dir() {
-                        return Err(Error::Workspace(format!(
-                            "workspace missing for conflict resolution: {}",
-                            record.path
-                        )));
+        tokio::task::spawn_blocking(
+            move || -> Result<(String, Option<String>, Option<String>)> {
+                let db = pool.open_db()?;
+                let mgr = WorkspaceManager::new(pool.paths.clone());
+                let ws_dir = match mode {
+                    RunMode::Normal => mgr.create(&db, &task_id)?.path,
+                    RunMode::ResolveConflicts => {
+                        // The workspace (and its conflict markers / rebased base)
+                        // must be used exactly as `approve_task` left it.
+                        let record = db.get_workspace(&task_id)?.ok_or_else(|| {
+                            Error::Workspace(format!(
+                                "no workspace to resolve conflicts for task {task_id}"
+                            ))
+                        })?;
+                        if !Path::new(&record.path).is_dir() {
+                            return Err(Error::Workspace(format!(
+                                "workspace missing for conflict resolution: {}",
+                                record.path
+                            )));
+                        }
+                        record.path
                     }
-                    record.path
-                }
-            };
-            let map = crate::codebase_map::read(Path::new(&ws_dir));
-            Ok((ws_dir, map))
-        })
+                };
+                let map = crate::codebase_map::read(Path::new(&ws_dir));
+                let prior = crate::prior_context::read(Path::new(&ws_dir));
+                Ok((ws_dir, map, prior))
+            },
+        )
         .await
         .map_err(|e| Error::Workspace(format!("workspace setup panicked: {e}")))??
     };
@@ -672,8 +676,13 @@ async fn run_one(pool: &Arc<WorkerHandle>, task: Task, mode: RunMode) -> Result<
                 RunMode::Normal => render_prompt(&task.title, &description),
                 RunMode::ResolveConflicts => render_conflict_prompt(&task.title, &description),
             };
-            // Phase 10: task text first, the static repository map last —
-            // reference material, identical for every attempt of this run.
+            // Phase 12: prior work from the source checkout, then Phase 10's
+            // static repository map last — reference material, identical for
+            // every attempt of this run.
+            if let Some(prior) = &prior_context {
+                prompt.push_str("\n\n");
+                prompt.push_str(prior);
+            }
             if let Some(map) = &codebase_map {
                 prompt.push_str("\n\n");
                 prompt.push_str(map);
@@ -1106,6 +1115,37 @@ mod tests {
             .unwrap();
         assert!(st.success());
         std::fs::write(tmp.path().join("app.rs"), "fn main() {}\n").unwrap();
+        for args in [
+            vec![
+                "-C",
+                tmp.path().to_str().unwrap(),
+                "config",
+                "user.email",
+                "t@t.local",
+            ],
+            vec![
+                "-C",
+                tmp.path().to_str().unwrap(),
+                "config",
+                "user.name",
+                "T",
+            ],
+            vec!["-C", tmp.path().to_str().unwrap(), "add", "--all"],
+            vec![
+                "-C",
+                tmp.path().to_str().unwrap(),
+                "commit",
+                "--quiet",
+                "-m",
+                "baseline",
+            ],
+        ] {
+            let st = std::process::Command::new("git")
+                .args(&args)
+                .status()
+                .unwrap();
+            assert!(st.success(), "git {args:?} should succeed");
+        }
 
         let paths = ZuneshaPaths::new(tmp.path());
         std::fs::create_dir_all(paths.workspaces_dir()).unwrap();
@@ -1435,6 +1475,64 @@ mod tests {
             "the map is reference material and rides last: {logs:?}"
         );
         assert_eq!(status_of(&db, "t0"), TaskStatus::Review);
+    }
+
+    #[tokio::test]
+    async fn agent_prompts_carry_prior_agent_context() {
+        let (repo, paths) = scratch_install();
+        let db = Database::open(&paths.state_db()).unwrap();
+        ready_tasks(&db, 1);
+
+        // Work another agent left in the source checkout before this run.
+        std::fs::write(
+            repo.path().join("app.rs"),
+            "fn main() { println!(\"prior agent\"); }\n",
+        )
+        .unwrap();
+        std::fs::write(repo.path().join("CLAUDE.md"), "Use tabs, not spaces.\n").unwrap();
+        std::fs::write(repo.path().join("plan.md"), "remaining steps\n").unwrap();
+
+        // The agent writes a real change while reporting what its prompt saw.
+        let pool = WorkerPool::new(
+            paths.clone(),
+            1,
+            AgentCommand::shell(
+                "P=\"$0\"; \
+                 echo \"prior-in-prompt=$(printf '%s' \"$P\" | grep -c 'Prior agent context')\"; \
+                 echo \"instructions-in-prompt=$(printf '%s' \"$P\" | grep -c 'Use tabs, not spaces')\"; \
+                 echo \"diff-in-prompt=$(printf '%s' \"$P\" | grep -c 'prior agent')\"; \
+                 printf '%s' \"$P\" | grep -q -- '- plan.md (' && echo 'untracked-in-prompt=yes' || echo 'untracked-in-prompt=no'; \
+                 printf '%s' \"$P\" | tail -n 1 | grep -q 'directories' && echo 'map-still-last=yes' || echo 'map-still-last=no'; \
+                 printf 'fn feature() {}\n' > feature.rs",
+            ),
+        );
+
+        let handle = pool.spawn_task("t0".into()).await.unwrap();
+        assert!(handle.await.unwrap().unwrap(), "agent exit 0 => success");
+
+        let db = Database::open(&paths.state_db()).unwrap();
+        let task = db.get_task("t0").unwrap().unwrap();
+        let logs = &task.worker_logs;
+        for marker in [
+            "prior-in-prompt=1",
+            "instructions-in-prompt=1",
+            "diff-in-prompt=1",
+            "untracked-in-prompt=yes",
+            "map-still-last=yes",
+        ] {
+            assert!(logs.contains(marker), "missing {marker}: {logs:?}");
+        }
+        assert_eq!(task.status, TaskStatus::Review);
+        assert!(
+            task.diff.contains("feature.rs"),
+            "the task's own change is captured: {}",
+            task.diff
+        );
+        assert!(
+            !task.diff.contains("PRIOR_AGENT_CONTEXT.md"),
+            "scaffolding never reaches the reviewed diff: {}",
+            task.diff
+        );
     }
 
     #[tokio::test]
