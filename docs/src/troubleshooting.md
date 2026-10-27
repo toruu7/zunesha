@@ -46,6 +46,27 @@ The workspace is kept across recovery, so the retry continues from whatever
 the agent already produced, and the persisted retry counter still counts
 towards the 3-failure cap.
 
+## Tasks return to `TODO` and the log says the model endpoint is unavailable
+
+The agent process exited non-zero before editing anything, so the task goes
+back to `TODO` with no diff. This is usually a bad or temporarily unavailable
+model, not a Zunesha error. Pick a different one:
+
+```sh
+zou model              # list `opencode models` and select one
+zou model --show       # confirm the saved id
+zou run                # retry the TODO tasks
+```
+
+If `ZOU_AGENT_CMD` is exported, it overrides the saved model — unset it (or
+update it with the same `--model`) before retrying. Restart a running
+`zou start` daemon after changing the setting. You can also verify a model by
+hand in a scratch directory:
+
+```sh
+opencode run --auto --model opencode/deepseek-v4.1-flash-free "say OK"
+```
+
 ## The agent keeps failing and the task is in `FAILED_NEEDS_HUMAN`
 
 Three failed validations park a task on purpose. Open it in the dashboard:

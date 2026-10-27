@@ -425,4 +425,4 @@ if [ "$PATH_READY" = 0 ]; then
         printf '  export PATH=%s:"$PATH"   # add to your shell rc, then reopen\n' "$(sh_quote "$BIN_DIR")"
     fi
 fi
-printf '  cd your-project && zou init\n  zou plan "your feature request"\n  zou start          # dashboard on http://127.0.0.1:57804\n'
+printf '  zou model          # choose the OpenCode model used by the agent\n  cd your-project && zou init\n  zou plan "your feature request"\n  zou start          # dashboard on http://127.0.0.1:57804\n'

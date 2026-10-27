@@ -48,6 +48,21 @@ cd web && npm install && npm run build   # → web/out, served by the daemon
 locates `<prefix>/web/out` by walking up from its own binary, so no
 environment variables are needed.
 
+## Choose a model
+
+The default agent is OpenCode. Pick a model once — the choice is saved
+user-wide and applies to every project:
+
+```sh
+zou model
+```
+
+It lists the ids reported by `opencode models`, prompts for a selection, and
+stores the result in `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`.
+`zou model --list`, `--show`, and `--clear` manage it non-interactively. If
+you already have a `ZOU_AGENT_CMD` export, that continues to override the
+saved model.
+
 ## Initialize your project
 
 ```sh

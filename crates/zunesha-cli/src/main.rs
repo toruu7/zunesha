@@ -13,14 +13,17 @@
 //! * `status`  – print task counts and installation info.
 //! * `start`   – serve the local API, WebSockets, and dashboard.
 
+use std::collections::HashSet;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
 use zunesha_core::{
-    approve_task, init_project, recover_stuck, AgentCommand, Database, Error, MergeOutcome,
-    StreamKind, TaskStatus, WorkerEvent, WorkerPool, WorkspaceManager, ZuneshaPaths,
+    approve_task, init_project, normalize_model, recover_stuck, AgentCommand, Config, Database,
+    Error, MergeOutcome, StreamKind, TaskStatus, WorkerEvent, WorkerPool, WorkspaceManager,
+    ZuneshaPaths,
 };
 
 #[derive(Parser, Debug)]
@@ -95,6 +98,25 @@ enum Commands {
     },
     /// Show orchestrator status and task counts.
     Status,
+    /// Choose the OpenCode model used by the agent (saved user-wide).
+    ///
+    /// With no arguments, lists the models reported by `opencode models` and
+    /// prompts for one. The choice is written to
+    /// `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`, so it applies to every
+    /// project. `ZOU_AGENT_CMD` remains an explicit per-shell override.
+    Model {
+        /// Save this model id directly instead of listing and prompting.
+        model: Option<String>,
+        /// List available models without changing the saved setting.
+        #[arg(long)]
+        list: bool,
+        /// Show the saved model and where it is stored.
+        #[arg(long)]
+        show: bool,
+        /// Forget the saved model and return to the built-in agent command.
+        #[arg(long)]
+        clear: bool,
+    },
     /// Start the local API + WebSocket server (and agent pool).
     ///
     /// Serves the dashboard and REST/WebSocket API on localhost until Ctrl-C.
@@ -137,6 +159,12 @@ fn main() -> ExitCode {
         Commands::Approve { task_id } => cmd_approve(&target, &task_id),
         Commands::Recover { task_id } => cmd_recover(&target, task_id.as_deref()),
         Commands::Status => cmd_status(&target),
+        Commands::Model {
+            model,
+            list,
+            show,
+            clear,
+        } => cmd_model(model.as_deref(), list, show, clear),
         Commands::Start {
             host,
             port,
@@ -242,6 +270,199 @@ fn cmd_status(target: &Path) -> zunesha_core::Result<()> {
         }
     }
     Ok(())
+}
+
+/// `zou model` – list OpenCode models, save the chosen one user-wide.
+///
+/// The saved model feeds the default agent command:
+///
+/// ```text
+/// opencode run --auto --model <model> {prompt}
+/// ```
+///
+/// `ZOU_AGENT_CMD`, when set, still wins over the saved value.
+fn cmd_model(model: Option<&str>, list: bool, show: bool, clear: bool) -> zunesha_core::Result<()> {
+    let selected_actions = [model.is_some(), list, show, clear]
+        .into_iter()
+        .filter(|selected| *selected)
+        .count();
+    if selected_actions > 1 {
+        return Err(Error::Config(
+            "choose only one of: a model id, --list, --show, or --clear".into(),
+        ));
+    }
+
+    if clear {
+        let path = Config::clear_model()?;
+        println!("✔ cleared the saved model");
+        println!("  config : {}", path.display());
+        println!("  agent  : opencode run {{prompt}} (built-in default)");
+        println!("  apply  : restart `zou start` if it is running");
+        return Ok(());
+    }
+
+    if show {
+        let path = Config::path()?;
+        let config = Config::load()?;
+        match config.model() {
+            Some(model) => {
+                println!("{model}");
+                println!("  config : {}", path.display());
+                println!("  agent  : opencode run --auto --model {model} {{prompt}}");
+            }
+            None => {
+                println!("no saved model (using `opencode run {{prompt}}`)");
+                println!("  config : {}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    // A direct save is also the recovery path for a corrupt hand-edited
+    // config, so do it before trying to read the current setting.
+    if let Some(model) = model {
+        return save_model(model);
+    }
+
+    let current = match Config::load() {
+        Ok(config) => config.model().map(str::to_string),
+        Err(e) => {
+            eprintln!("warning: {e}; choosing a model will replace the config");
+            None
+        }
+    };
+
+    let models = available_models()?;
+    if models.is_empty() {
+        return Err(Error::Config(
+            "`opencode models` returned no models; check `opencode auth` / your provider setup"
+                .into(),
+        ));
+    }
+
+    print_models(&models, current.as_deref());
+    if list {
+        return Ok(());
+    }
+
+    let Some(choice) = choose_model(&models)? else {
+        println!("cancelled; no change");
+        return Ok(());
+    };
+    save_model(&choice)
+}
+
+/// Persist a model and explain when it takes effect.
+fn save_model(model: &str) -> zunesha_core::Result<()> {
+    let model = normalize_model(model)?;
+    let path = Config::set_model(&model)?;
+
+    println!("✔ saved model {model}");
+    println!("  config : {}", path.display());
+    println!("  agent  : opencode run --auto --model {model} {{prompt}}");
+    if std::env::var("ZOU_AGENT_CMD").is_ok_and(|value| !value.trim().is_empty()) {
+        println!(
+            "  note   : ZOU_AGENT_CMD is set and overrides this saved model; unset it to use the selection"
+        );
+    }
+    println!("  apply  : new `zou run` / `zou start` processes; restart a running daemon");
+    Ok(())
+}
+
+/// Ask `opencode models` for the installed/provider model list.
+fn available_models() -> zunesha_core::Result<Vec<String>> {
+    let output = std::process::Command::new("opencode")
+        .arg("models")
+        .output()
+        .map_err(|e| {
+            Error::Config(format!(
+                "could not run `opencode models`: {e}. Install OpenCode or use ZOU_AGENT_CMD."
+            ))
+        })?;
+
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        let detail = detail.trim();
+        let detail = if detail.is_empty() {
+            format!("exit status {}", output.status)
+        } else {
+            detail.lines().next().unwrap_or(detail).to_string()
+        };
+        return Err(Error::Config(format!("`opencode models` failed: {detail}")));
+    }
+
+    Ok(parse_models(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// Parse the newline-separated ids printed by `opencode models`.
+///
+/// The real CLI prints one `provider/model` id per line. Keep only
+/// single-token lines containing `/`, and de-duplicate without reordering.
+fn parse_models(output: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    output
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            !line.is_empty() && line.contains('/') && !line.chars().any(char::is_whitespace)
+        })
+        .filter(|line| seen.insert((*line).to_string()))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Print the numbered model list, marking the saved selection.
+fn print_models(models: &[String], current: Option<&str>) {
+    println!("Available models (`opencode models`):");
+    for (index, model) in models.iter().enumerate() {
+        let marker = if current == Some(model.as_str()) {
+            "*"
+        } else {
+            " "
+        };
+        println!(" {marker} {:>2}. {model}", index + 1);
+    }
+    match (current, models.iter().any(|m| Some(m.as_str()) == current)) {
+        (Some(current), false) => {
+            println!("   saved model {current} is not in the current list");
+        }
+        (Some(_), true) => {}
+        (None, _) => println!("   no model saved yet"),
+    }
+    println!();
+}
+
+/// Prompt for a list number or a model id. `None` means the user cancelled.
+fn choose_model(models: &[String]) -> zunesha_core::Result<Option<String>> {
+    loop {
+        print!("Select a model by number or id (empty to cancel): ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input)? == 0 {
+            return Ok(None); // EOF: non-interactive input ended
+        }
+        let choice = input.trim();
+        if choice.is_empty() {
+            return Ok(None);
+        }
+
+        if let Ok(index) = choice.parse::<usize>() {
+            if (1..=models.len()).contains(&index) {
+                return Ok(Some(models[index - 1].clone()));
+            }
+            eprintln!(
+                "  invalid selection: choose a number from 1 to {}",
+                models.len()
+            );
+            continue;
+        }
+
+        match normalize_model(choice) {
+            Ok(model) => return Ok(Some(model)),
+            Err(e) => eprintln!("  {e}"),
+        }
+    }
 }
 
 /// `zou start` – run the local API + WebSocket server until interrupted.
@@ -605,4 +826,23 @@ fn discover(target: &Path) -> zunesha_core::Result<ZuneshaPaths> {
     ZuneshaPaths::discover(target).ok_or(Error::NotInitialized {
         path: target.to_path_buf(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_models;
+
+    #[test]
+    fn parse_models_keeps_ids_and_discards_noise() {
+        let output = "\nopencode/beam-free\nopencode/big-pickle\n\
+                      not a model\nprovider/model#variant\nopencode/beam-free\n";
+        assert_eq!(
+            parse_models(output),
+            vec![
+                "opencode/beam-free".to_string(),
+                "opencode/big-pickle".to_string(),
+                "provider/model#variant".to_string(),
+            ]
+        );
+    }
 }

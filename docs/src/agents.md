@@ -8,7 +8,8 @@ environment variables read **at launch** (so set them before `zou run` /
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `ZOU_AGENT_CMD` | Coding agent command | `opencode run {prompt}` |
+| `ZOU_AGENT_CMD` | Coding agent command (overrides the saved model) | `opencode run {prompt}` |
+| `ZOU_CONFIG_FILE` | User-wide config file path | `${XDG_CONFIG_HOME:-~/.config}/zou/config.json` |
 | `ZOU_PLANNER_CMD` | Planning command (prompt on stdin, JSON on stdout) | built-in three-step chain |
 | `ZOU_EVAL_CMD` | Test/lint command run in each workspace | auto-detect |
 | `ZOU_PLANNER_TIMEOUT_SECS` | Wall-clock limit for one plan | `120` |
@@ -20,11 +21,36 @@ environment variables read **at launch** (so set them before `zou run` /
 Commands are parsed with POSIX quoting (single/double quotes, backslash
 escapes), so spaces in arguments are fine.
 
+## Choosing a model (`zou model`)
+
+The default agent is OpenCode. Instead of exporting a full command every
+session, save the model once:
+
+```sh
+zou model              # list `opencode models`, prompt, save the choice
+zou model --list       # just show the available ids
+zou model --show       # show the saved model and config path
+zou model --clear      # forget it and return to the built-in command
+zou model opencode/glm-5.3-flash-free   # save a known id directly
+```
+
+The choice is user-wide (`${XDG_CONFIG_HOME:-~/.config}/zou/config.json`), so
+it applies to every project. It resolves to:
+
+```text
+opencode run --auto --model <model> {prompt}
+```
+
+`ZOU_AGENT_CMD` still wins when set; unset it to use the saved model. A running
+`zou start` reads the setting at launch, so restart the daemon after changing
+it.
+
 ## The agent (`ZOU_AGENT_CMD`)
 
 The agent runs **inside the task's workspace**, with an isolated git clone as
 its working directory. The prompt is the task's title and description plus the
-repository map.
+repository map. If you saved a model with `zou model`, the default command
+already includes `--auto --model <id>`.
 
 Placeholders:
 
@@ -129,11 +155,12 @@ A bad plan fails `zou plan` with the reason (and `POST /api/plan` answers
 ## Per-project configuration
 
 Because variables are read at launch, a project-local `.envrc` (direnv) or a
-shell alias works well:
+shell alias works well. Use this when one project needs a different agent
+command than the user-wide model selected with `zou model`:
 
 ```sh
 # .envrc — everything a repo needs
-export ZOU_AGENT_CMD='opencode run --auto {prompt}'
+export ZOU_AGENT_CMD='opencode run --auto --model opencode/glm-5.3-flash-free {prompt}'
 export ZOU_PLANNER_CMD='llm -m claude-sonnet-4'
 export ZOU_EVAL_CMD='sh -c "cargo test && cargo clippy -- -D warnings"'
 ```

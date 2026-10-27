@@ -58,6 +58,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{broadcast, mpsc, Semaphore};
 
+use crate::config::Config;
 use crate::db::Database;
 use crate::error::{Error, Result};
 use crate::eval::{self, EvalCommand};
@@ -117,24 +118,41 @@ pub struct AgentCommand {
 }
 
 impl Default for AgentCommand {
-    /// The agent command, overridable via the `ZOU_AGENT_CMD` environment
-    /// variable, which is parsed as a command line honoring shell-style
-    /// quoting (e.g. `ZOU_AGENT_CMD="opencode run --auto '{prompt}'"`).
+    /// The agent command, resolved in this order:
     ///
-    /// The default invokes the installed `opencode` CLI as
-    /// `opencode run "<prompt>"`.
+    /// 1. `ZOU_AGENT_CMD`, parsed as a command line honoring shell-style
+    ///    quoting (e.g. `ZOU_AGENT_CMD="opencode run --auto '{prompt}'"`).
+    /// 2. The model saved by `zou model` in the user-wide config, invoked as
+    ///    `opencode run --auto --model <id> {prompt}`.
+    /// 3. The installed `opencode` CLI as
+    ///    `opencode run {prompt}`.
+    ///
+    /// An explicit environment override always wins. A malformed environment
+    /// command or saved config is reported and skipped rather than silently
+    /// running the wrong thing.
     fn default() -> Self {
-        match std::env::var("ZOU_AGENT_CMD") {
-            Ok(spec) => match AgentCommand::from_spec(&spec) {
-                Ok(cmd) => cmd,
+        if let Ok(spec) = std::env::var("ZOU_AGENT_CMD") {
+            match AgentCommand::from_spec(&spec) {
+                Ok(cmd) => return cmd,
                 Err(e) => {
                     // Don't silently run the wrong thing on a typo.
-                    eprintln!("warning: ignoring ZOU_AGENT_CMD ({e}); using default agent");
-                    Self::builtin()
+                    eprintln!("warning: ignoring ZOU_AGENT_CMD ({e}); checking saved config");
                 }
-            },
-            Err(_) => Self::builtin(),
+            }
         }
+
+        match Config::load() {
+            Ok(config) => {
+                if let Some(cmd) = AgentCommand::from_config(&config) {
+                    return cmd;
+                }
+            }
+            Err(e) => {
+                eprintln!("warning: ignoring saved agent config ({e}); using default agent");
+            }
+        }
+
+        Self::builtin()
     }
 }
 
@@ -149,6 +167,24 @@ impl AgentCommand {
             program: "opencode".to_string(),
             args: vec!["run".to_string(), "{prompt}".to_string()],
         }
+    }
+
+    /// Build the default OpenCode agent for a saved model.
+    ///
+    /// `--auto` is intentional: Zunesha runs headlessly with stdin closed, so
+    /// an interactive permission prompt would hang the task.
+    pub fn from_config(config: &Config) -> Option<Self> {
+        let model = config.model()?;
+        Some(AgentCommand {
+            program: "opencode".to_string(),
+            args: vec![
+                "run".to_string(),
+                "--auto".to_string(),
+                "--model".to_string(),
+                model.to_string(),
+                "{prompt}".to_string(),
+            ],
+        })
     }
 
     /// Parse a full command line (program + args) from a string.
@@ -990,6 +1026,32 @@ mod tests {
         // Empty spec parses to empty argv (then from_spec errors).
         assert!(split_command_line("   ").unwrap().is_empty());
         assert!(AgentCommand::from_spec("   ").is_err());
+    }
+
+    #[test]
+    fn saved_model_builds_an_auto_opencode_command() {
+        let config = Config {
+            agent: crate::config::AgentConfig {
+                model: Some("opencode/deepseek-v4.1-flash-free".into()),
+            },
+        };
+        let cmd = AgentCommand::from_config(&config).expect("saved model");
+        assert_eq!(cmd.program, "opencode");
+        assert_eq!(
+            cmd.args,
+            vec![
+                "run",
+                "--auto",
+                "--model",
+                "opencode/deepseek-v4.1-flash-free",
+                "{prompt}"
+            ]
+        );
+        assert_eq!(
+            AgentCommand::from_config(&Config::default()),
+            None,
+            "no saved model leaves the built-in command in charge"
+        );
     }
 
     #[test]

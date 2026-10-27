@@ -26,6 +26,7 @@
 //! diff) and appended to every agent prompt.
 
 pub mod codebase_map;
+pub mod config;
 pub mod dag;
 pub mod db;
 pub mod error;
@@ -39,6 +40,7 @@ pub mod task;
 pub mod worker;
 pub mod workspace;
 
+pub use config::{normalize_model, AgentConfig, Config};
 pub use dag::{blocked_tasks, promote_ready, recover_stuck};
 pub use db::{Database, WorkspaceRecord};
 pub use error::{Error, Result};

@@ -132,6 +132,7 @@ cd web && npm install && npm run build && cd ..
 ### Quick start
 
 ```sh
+zou model                     # one-time: pick the OpenCode model (saved user-wide)
 cd /path/to/your-repo
 zou init                      # creates .zou/ (+ .gitignore entry)
 zou plan "add rate limiting"  # 3-task chain (built-in) or a real DAG via ZOU_PLANNER_CMD
@@ -157,8 +158,29 @@ can run side by side.
 
 ### Configure the agent
 
-The default agent command is **`opencode run "<prompt>"`**, executed with the
-task's workspace as the working directory. Override it with `ZOU_AGENT_CMD` —
+The default agent is OpenCode, executed with the task's workspace as the
+working directory. Pick a model once and Zunesha remembers it for every
+project:
+
+```sh
+zou model            # list `opencode models`, prompt, save the choice
+zou model --list     # non-interactive list
+zou model --show     # show the saved model and config path
+zou model --clear    # forget it, back to the built-in default
+```
+
+`zou model` writes `${XDG_CONFIG_HOME:-~/.config}/zou/config.json` and uses:
+
+```text
+opencode run --auto --model <model> {prompt}
+```
+
+The setting is read when `zou run` / `zou start` launch, so restart a running
+daemon after changing it. `ZOU_AGENT_CMD` is an explicit per-shell override
+and wins over the saved model; without either, the built-in command is
+`opencode run "<prompt>"`.
+
+Use `ZOU_AGENT_CMD` when you want a different agent CLI or extra flags.
 `{prompt}` and `{workspace}` are substituted after parsing (if the template
 never mentions `{prompt}`, it is appended as the final argument):
 
@@ -278,7 +300,8 @@ switched off.
 
 | Variable              | Read by          | Purpose                                        |
 |-----------------------|------------------|------------------------------------------------|
-| `ZOU_AGENT_CMD`      | CLI / daemon     | Agent command template (see above).            |
+| `ZOU_AGENT_CMD`      | CLI / daemon     | Agent command template; overrides the model saved by `zou model` (see above). |
+| `ZOU_CONFIG_FILE`    | CLI / daemon     | Override the user-wide config path (default `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`). |
 | `ZOU_PLANNER_CMD`    | CLI / daemon     | Planning command: prompt on stdin, JSON plan on stdout; unset = built-in planner (see above). |
 | `ZOU_PLANNER_TIMEOUT_SECS` | CLI / daemon | Per-plan time limit (default `120`).          |
 | `ZOU_EVAL_CMD`       | CLI / daemon     | Validation command template; unset = auto-detect (see above). |
@@ -345,6 +368,7 @@ zou diff    <TASK_ID>                   # show the task workspace's diff
 zou run     [--jobs N] [--follow]       # run the agent on ready tasks, in parallel
 zou approve <TASK_ID>                   # merge reviewed work into the repo (auto-resolves conflicts, Phase 9)
 zou recover [TASK_ID]                   # release stuck IN_PROGRESS/EVALUATING/RESOLVING_CONFLICTS tasks (crash recovery)
+zou model   [MODEL] [--list|--show|--clear]  # choose/save the OpenCode model used by the agent
 zou status  [--path <PATH>]             # per-status counts + task list
 zou start   [--host H] [--port N] [--jobs N] [--no-resume]  # serve the local API + dashboard (port: --port or ZOU_PORT)
 ```
@@ -473,9 +497,10 @@ every ready (`TODO`) task:
   `IN_PROGRESS → EVALUATING` → test command → `REVIEW` (pass) or back to
   `IN_PROGRESS` with the errors appended (fail, up to 3 times) — see
   [Self-healing validation (Phase 8)](#self-healing-validation-phase-8).
-- **Agent command** — defaults to `opencode run "<prompt>"`, overridable via
-  `ZOU_AGENT_CMD` (parsed with full POSIX-style quoting — single/double
-  quotes, backslash escapes — and `{prompt}` / `{workspace}` placeholders).
+- **Agent command** — defaults to `opencode run "<prompt>"`. `zou model` saves
+  `opencode run --auto --model <id> {prompt}` user-wide; `ZOU_AGENT_CMD`
+  overrides both (parsed with full POSIX-style quoting — single/double quotes,
+  backslash escapes — and `{prompt}` / `{workspace}` placeholders).
 - **Prompt shape** — task title + description (including any
   `## Validation failure` tail from Phase 8), the conflict instruction when
   running in Phase 9's resolution mode, then the codebase map appended last

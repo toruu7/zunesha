@@ -57,6 +57,10 @@ pub enum Error {
     #[error("planner error: {0}")]
     Planner(String),
 
+    /// User-wide configuration could not be read, parsed, or written.
+    #[error("config error: {0}")]
+    Config(String),
+
     /// A workspace operation failed (invalid state, missing directory, ...).
     #[error("workspace error: {0}")]
     Workspace(String),

@@ -28,6 +28,7 @@ gated, and everything — state, daemon, dashboard — runs on `127.0.0.1`.
 ## 30-second tour
 
 ```sh
+zou model                             # pick the OpenCode model once (user-wide)
 cd /path/to/your-repo
 zou init                              # creates .zou/ (+ .gitignore entry)
 zou plan "add rate limiting"          # DAG of tasks; the first head is TODO
