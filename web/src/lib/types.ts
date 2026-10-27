@@ -30,8 +30,10 @@ export interface Task {
   status: TaskStatus;
   /** Failed validations in the current review cycle (Phase 8, max 3). */
   retry_count: number;
-  /** Full persisted agent output for the last run (may be empty). */
+  /** Full persisted worker transcript: tool activity, stderr, and `[eval]` output. */
   worker_logs: string;
+  /** The agent's final Markdown response for the last run (may be empty). */
+  agent_output: string;
   /** Unified diff captured when the task last reached REVIEW. */
   diff: string;
   created_at: string;

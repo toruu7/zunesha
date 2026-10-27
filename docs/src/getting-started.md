@@ -135,8 +135,9 @@ zou start               # http://127.0.0.1:57804
   to open the review modal. Edges are prerequisite → dependent, laid out by
   dependency depth.
 - **Plan bar** — type a feature request to plan from the UI, then **Run**.
-- Agent output streams into the task's log while it runs; validation output is
-  prefixed `[eval]`.
+- The review modal separates the final **Output** (styled Markdown) from the
+  technical **Logs** (tool calls, stderr, and `[eval]` output), so analysis-only
+  tasks still show a result even when they change no files.
 
 The CLI and the daemon share `.zou/state.db`, so they can run side by side. One
 caveat: on boot the daemon **resumes tasks a crash left claimed**, which would

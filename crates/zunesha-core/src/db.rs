@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS tasks (
                  CHECK (status IN ('BACKLOG','TODO','IN_PROGRESS','EVALUATING','REVIEW','RESOLVING_CONFLICTS','DONE','FAILED_NEEDS_HUMAN')),
     retry_count  INTEGER NOT NULL DEFAULT 0,
     worker_logs  TEXT NOT NULL DEFAULT '',
+    agent_output TEXT NOT NULL DEFAULT '',
     diff         TEXT NOT NULL DEFAULT '',
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
@@ -54,15 +55,14 @@ CREATE TABLE IF NOT EXISTS workspaces (
 "#;
 
 /// Columns selected when hydrating a [`Task`], in struct-field order.
-const TASK_COLUMNS: &str =
-    "id, title, description, status, retry_count, worker_logs, diff, created_at, updated_at";
+const TASK_COLUMNS: &str = "id, title, description, status, retry_count, worker_logs, agent_output, diff, created_at, updated_at";
 
-/// `tasks` table shape as of Phase 9 (full status set incl. `RESOLVING_CONFLICTS`).
+/// `tasks` table shape as of the Markdown-output release.
 ///
 /// Kept verbatim for [`Database::migrate_tasks_table`]'s rebuild and its test:
 /// the rebuild must produce exactly this shape so fresh and migrated
 /// databases are indistinguishable.
-const TASKS_TABLE_V2: &str = "CREATE TABLE tasks_v2 (
+const TASKS_TABLE_V3: &str = "CREATE TABLE tasks_v3 (
     id           TEXT PRIMARY KEY,
     title        TEXT NOT NULL,
     description  TEXT NOT NULL DEFAULT '',
@@ -70,6 +70,7 @@ const TASKS_TABLE_V2: &str = "CREATE TABLE tasks_v2 (
                  CHECK (status IN ('BACKLOG','TODO','IN_PROGRESS','EVALUATING','REVIEW','RESOLVING_CONFLICTS','DONE','FAILED_NEEDS_HUMAN')),
     retry_count  INTEGER NOT NULL DEFAULT 0,
     worker_logs  TEXT NOT NULL DEFAULT '',
+    agent_output TEXT NOT NULL DEFAULT '',
     diff         TEXT NOT NULL DEFAULT '',
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
@@ -122,16 +123,17 @@ impl Database {
         Ok(Self { conn })
     }
 
-    /// Bring a pre-Phase-9 database up to the current `tasks` shape.
+    /// Bring an older database up to the current `tasks` shape.
     ///
     /// `CREATE TABLE IF NOT EXISTS` can add nothing to an existing table, and
     /// SQLite cannot alter a `CHECK` constraint in place — so a database
-    /// created before Phase 8 lacks the `retry_count` column, and one created
+    /// created before Phase 8 lacks the `retry_count` column, one created
     /// before Phase 9 carries a status whitelist that rejects
-    /// `RESOLVING_CONFLICTS`. Rebuilding the table (the standard SQLite
-    /// recipe: new table, copy, drop, rename) fixes both in one transaction
-    /// and preserves every row, including dependency/workspace references
-    /// (ids are unchanged).
+    /// `RESOLVING_CONFLICTS`, and one created before the Markdown-output
+    /// release lacks `agent_output`. Rebuilding the table (the standard SQLite
+    /// recipe: new table, copy, drop, rename) fixes all three in one
+    /// transaction and preserves every row, including dependency/workspace
+    /// references (ids are unchanged).
     fn migrate_tasks_table(conn: &Connection) -> Result<()> {
         let current: Option<String> = conn.query_row(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'",
@@ -140,29 +142,43 @@ impl Database {
         )?;
         let current = current.unwrap_or_default();
         // A database created by the current SCHEMA already has all markers.
-        if current.contains("RESOLVING_CONFLICTS") && current.contains("retry_count") {
+        if current.contains("RESOLVING_CONFLICTS")
+            && current.contains("retry_count")
+            && current.contains("agent_output")
+        {
             return Ok(());
         }
 
         // Foreign keys must be off while swapping the table (the pragma is a
         // no-op inside a transaction), so they are toggled around it.
-        // The source may or may not carry `retry_count` (Phase 8 added it), so
-        // the value list is chosen from the actual source columns — a database
-        // that has it must keep its data, one that doesn't gets the default.
+        // The source may or may not carry these columns (each was added by a
+        // later release), so the value list is chosen from the actual source
+        // columns — a database that has one must keep its data, one that
+        // doesn't gets the default.
         let copy_retry = current.contains("retry_count");
-        let values = if copy_retry {
-            "id, title, description, status, retry_count, worker_logs, diff, created_at, updated_at"
-        } else {
-            "id, title, description, status, 0, worker_logs, diff, created_at, updated_at"
+        let copy_output = current.contains("agent_output");
+        let values = match (copy_retry, copy_output) {
+            (true, true) => {
+                "id, title, description, status, retry_count, worker_logs, agent_output, diff, created_at, updated_at"
+            }
+            (true, false) => {
+                "id, title, description, status, retry_count, worker_logs, '', diff, created_at, updated_at"
+            }
+            (false, true) => {
+                "id, title, description, status, 0, worker_logs, agent_output, diff, created_at, updated_at"
+            }
+            (false, false) => {
+                "id, title, description, status, 0, worker_logs, '', diff, created_at, updated_at"
+            }
         };
         conn.pragma_update(None, "foreign_keys", "OFF")?;
         let rebuild = conn.execute_batch(&format!(
             "BEGIN;
-             {TASKS_TABLE_V2};
-             INSERT INTO tasks_v2 (id, title, description, status, retry_count, worker_logs, diff, created_at, updated_at)
+             {TASKS_TABLE_V3};
+             INSERT INTO tasks_v3 (id, title, description, status, retry_count, worker_logs, agent_output, diff, created_at, updated_at)
                  SELECT {values} FROM tasks;
              DROP TABLE tasks;
-             ALTER TABLE tasks_v2 RENAME TO tasks;
+             ALTER TABLE tasks_v3 RENAME TO tasks;
              CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
              COMMIT;"
         ));
@@ -180,8 +196,8 @@ impl Database {
     /// Insert a new task. Fails if the id already exists.
     pub fn insert_task(&self, task: &Task) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO tasks (id, title, description, status, retry_count, worker_logs, diff)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO tasks (id, title, description, status, retry_count, worker_logs, agent_output, diff)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 task.id,
                 task.title,
@@ -189,6 +205,7 @@ impl Database {
                 task.status.as_str(),
                 task.retry_count,
                 task.worker_logs,
+                task.agent_output,
                 task.diff,
             ],
         )?;
@@ -312,6 +329,23 @@ impl Database {
                  SET worker_logs = ?2, updated_at = datetime('now')
                  WHERE id = ?1",
             params![id, logs],
+        )?;
+        if changed == 0 {
+            return Err(Error::TaskNotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Replace a task's final assistant response (Markdown).
+    ///
+    /// The worker extracts this from structured agent output; plain-text
+    /// agents leave it empty and keep their response in `worker_logs`.
+    pub fn set_agent_output(&self, id: &str, output: &str) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE tasks
+                 SET agent_output = ?2, updated_at = datetime('now')
+                 WHERE id = ?1",
+            params![id, output],
         )?;
         if changed == 0 {
             return Err(Error::TaskNotFound(id.to_string()));
@@ -578,9 +612,10 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         })?,
         retry_count: row.get(4)?,
         worker_logs: row.get(5)?,
-        diff: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
+        agent_output: row.get(6)?,
+        diff: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
     })
 }
 
@@ -658,6 +693,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let mut task = Task::new("t1", "title", "description");
         task.worker_logs = "log line".to_string();
+        task.agent_output = "## Result\n\nDone.".to_string();
         db.insert_task(&task).unwrap();
 
         let loaded = db.get_task("t1").unwrap().expect("task should exist");
@@ -666,6 +702,7 @@ mod tests {
         assert_eq!(loaded.description, "description");
         assert_eq!(loaded.status, TaskStatus::Backlog);
         assert_eq!(loaded.worker_logs, "log line");
+        assert_eq!(loaded.agent_output, "## Result\n\nDone.");
         // Timestamps are filled in by SQLite on read.
         assert!(!loaded.created_at.is_empty());
         assert!(!loaded.updated_at.is_empty());
@@ -707,10 +744,12 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_task(&Task::new("t1", "a", "")).unwrap();
         db.set_worker_logs("t1", "stdout...").unwrap();
+        db.set_agent_output("t1", "## Summary\n\nDone.").unwrap();
         db.set_diff("t1", "diff --git a/x b/x").unwrap();
 
         let t = db.get_task("t1").unwrap().unwrap();
         assert_eq!(t.worker_logs, "stdout...");
+        assert_eq!(t.agent_output, "## Summary\n\nDone.");
         assert_eq!(t.diff, "diff --git a/x b/x");
     }
 
@@ -1064,6 +1103,7 @@ mod tests {
         assert_eq!(task.description, "keep me");
         assert_eq!(task.status, TaskStatus::Review);
         assert_eq!(task.retry_count, 0, "new column defaults to 0");
+        assert_eq!(task.agent_output, "", "new column defaults to empty");
 
         // 2. The new statuses are writable (the old CHECK is gone): route
         // through the legal chain to reach them.
@@ -1088,6 +1128,7 @@ mod tests {
         };
         assert!(migrated_sql.contains("retry_count"));
         assert!(migrated_sql.contains("RESOLVING_CONFLICTS"));
+        assert!(migrated_sql.contains("agent_output"));
 
         // 4. Re-opening is a no-op (the markers are now present).
         let _db2 = Database::open(&db_path).unwrap();
@@ -1150,6 +1191,58 @@ mod tests {
             .unwrap()
         };
         assert!(sql.contains("RESOLVING_CONFLICTS"));
+
+        // Re-opening is a no-op.
+        let _db2 = Database::open(&db_path).unwrap();
+    }
+
+    /// The exact `tasks` DDL shipped before the Markdown-output release:
+    /// Phase 9 status set + retry_count, but no `agent_output` column.
+    const PHASE9_SCHEMA: &str = r#"
+    CREATE TABLE tasks (
+        id           TEXT PRIMARY KEY,
+        title        TEXT NOT NULL,
+        description  TEXT NOT NULL DEFAULT '',
+        status       TEXT NOT NULL DEFAULT 'BACKLOG'
+                     CHECK (status IN ('BACKLOG','TODO','IN_PROGRESS','EVALUATING','REVIEW','RESOLVING_CONFLICTS','DONE','FAILED_NEEDS_HUMAN')),
+        retry_count  INTEGER NOT NULL DEFAULT 0,
+        worker_logs  TEXT NOT NULL DEFAULT '',
+        diff         TEXT NOT NULL DEFAULT '',
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX idx_tasks_status ON tasks(status);
+    "#;
+
+    #[test]
+    fn opening_a_phase9_database_gains_agent_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("state.db");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(PHASE9_SCHEMA).unwrap();
+            conn.execute(
+                "INSERT INTO tasks (id, title, status, retry_count, worker_logs, diff)
+                 VALUES ('p9', 'phase9 task', 'REVIEW', 2, 'transcript kept', 'diff kept')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(&db_path).unwrap();
+        let task = db.require_task("p9").unwrap();
+        assert_eq!(task.status, TaskStatus::Review);
+        assert_eq!(task.retry_count, 2);
+        assert_eq!(task.worker_logs, "transcript kept");
+        assert_eq!(task.diff, "diff kept");
+        assert_eq!(task.agent_output, "", "new column defaults to empty");
+
+        db.set_agent_output("p9", "## Answer\n\nNo files changed.")
+            .unwrap();
+        assert_eq!(
+            db.require_task("p9").unwrap().agent_output,
+            "## Answer\n\nNo files changed."
+        );
 
         // Re-opening is a no-op.
         let _db2 = Database::open(&db_path).unwrap();

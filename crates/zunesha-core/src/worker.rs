@@ -8,6 +8,9 @@
 //! 3. Streams `stdout`/`stderr` line-by-line, persisting them to the task's
 //!    `worker_logs` and broadcasting them on a [`tokio::sync::broadcast`]
 //!    channel so the daemon (Phase 5) can relay them to the web UI.
+//!    OpenCode's `--format json` stream is translated into that readable
+//!    transcript, and its final assistant message is stored separately in
+//!    `agent_output` for the dashboard's Markdown Output tab.
 //! 4. On a successful exit, moves the task to `EVALUATING` and runs the
 //!    project's test/lint command ([`crate::eval`]) in the workspace:
 //!    * pass → `REVIEW` (with the diff captured for the human),
@@ -123,9 +126,9 @@ impl Default for AgentCommand {
     /// 1. `ZOU_AGENT_CMD`, parsed as a command line honoring shell-style
     ///    quoting (e.g. `ZOU_AGENT_CMD="opencode run --auto '{prompt}'"`).
     /// 2. The model saved by `zou model` in the user-wide config, invoked as
-    ///    `opencode run --auto --model <id> {prompt}`.
+    ///    `opencode run --auto --format json --model <id> {prompt}`.
     /// 3. The installed `opencode` CLI as
-    ///    `opencode run {prompt}`.
+    ///    `opencode run --format json {prompt}`.
     ///
     /// An explicit environment override always wins. A malformed environment
     /// command or saved config is reported and skipped rather than silently
@@ -157,22 +160,33 @@ impl Default for AgentCommand {
 }
 
 impl AgentCommand {
-    /// The built-in agent invocation (`opencode run {prompt}`).
+    /// The built-in agent invocation (`opencode run --format json {prompt}`).
     ///
     /// Verified against the installed CLI: `opencode run [flags] [<message...>]`
     /// takes the prompt as a trailing argument. The earlier
     /// `opencode --task <prompt>` form was rejected by the real binary.
+    ///
+    /// `--format json` keeps tool calls and the final assistant message
+    /// distinguishable, so the worker can store a clean Markdown response in
+    /// `agent_output` without sacrificing the technical transcript.
     fn builtin() -> Self {
         AgentCommand {
             program: "opencode".to_string(),
-            args: vec!["run".to_string(), "{prompt}".to_string()],
+            args: vec![
+                "run".to_string(),
+                "--format".to_string(),
+                "json".to_string(),
+                "{prompt}".to_string(),
+            ],
         }
     }
 
     /// Build the default OpenCode agent for a saved model.
     ///
     /// `--auto` is intentional: Zunesha runs headlessly with stdin closed, so
-    /// an interactive permission prompt would hang the task.
+    /// an interactive permission prompt would hang the task. The JSON format is
+    /// what lets the worker separate the final Markdown response from tool
+    /// activity.
     pub fn from_config(config: &Config) -> Option<Self> {
         let model = config.model()?;
         Some(AgentCommand {
@@ -180,6 +194,8 @@ impl AgentCommand {
             args: vec![
                 "run".to_string(),
                 "--auto".to_string(),
+                "--format".to_string(),
+                "json".to_string(),
                 "--model".to_string(),
                 model.to_string(),
                 "{prompt}".to_string(),
@@ -470,8 +486,9 @@ impl WorkerPool {
             db.set_status(&task_id, TaskStatus::InProgress)?;
             // Fresh run: clear the previous attempt's output so a snapshot
             // taken before the first flush (or a run that never produces
-            // output) can't show stale logs/diff against the new attempt.
+            // output) can't show stale logs/output/diff against the new attempt.
             db.set_worker_logs(&task_id, "")?;
+            db.set_agent_output(&task_id, "")?;
             db.set_diff(&task_id, "")?;
             task
         };
@@ -512,10 +529,11 @@ impl WorkerPool {
                     task.status
                 )));
             }
-            // Fresh attempt: drop the pre-conflict logs/diff so the reviewer
-            // sees only this run (the diff is regenerated on success, now
-            // against the rebased base).
+            // Fresh attempt: drop the pre-conflict logs/output/diff so the
+            // reviewer sees only this run (the diff is regenerated on success,
+            // now against the rebased base).
             db.set_worker_logs(&task_id, "")?;
+            db.set_agent_output(&task_id, "")?;
             db.set_diff(&task_id, "")?;
             task
         };
@@ -875,6 +893,134 @@ async fn read_lines<R>(
     }
 }
 
+/// Turn OpenCode's `--format json` event stream into a readable transcript
+/// while keeping the final assistant message separate.
+///
+/// The CLI emits one JSON object per line. `text` events are the assistant's
+/// Markdown response; `tool_use` events describe tool activity. We keep both
+/// in the transcript (so debugging still shows the full run) and remember the
+/// last message's text as the clean `agent_output` for the Output tab.
+///
+/// Anything that is not a recognized OpenCode event — including every stderr
+/// line, plain-text agents, and CLI warnings — passes through unchanged.
+#[derive(Debug, Default)]
+struct OpenCodeStream {
+    output: String,
+    output_message: Option<String>,
+}
+
+impl OpenCodeStream {
+    fn observe(&mut self, stream: StreamKind, line: &str) -> Vec<String> {
+        if stream == StreamKind::Stderr {
+            return vec![line.to_string()];
+        }
+        let Some(event) = parse_opencode_event(line) else {
+            return vec![line.to_string()];
+        };
+        match event.get("type").and_then(serde_json::Value::as_str) {
+            Some("text") => {
+                let text = event
+                    .pointer("/part/text")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                if text.is_empty() {
+                    return Vec::new();
+                }
+                let message = event
+                    .pointer("/part/messageID")
+                    .and_then(serde_json::Value::as_str);
+                self.record_text(message, text);
+                text.lines().map(str::to_string).collect()
+            }
+            Some("tool_use") => tool_log_lines(&event),
+            Some("error") => vec![format!("[error] {}", error_message(&event))],
+            Some("reasoning") => event
+                .pointer("/part/text")
+                .and_then(serde_json::Value::as_str)
+                .map(|text| {
+                    text.lines()
+                        .map(|line| format!("[thinking] {line}"))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            // Step boundaries are useful to the CLI's UI but add noise here.
+            Some("step_start" | "step_finish") => Vec::new(),
+            _ => vec![line.to_string()],
+        }
+    }
+
+    /// Keep the text of the most recent assistant message.
+    ///
+    /// OpenCode starts a new message for the final answer after any tool
+    /// steps, so replacing the buffer on a new `messageID` drops intermediate
+    /// narration but keeps all parts of the final Markdown response.
+    fn record_text(&mut self, message: Option<&str>, text: &str) {
+        let message = message.unwrap_or_default();
+        if self.output_message.as_deref() != Some(message) {
+            self.output.clear();
+            self.output_message = Some(message.to_string());
+        }
+        if !self.output.is_empty() && !self.output.ends_with('\n') {
+            self.output.push('\n');
+        }
+        self.output.push_str(text);
+    }
+
+    fn output(&self) -> &str {
+        self.output.trim()
+    }
+}
+
+fn parse_opencode_event(line: &str) -> Option<serde_json::Value> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let kind = value.get("type")?.as_str()?;
+    matches!(
+        kind,
+        "text" | "tool_use" | "step_start" | "step_finish" | "error" | "reasoning"
+    )
+    .then_some(value)
+}
+
+fn tool_log_lines(event: &serde_json::Value) -> Vec<String> {
+    let part = &event["part"];
+    let tool = part
+        .get("tool")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("tool");
+    let state = &part["state"];
+    let status = state
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let title = state
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+
+    let mut header = format!("[tool] {tool}");
+    if !status.is_empty() && status != "completed" {
+        header.push_str(&format!(" ({status})"));
+    }
+    if !title.is_empty() && title != tool {
+        header.push_str(": ");
+        header.push_str(title);
+    }
+    let mut lines = vec![header];
+    if let Some(output) = state.get("output").and_then(serde_json::Value::as_str) {
+        lines.extend(output.lines().map(|line| format!("  {line}")));
+    }
+    lines
+}
+
+fn error_message(event: &serde_json::Value) -> &str {
+    event
+        .pointer("/error/message")
+        .or_else(|| event.pointer("/part/error/message"))
+        .or_else(|| event.get("message"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("agent error")
+}
+
 /// Persist and broadcast agent output.
 ///
 /// Accumulates lines and flushes to the database on a short timer so the UI
@@ -885,6 +1031,7 @@ async fn collect_logs(
     mut rx: mpsc::UnboundedReceiver<(StreamKind, String)>,
 ) {
     let mut buffer = String::new();
+    let mut stream = OpenCodeStream::default();
     let mut ticker = tokio::time::interval(LOG_FLUSH_INTERVAL);
     // Skip the immediate first tick so we only flush when there is something
     // new.
@@ -899,41 +1046,45 @@ async fn collect_logs(
         tokio::select! {
             line = rx.recv() => {
                 match line {
-                    Some((stream, line)) => {
-                        pool.emit(WorkerEvent::Log {
-                            task_id: task_id.clone(),
-                            stream,
-                            line: line.clone(),
-                            seq,
-                        });
-                        seq += 1;
-                        buffer.push_str(&line);
-                        buffer.push('\n');
-                        dirty = true;
+                    Some((kind, line)) => {
+                        for line in stream.observe(kind, &line) {
+                            pool.emit(WorkerEvent::Log {
+                                task_id: task_id.clone(),
+                                stream: kind,
+                                line: line.clone(),
+                                seq,
+                            });
+                            seq += 1;
+                            buffer.push_str(&line);
+                            buffer.push('\n');
+                            dirty = true;
+                        }
                     }
                     None => break, // both streams finished
                 }
             }
             _ = ticker.tick(), if dirty => {
-                flush_logs(&pool, &task_id, &buffer).await;
+                flush_logs(&pool, &task_id, &buffer, stream.output()).await;
                 dirty = false;
             }
         }
     }
 
     // Final flush of anything left over.
-    if dirty {
-        flush_logs(&pool, &task_id, &buffer).await;
+    if dirty || !stream.output().is_empty() {
+        flush_logs(&pool, &task_id, &buffer, stream.output()).await;
     }
 }
 
-async fn flush_logs(pool: &WorkerHandle, task_id: &str, buffer: &str) {
+async fn flush_logs(pool: &WorkerHandle, task_id: &str, buffer: &str, output: &str) {
     let db_path = pool.db_path.clone();
     let task_id = task_id.to_string();
     let logs = buffer.to_string();
+    let output = output.to_string();
     let _ = tokio::task::spawn_blocking(move || {
         if let Ok(db) = Database::open(&db_path) {
             let _ = db.set_worker_logs(&task_id, &logs);
+            let _ = db.set_agent_output(&task_id, &output);
         }
     })
     .await;
@@ -1029,6 +1180,75 @@ mod tests {
     }
 
     #[test]
+    fn opencode_events_split_markdown_output_from_tool_transcript() {
+        let mut stream = OpenCodeStream::default();
+
+        // A tool step: no final output yet, but the transcript records it.
+        let tool = serde_json::json!({
+            "type": "tool_use",
+            "part": {
+                "messageID": "msg-1",
+                "tool": "read",
+                "state": {
+                    "status": "completed",
+                    "title": "read",
+                    "output": "1: hello"
+                }
+            }
+        })
+        .to_string();
+        let lines = stream.observe(StreamKind::Stdout, &tool);
+        assert_eq!(lines, vec!["[tool] read", "  1: hello"]);
+        assert_eq!(stream.output(), "");
+
+        // The final answer arrives in a new message; it becomes the clean
+        // Markdown output while also staying visible in the transcript.
+        let text = serde_json::json!({
+            "type": "text",
+            "part": {
+                "messageID": "msg-2",
+                "text": "## Result\n\n- no files changed"
+            }
+        })
+        .to_string();
+        let lines = stream.observe(StreamKind::Stdout, &text);
+        assert_eq!(lines, vec!["## Result", "", "- no files changed"]);
+        assert_eq!(stream.output(), "## Result\n\n- no files changed");
+
+        // Step boundaries are intentionally quiet.
+        let step = serde_json::json!({"type": "step_start", "part": {}}).to_string();
+        assert!(stream.observe(StreamKind::Stdout, &step).is_empty());
+    }
+
+    #[test]
+    fn only_the_last_opencode_text_message_is_the_output() {
+        let mut stream = OpenCodeStream::default();
+        for (message, text) in [("msg-1", "intermediate"), ("msg-2", "final answer")] {
+            let event = serde_json::json!({
+                "type": "text",
+                "part": {"messageID": message, "text": text}
+            })
+            .to_string();
+            stream.observe(StreamKind::Stdout, &event);
+        }
+        assert_eq!(stream.output(), "final answer");
+    }
+
+    #[test]
+    fn plain_output_and_stderr_pass_through_unchanged() {
+        let mut stream = OpenCodeStream::default();
+        assert_eq!(
+            stream.observe(StreamKind::Stdout, "plain agent line"),
+            vec!["plain agent line"]
+        );
+        assert_eq!(
+            stream.observe(StreamKind::Stderr, "warning: beep"),
+            vec!["warning: beep"]
+        );
+        assert_eq!(stream.output(), "");
+    }
+
+    #[test]
     fn saved_model_builds_an_auto_opencode_command() {
         let config = Config {
             agent: crate::config::AgentConfig {
@@ -1042,6 +1262,8 @@ mod tests {
             vec![
                 "run",
                 "--auto",
+                "--format",
+                "json",
                 "--model",
                 "opencode/deepseek-v4.1-flash-free",
                 "{prompt}"
@@ -1136,6 +1358,48 @@ mod tests {
         }
         assert!(saw_log, "log lines broadcast");
         assert!(saw_finished, "completion broadcast");
+    }
+
+    #[tokio::test]
+    async fn structured_agent_response_is_saved_when_no_files_change() {
+        let (_repo, paths) = scratch_install();
+        let db = Database::open(&paths.state_db()).unwrap();
+        ready_tasks(&db, 1);
+
+        // The shape `opencode run --format json` produces: a text event in the
+        // final assistant message. Nothing is written to the workspace.
+        let pool = WorkerPool::new(
+            paths.clone(),
+            1,
+            AgentCommand::shell(
+                r###"printf '%s\n' '{"type":"step_start","part":{"messageID":"msg-1"}}' '{"type":"text","part":{"messageID":"msg-2","text":"## Answer\n\n- no files changed"}}'"###,
+            ),
+        );
+
+        let handle = pool.spawn_task("t0".into()).await.unwrap();
+        assert!(handle.await.unwrap().unwrap(), "agent exit 0 => success");
+
+        let db = Database::open(&paths.state_db()).unwrap();
+        let task = db.get_task("t0").unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Review);
+        assert_eq!(
+            task.agent_output, "## Answer\n\n- no files changed",
+            "final Markdown response is stored separately from the transcript"
+        );
+        assert!(
+            task.diff.is_empty(),
+            "an analysis task changes no files, so the diff is empty"
+        );
+        assert!(
+            task.worker_logs.contains("## Answer"),
+            "the transcript still carries the text: {:?}",
+            task.worker_logs
+        );
+        assert!(
+            !task.worker_logs.contains(r#"{"type":"text""#),
+            "raw JSON events must not leak into the transcript: {:?}",
+            task.worker_logs
+        );
     }
 
     #[tokio::test]

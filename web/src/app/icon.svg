@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Zunesha">
+  <rect width="64" height="64" fill="#fff4ec"/>
+  <rect x="2" y="2" width="60" height="60" fill="#000"/>
+  <rect x="8" y="8" width="48" height="48" fill="#e8412f"/>
+  <path d="M18 18H50V28L30 48H50V58H18V48L38 28H18Z" fill="#000"/>
+  <path d="M16 16H48V26L28 46H48V56H16V46L36 26H16Z" fill="#ffd400" stroke="#000" stroke-width="2.5" stroke-linejoin="miter"/>
+</svg>

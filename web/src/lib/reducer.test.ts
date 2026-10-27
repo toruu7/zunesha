@@ -19,6 +19,7 @@ function task(overrides: Partial<Task> & { id: string }): Task {
     status: "TODO" as TaskStatus,
     retry_count: 0,
     worker_logs: "",
+    agent_output: "",
     diff: "",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",

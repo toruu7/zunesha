@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useZou } from "@/lib/store";
 import type { Task } from "@/lib/types";
 import LogViewer from "./log-viewer";
+import MarkdownView from "./markdown-view";
 
 /** Colour a unified diff line within the press-sheet palette. */
 function diffLineClass(line: string): string {
@@ -21,7 +22,8 @@ function DiffView({ diff }: { diff: string }) {
   if (!diff.trim()) {
     return (
       <p className="border-[3px] border-ink bg-contrast p-3 text-sm font-medium italic text-ink/60">
-        No changes captured for this task.
+        No file changes captured for this task. Check the Output tab for the
+        agent&apos;s response.
       </p>
     );
   }
@@ -39,6 +41,18 @@ function DiffView({ diff }: { diff: string }) {
   );
 }
 
+function OutputView({ output }: { output: string }) {
+  if (!output.trim()) {
+    return (
+      <p className="border-[3px] border-ink bg-contrast p-3 text-sm font-medium italic text-ink/60">
+        No final agent response captured. The full process transcript is in
+        Logs.
+      </p>
+    );
+  }
+  return <MarkdownView markdown={output} />;
+}
+
 // Shared heavy control: square, inked, with a hard shadow that lifts on hover
 // and settles back when pressed. Feedback is immediate (no transition).
 const ACTION =
@@ -50,9 +64,10 @@ const LABEL =
 /**
  * The human-in-the-loop review surface.
  *
- * Opens for any task; shows description, live output, and the captured diff.
- * Approve/Reject only apply to REVIEW tasks (the API enforces that too — a
- * non-REVIEW task yields 409, surfaced through the store's error banner).
+ * Opens for any task; shows description, the agent's formatted final response,
+ * the technical transcript, and the captured diff. Approve/Reject only apply
+ * to REVIEW tasks (the API enforces that too — a non-REVIEW task yields 409,
+ * surfaced through the store's error banner).
  */
 export default function ReviewModal({ task }: { task: Task }) {
   const select = useZou((s) => s.select);
@@ -64,7 +79,13 @@ export default function ReviewModal({ task }: { task: Task }) {
   const error = useZou((s) => s.error);
   const clearError = useZou((s) => s.clearError);
   const [feedback, setFeedback] = useState("");
-  const [tab, setTab] = useState<"diff" | "logs">("diff");
+  const [tab, setTab] = useState<"output" | "diff" | "logs">(() => {
+    // Analysis tasks produce no diff; open their answer instead of an empty
+    // diff pane. Code tasks keep the review-first default.
+    if (task.diff.trim()) return "diff";
+    if (task.agent_output.trim()) return "output";
+    return "logs";
+  });
 
   // Close on Escape.
   useEffect(() => {
@@ -162,10 +183,10 @@ export default function ReviewModal({ task }: { task: Task }) {
             </section>
           )}
 
-          {/* Diff / logs tabs */}
+          {/* Output / diff / logs tabs */}
           <section>
             <div className="flex gap-1 mb-2">
-              {(["diff", "logs"] as const).map((t) => (
+              {(["output", "diff", "logs"] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
@@ -180,7 +201,9 @@ export default function ReviewModal({ task }: { task: Task }) {
                 </button>
               ))}
             </div>
-            {tab === "diff" ? (
+            {tab === "output" ? (
+              <OutputView output={task.agent_output} />
+            ) : tab === "diff" ? (
               <DiffView diff={task.diff} />
             ) : (
               <LogViewer taskId={task.id} />

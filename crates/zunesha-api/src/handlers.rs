@@ -203,7 +203,8 @@ pub async fn list_tasks(State(state): State<AppState>) -> ApiResult<Json<TasksRe
     Ok(Json(response))
 }
 
-/// `GET /api/tasks/:id` – one task, including its captured logs and diff.
+/// `GET /api/tasks/:id` – one task, including its transcript, final agent
+/// output, and captured diff.
 pub async fn get_task(
     State(state): State<AppState>,
     Path(task_id): Path<String>,

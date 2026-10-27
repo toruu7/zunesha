@@ -189,8 +189,13 @@ pub struct Task {
     /// [`TaskStatus::FailedNeedsHuman`]. Reset when a human sends a parked
     /// task back to the queue.
     pub retry_count: u32,
-    /// Captured worker stdout/stderr (populated in Phase 4).
+    /// Captured worker stdout/stderr, the technical transcript (populated in
+    /// Phase 4).
     pub worker_logs: String,
+    /// The agent's final assistant response, rendered as Markdown in the
+    /// dashboard. Captured from structured agent output when available; empty
+    /// for agents that only emit a plain transcript.
+    pub agent_output: String,
     /// Captured `git diff` of the task's workspace (populated in Phase 3).
     pub diff: String,
     /// `YYYY-MM-DD HH:MM:SS` (UTC), set by the database.
@@ -220,6 +225,7 @@ impl Task {
             status: TaskStatus::Backlog,
             retry_count: 0,
             worker_logs: String::new(),
+            agent_output: String::new(),
             diff: String::new(),
             created_at: String::new(),
             updated_at: String::new(),
@@ -261,6 +267,7 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Backlog);
         assert_eq!(task.retry_count, 0, "no validation failures yet");
         assert!(task.worker_logs.is_empty());
+        assert!(task.agent_output.is_empty());
         assert!(task.diff.is_empty());
         assert!(task.created_at.is_empty());
     }

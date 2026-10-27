@@ -5,12 +5,15 @@ import { useEffect, useRef } from "react";
 import { useZou } from "@/lib/store";
 
 /**
- * Live agent output for one task.
+ * Live technical transcript for one task.
  *
  * Lines come from the store's reducer, which merges streamed `log` events with
  * the persisted `worker_logs` prefix by `seq` — so this view is seamless across
  * reconnects and never duplicates or drops lines. Gaps (a dropped event) show
  * as a visible placeholder rather than silently missing text.
+ *
+ * The agent's final Markdown answer is shown separately in the Output tab; this
+ * view keeps tool calls, stderr, and `[eval]` output for debugging.
  */
 export default function LogViewer({ taskId }: { taskId: string }) {
   const lines = useZou((s) => s.logs[taskId]);
@@ -40,7 +43,7 @@ export default function LogViewer({ taskId }: { taskId: string }) {
     <div className="flex flex-col overflow-hidden border-[3px] border-ink bg-contrast">
       <div className="flex items-center gap-2 border-b-[3px] border-ink bg-ground px-3 py-1.5">
         <span className="text-[11px] font-black uppercase tracking-[0.1em]">
-          output
+          logs
         </span>
         {running && (
           <span className="flex items-center gap-1 border-2 border-ink bg-emphasis px-1.5 py-0.5 text-[10px] font-black uppercase tracking-[0.06em]">
@@ -60,7 +63,7 @@ export default function LogViewer({ taskId }: { taskId: string }) {
       >
         {empty ? (
           <p className="font-medium italic text-ink/60">
-            {running ? "waiting for output…" : "no output captured"}
+            {running ? "waiting for logs…" : "no logs captured"}
           </p>
         ) : (
           lines.map((l) => (

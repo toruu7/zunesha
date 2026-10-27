@@ -222,13 +222,13 @@ zou model --clear    # forget it, back to the built-in default
 `zou model` writes `${XDG_CONFIG_HOME:-~/.config}/zou/config.json` and uses:
 
 ```text
-opencode run --auto --model <model> {prompt}
+opencode run --auto --format json --model <model> {prompt}
 ```
 
 The setting is read when `zou run` / `zou start` launch, so restart a running
 daemon after changing it. `ZOU_AGENT_CMD` is an explicit per-shell override
 and wins over the saved model; without either, the built-in command is
-`opencode run "<prompt>"`.
+`opencode run --format json "<prompt>"`.
 
 Use `ZOU_AGENT_CMD` when you want a different agent CLI or extra flags.
 `{prompt}` and `{workspace}` are substituted after parsing (if the template
@@ -237,8 +237,12 @@ never mentions `{prompt}`, it is appended as the final argument):
 ```sh
 ZOU_AGENT_CMD='aider --message "{prompt}"' zou run
 ZOU_AGENT_CMD='./scripts/my-agent.sh {workspace}' zou start
-ZOU_AGENT_CMD='opencode run --auto {prompt}' zou run --jobs 5
+ZOU_AGENT_CMD='opencode run --auto --format json {prompt}' zou run --jobs 5
 ```
+
+A custom agent command still streams its output into Logs. To populate the
+separate Markdown Output tab, it must emit OpenCode-compatible `text` events
+(the built-in and saved-model commands already do).
 
 The spec is parsed with full POSIX quoting (single/double quotes, backslash
 escapes). The daemon reads it **at launch**, so set it before `zou start`.
@@ -544,16 +548,22 @@ every ready (`TODO`) task:
   stdin/stdout/stderr.
 - **Live log capture** — both streams are read line-by-line, broadcast on a
   `tokio::sync::broadcast` channel (the daemon relays this to the dashboard),
-  and periodically flushed to the task's `worker_logs` column.
+  and periodically flushed to the task's `worker_logs` column. OpenCode's
+  `--format json` events are translated into that transcript; the final
+  assistant message is also stored separately as Markdown in `agent_output`,
+  so analysis-only tasks still show a readable result.
 - **Exit handling** — a non-zero agent exit sends the task back to `TODO` for
   a human-guided retry; a zero exit starts the Phase 8 validation gate:
   `IN_PROGRESS → EVALUATING` → test command → `REVIEW` (pass) or back to
   `IN_PROGRESS` with the errors appended (fail, up to 3 times) — see
   [Self-healing validation (Phase 8)](#self-healing-validation-phase-8).
-- **Agent command** — defaults to `opencode run "<prompt>"`. `zou model` saves
-  `opencode run --auto --model <id> {prompt}` user-wide; `ZOU_AGENT_CMD`
-  overrides both (parsed with full POSIX-style quoting — single/double quotes,
-  backslash escapes — and `{prompt}` / `{workspace}` placeholders).
+- **Agent command** — defaults to `opencode run --format json "<prompt>"`.
+  `zou model` saves
+  `opencode run --auto --format json --model <id> {prompt}` user-wide;
+  `ZOU_AGENT_CMD` overrides both (parsed with full POSIX-style quoting —
+  single/double quotes, backslash escapes — and `{prompt}` / `{workspace}`
+  placeholders). A custom command that does not emit OpenCode's JSON events
+  still works; its full output remains in Logs.
 - **Prompt shape** — task title + description (including any
   `## Validation failure` tail from Phase 8), the conflict instruction when
   running in Phase 9's resolution mode, then the codebase map appended last
@@ -690,7 +700,7 @@ the agent's prompt contains both the map heading and a tree entry, and
 | GET    | `/health`                | Liveness probe.                            |
 | GET    | `/api/status`            | Per-status counts + concurrency cap.       |
 | GET    | `/api/tasks`             | Every task, the dependency DAG (`dependencies`), and per-status counts. |
-| GET    | `/api/tasks/:id`         | One task (captured logs + diff included).  |
+| GET    | `/api/tasks/:id`         | One task (transcript, agent output, and diff included). |
 | POST   | `/api/plan`              | `{"prompt": "..."}` → DAG of tasks (built-in or `ZOU_PLANNER_CMD`; `400` when the model's plan is invalid). |
 | POST   | `/api/run`               | Start agents on all ready (`TODO`) tasks.  |
 | POST   | `/api/tasks/:id/run`     | Start the agent on one ready task.         |
@@ -765,15 +775,17 @@ The Axum server auto-discovers `web/out` (override with `ZOU_DASHBOARD_DIR` or
   pure layout in `web/src/lib/dag.ts`, no layout library). Pan/zoom/drag freely,
   click a node to open the same review modal — the graph repaints live as
   statuses change but never jumps while you're looking at it.
-- **Review modal** — task description, a colourised unified diff, live agent
-  output, and the human-in-the-loop controls: **Approve** (merges the diff
-  into your working tree, then `REVIEW → DONE` + DAG promotion) or **Reject**
-  (feedback appended to the description, task returns to `TODO` for a guided
-  retry). Approving over a conflict (Phase 9) *keeps the modal open* on the
-  task: an orange banner explains that the workspace was rebased, and the
-  auto-merge agent's output streams live into the logs tab. Hard failures
-  (the `409` fallback) are echoed *inside* the modal — the page-level banner
-  sits behind its full-screen overlay.
+- **Review modal** — task description, the agent's **Output** rendered as
+  styled Markdown, a colourised unified diff, a live technical **Logs** tab,
+  and the human-in-the-loop controls: **Approve** (merges the diff into your
+  working tree, then `REVIEW → DONE` + DAG promotion) or **Reject** (feedback
+  appended to the description, task returns to `TODO` for a guided retry).
+  Analysis-only tasks show their answer instead of an empty diff. Approving
+  over a conflict (Phase 9) *keeps the modal open* on the task: an orange
+  banner explains that the workspace was rebased, and the auto-merge agent's
+  output streams live into the logs tab. Hard failures (the `409` fallback)
+  are echoed *inside* the modal — the page-level banner sits behind its
+  full-screen overlay.
 - **Live logs** — the store merges streamed `log` events with each task's
   persisted `worker_logs` by `seq` (a 0-based line index), so the view is
   seamless across reconnects and never duplicates or drops lines. A claim
@@ -845,7 +857,8 @@ tasks (
     description TEXT,
     status TEXT,           -- BACKLOG | TODO | IN_PROGRESS | EVALUATING | REVIEW | RESOLVING_CONFLICTS | DONE | FAILED_NEEDS_HUMAN
     retry_count INTEGER,   -- failed validations in the current cycle (Phase 8)
-    worker_logs TEXT,      -- captured agent + [eval] output (Phase 4/8)
+    worker_logs TEXT,      -- captured agent + [eval] transcript (Phase 4/8)
+    agent_output TEXT,     -- final assistant response, Markdown (Output tab)
     diff TEXT              -- captured git diff (Phase 3)
 )
 

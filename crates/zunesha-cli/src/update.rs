@@ -2,8 +2,8 @@
 //!
 //! The installed binary carries its own Cargo version. Updates are published
 //! as semver Git tags (`v1.2.3`); the updater compares the highest tag in the
-//! source repository with [`env!("CARGO_PKG_VERSION")`] and asks before
-//! running `install.sh` from that tag.
+//! source repository with `env!("CARGO_PKG_VERSION")` and asks before running
+//! `install.sh` from that tag.
 //!
 //! `install.sh` records where the binary came from in
 //! `<prefix>/share/zou/install.json`, so an installed `zou` can find its

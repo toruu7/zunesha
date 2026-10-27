@@ -8,7 +8,7 @@ environment variables read **at launch** (so set them before `zou run` /
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `ZOU_AGENT_CMD` | Coding agent command (overrides the saved model) | `opencode run {prompt}` |
+| `ZOU_AGENT_CMD` | Coding agent command (overrides the saved model) | `opencode run --format json {prompt}` |
 | `ZOU_CONFIG_FILE` | User-wide config file path | `${XDG_CONFIG_HOME:-~/.config}/zou/config.json` |
 | `ZOU_PLANNER_CMD` | Planning command (prompt on stdin, JSON on stdout) | built-in three-step chain |
 | `ZOU_EVAL_CMD` | Test/lint command run in each workspace | auto-detect |
@@ -38,19 +38,23 @@ The choice is user-wide (`${XDG_CONFIG_HOME:-~/.config}/zou/config.json`), so
 it applies to every project. It resolves to:
 
 ```text
-opencode run --auto --model <model> {prompt}
+opencode run --auto --format json --model <model> {prompt}
 ```
 
 `ZOU_AGENT_CMD` still wins when set; unset it to use the saved model. A running
 `zou start` reads the setting at launch, so restart the daemon after changing
 it.
 
+The `--format json` flag is what lets Zunesha show the agent's final Markdown
+response in the dashboard's **Output** tab instead of only the raw transcript.
+The built-in command includes it automatically.
+
 ## The agent (`ZOU_AGENT_CMD`)
 
 The agent runs **inside the task's workspace**, with an isolated git clone as
 its working directory. The prompt is the task's title and description plus the
 repository map. If you saved a model with `zou model`, the default command
-already includes `--auto --model <id>`.
+already includes `--auto --format json --model <id>`.
 
 Placeholders:
 
@@ -63,13 +67,19 @@ argument (`opencode run {prompt}` relies on that). If it never mentions
 workspace.
 
 ```sh
-ZOU_AGENT_CMD='opencode run --auto {prompt}' zou run
+ZOU_AGENT_CMD='opencode run --auto --format json {prompt}' zou run
 ZOU_AGENT_CMD='aider --message "{prompt}"' zou run
 ZOU_AGENT_CMD='./scripts/my-agent.sh {workspace}' zou start
 ```
 
 Anything that edits files and exits 0 is a valid agent. It does **not** need
 to commit: Zunesha captures the workspace diff itself.
+
+The dashboard shows two views of an agent run: **Logs** is the technical
+transcript (tool calls, stderr, `[eval]` output), and **Output** is the final
+assistant response rendered as Markdown. Agents that emit OpenCode-compatible
+JSON `text` events populate Output; a custom plain-text command still works,
+with its output visible in Logs.
 
 ## Validation (`ZOU_EVAL_CMD`)
 
@@ -160,7 +170,7 @@ command than the user-wide model selected with `zou model`:
 
 ```sh
 # .envrc — everything a repo needs
-export ZOU_AGENT_CMD='opencode run --auto --model opencode/glm-5.3-flash-free {prompt}'
+export ZOU_AGENT_CMD='opencode run --auto --format json --model opencode/glm-5.3-flash-free {prompt}'
 export ZOU_PLANNER_CMD='llm -m claude-sonnet-4'
 export ZOU_EVAL_CMD='sh -c "cargo test && cargo clippy -- -D warnings"'
 ```

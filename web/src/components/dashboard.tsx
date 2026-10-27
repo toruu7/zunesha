@@ -160,7 +160,9 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {selectedId && selectedTask && <ReviewModal task={selectedTask} />}
+      {selectedId && selectedTask && (
+        <ReviewModal key={selectedTask.id} task={selectedTask} />
+      )}
     </div>
   );
 }

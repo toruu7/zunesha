@@ -81,7 +81,7 @@ update it with the same `--model`) before retrying. Restart a running
 hand in a scratch directory:
 
 ```sh
-opencode run --auto --model opencode/deepseek-v4.1-flash-free "say OK"
+opencode run --auto --format json --model opencode/deepseek-v4.1-flash-free "say OK"
 ```
 
 ## The agent keeps failing and the task is in `FAILED_NEEDS_HUMAN`
