@@ -7,6 +7,7 @@ import Board from "@/components/board";
 import LogViewer from "@/components/log-viewer";
 import PlanBar from "@/components/plan-bar";
 import ReviewModal from "@/components/review-modal";
+import Spinner from "@/components/spinner";
 import { isActive } from "@/lib/status";
 import { useZou } from "@/lib/store";
 import type { Task } from "@/lib/types";
@@ -40,6 +41,70 @@ function ConnectionDot() {
       />
       {label}
     </span>
+  );
+}
+
+/** The repository this daemon is serving, always visible under the masthead. */
+function ProjectBadge() {
+  const project = useZou((s) => s.project);
+  return (
+    <div
+      className="flex min-w-0 flex-1 items-center gap-2 border-2 border-ink bg-contrast px-2 py-1 shadow-brutal-sm sm:flex-none sm:max-w-[36rem]"
+      title={project?.root}
+    >
+      <span className="shrink-0 border border-ink bg-ink px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.1em] text-emphasis">
+        project
+      </span>
+      <div className="min-w-0">
+        <div className="truncate text-[12px] font-black uppercase leading-tight tracking-[0.03em]">
+          {project?.name ?? "connecting…"}
+        </div>
+        {project && (
+          <div className="truncate font-mono text-[10px] font-bold leading-tight text-ink/65">
+            {project.root}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** A conspicuous live strip: running tasks, not just cards parked in a column. */
+function RunningNow() {
+  const tasks = useZou((s) => s.tasks);
+  const select = useZou((s) => s.select);
+  const running = tasks.filter((t) => isActive(t.status));
+
+  if (running.length === 0) {
+    return (
+      <span className="border-2 border-ink bg-contrast px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-ink/60">
+        idle
+      </span>
+    );
+  }
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5"
+    >
+      <span className="flex items-center gap-1.5 border-2 border-ink bg-emphasis px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em]">
+        <Spinner className="size-3 text-ink" label="tasks running" />
+        {running.length} running
+      </span>
+      {running.map((task) => (
+        <button
+          key={task.id}
+          onClick={() => select(task.id)}
+          title={`${task.id} — ${task.title}`}
+          className="max-w-[18rem] truncate border-2 border-ink bg-contrast px-2 py-1 text-left text-[10px] font-bold hover:bg-emphasis focus-visible:outline-4"
+        >
+          <span className="font-mono uppercase">{task.id}</span>{" "}
+          {task.title}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -103,7 +168,8 @@ function LiveLogsDock({ task, onHide }: { task: Task; onHide: () => void }) {
     >
       <div className="mx-auto max-w-[1600px] px-3 py-2 sm:px-4">
         <div className="mb-1.5 flex flex-wrap items-center gap-2">
-          <span className="border-2 border-ink bg-ink px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.1em] text-emphasis">
+          <span className="flex items-center gap-1 border-2 border-ink bg-ink px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.1em] text-emphasis">
+            {live && <Spinner className="size-2.5" label="task running" />}
             {live ? "live logs" : "logs"}
           </span>
           <code className="border border-ink bg-contrast px-1 font-mono text-[10px] font-bold uppercase">
@@ -227,7 +293,7 @@ export default function Dashboard() {
                 }`}
               >
                 {logTask && isActive(logTask.status) && (
-                  <span className="inline-block size-2 border border-ink bg-signal animate-pulse motion-reduce:animate-none" />
+                  <Spinner className="size-2.5" label="task running" />
                 )}
                 <span className="hidden sm:inline">
                   {logTask && isActive(logTask.status) ? "live logs" : "logs"}
@@ -242,6 +308,10 @@ export default function Dashboard() {
         {/* Blush band: explanation + actions. */}
         <div className="border-t-4 border-ink bg-field">
           <div className="max-w-[1600px] mx-auto flex flex-col gap-2 px-3 py-3 sm:px-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <ProjectBadge />
+              <RunningNow />
+            </div>
             <PlanBar />
             <ErrorBanner />
           </div>

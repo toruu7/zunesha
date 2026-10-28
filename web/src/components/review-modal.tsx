@@ -7,6 +7,7 @@ import { isActive } from "@/lib/status";
 import type { Task } from "@/lib/types";
 import LogViewer from "./log-viewer";
 import MarkdownView from "./markdown-view";
+import Spinner from "./spinner";
 
 /** Colour a unified diff line within the press-sheet palette. */
 function diffLineClass(line: string): string {
@@ -136,7 +137,10 @@ export default function ReviewModal({ task }: { task: Task }) {
               <code className="border-2 border-ink bg-ink px-1.5 py-0.5 font-mono text-[11px] font-bold text-emphasis">
                 {task.id}
               </code>
-              <span className="border-2 border-ink bg-contrast px-1.5 py-0.5 text-[10px] font-black uppercase tracking-[0.06em]">
+              <span className="flex items-center gap-1 border-2 border-ink bg-contrast px-1.5 py-0.5 text-[10px] font-black uppercase tracking-[0.06em]">
+                {isWorkerOwned && (
+                  <Spinner className="size-2.5 text-ink" label="task running" />
+                )}
                 {task.status.replaceAll("_", " ")}
               </span>
               {task.retry_count > 0 && (

@@ -142,8 +142,14 @@ export const useZou = create<ZouState>((set, get) => {
 
     refresh: async () => {
       try {
-        const { tasks, dependencies } = await api.tasks();
-        dispatch({ type: "snapshot", tasks, dependencies, counts: countsFor(tasks) });
+        const { project, tasks, dependencies } = await api.tasks();
+        dispatch({
+          type: "snapshot",
+          project,
+          tasks,
+          dependencies,
+          counts: countsFor(tasks),
+        });
         set({ error: null });
       } catch (err) {
         set({ error: `failed to load tasks: ${errText(err)}` });

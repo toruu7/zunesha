@@ -18,7 +18,8 @@ use zunesha_core::{
 };
 
 use crate::events::{
-    dependency_edges, snapshot_event, zero_filled_counts, DependencyEdge, StatusCount,
+    dependency_edges, project_info, snapshot_event, zero_filled_counts, DependencyEdge,
+    ProjectInfo, StatusCount,
 };
 use crate::AppState;
 
@@ -113,7 +114,7 @@ impl AppState {
     /// or reconnect will resync the client).
     fn emit_snapshot(&self) {
         if let Ok(db) = Database::open(&self.paths.state_db()) {
-            if let Ok(snapshot) = snapshot_event(&db) {
+            if let Ok(snapshot) = snapshot_event(&db, &self.paths) {
                 let _ = self.events.send(snapshot);
             }
         }
@@ -126,6 +127,8 @@ impl AppState {
 
 #[derive(Serialize)]
 pub struct TasksResponse {
+    /// Which repository this daemon serves.
+    pub project: ProjectInfo,
     pub tasks: Vec<Task>,
     /// Dependency edges (`task_id` ← `depends_on`), immutable after planning.
     pub dependencies: Vec<DependencyEdge>,
@@ -189,11 +192,14 @@ pub async fn health() -> Json<serde_json::Value> {
     Json(json!({ "ok": true }))
 }
 
-/// `GET /api/tasks` – every task, the dependency edges, and per-status counts.
+/// `GET /api/tasks` – project identity, every task, dependency edges, and
+/// per-status counts.
 pub async fn list_tasks(State(state): State<AppState>) -> ApiResult<Json<TasksResponse>> {
+    let project = project_info(&state.paths);
     let response = tokio::task::spawn_blocking(move || {
         let db = Database::open(&state.paths.state_db())?;
         Ok::<_, Error>(TasksResponse {
+            project,
             tasks: db.list_tasks()?,
             dependencies: dependency_edges(&db)?,
             counts: zero_filled_counts(&db)?,
@@ -214,11 +220,13 @@ pub async fn get_task(
     Ok(Json(task))
 }
 
-/// `GET /api/status` – per-status counts and the concurrency cap.
+/// `GET /api/status` – project identity, per-status counts, and the
+/// concurrency cap.
 pub async fn status(State(state): State<AppState>) -> ApiResult<Json<serde_json::Value>> {
     let db = state.open_db()?;
     let counts = zero_filled_counts(&db)?;
     Ok(Json(json!({
+        "project": project_info(&state.paths),
         "counts": counts,
         "max_concurrency": state.pool.max_concurrency(),
         "initialized": true,

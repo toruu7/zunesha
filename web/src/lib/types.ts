@@ -40,6 +40,14 @@ export interface Task {
   updated_at: string;
 }
 
+/** The repository this daemon is working on. */
+export interface ProjectInfo {
+  /** Final path component, e.g. `saas-ops-hub`. */
+  name: string;
+  /** Absolute (or best-effort) repository root. */
+  root: string;
+}
+
 /** Per-status count. Always emitted for all eight statuses (zero-filled). */
 export interface StatusCount {
   status: TaskStatus;
@@ -73,6 +81,8 @@ export interface LogEvent {
 export type ApiEvent =
   | {
       type: "snapshot";
+      /** Which repository this daemon serves. */
+      project: ProjectInfo;
       tasks: Task[];
       /** Dependency edges (`task_id` ← `depends_on`); see `dag.ts`. */
       dependencies: DependencyEdge[];
@@ -84,6 +94,7 @@ export type ApiEvent =
 // --- REST response shapes -------------------------------------------------
 
 export interface TasksResponse {
+  project: ProjectInfo;
   tasks: Task[];
   /** Dependency edges (`task_id` ← `depends_on`), immutable after planning. */
   dependencies: DependencyEdge[];
@@ -91,6 +102,7 @@ export interface TasksResponse {
 }
 
 export interface StatusResponse {
+  project: ProjectInfo;
   counts: StatusCount[];
   max_concurrency: number;
   initialized: boolean;

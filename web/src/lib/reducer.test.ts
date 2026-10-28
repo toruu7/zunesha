@@ -36,7 +36,13 @@ function line(seq: number, text: string, stream: "stdout" | "stderr" = "stdout")
  * its own tests in `dag.test.ts`).
  */
 function snapshot(tasks: Task[], dependencies: DependencyEdge[] = []): ApiEvent {
-  return { type: "snapshot", tasks, dependencies, counts: [] };
+  return {
+    type: "snapshot",
+    project: { name: "test-project", root: "/tmp/test-project" },
+    tasks,
+    dependencies,
+    counts: [],
+  };
 }
 
 // --- splitLogs ------------------------------------------------------------
@@ -121,6 +127,7 @@ describe("applyEvent", () => {
 
   it("snapshot drops logs for tasks that no longer exist", () => {
     const state = {
+      project: null,
       tasks: [task({ id: "t1" }), task({ id: "t2" })],
       logs: { t1: [line(0, "a")], t2: [line(0, "b")] },
       deps: [],
@@ -272,5 +279,19 @@ describe("applyEvent", () => {
       state.deps,
       "task_updated and log must not touch the DAG",
     ).toEqual(deps);
+  });
+
+  it("snapshots carry the project identity; later events preserve it", () => {
+    let state = applyEvent(EMPTY_STATE, snapshot([task({ id: "t1" })]));
+    expect(state.project).toEqual({
+      name: "test-project",
+      root: "/tmp/test-project",
+    });
+
+    state = applyEvent(state, {
+      type: "task_updated",
+      task: task({ id: "t1", status: "IN_PROGRESS" }),
+    });
+    expect(state.project?.name).toBe("test-project");
   });
 });

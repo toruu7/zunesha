@@ -16,6 +16,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+import Spinner from "@/components/spinner";
 import { buildGraph } from "@/lib/dag";
 import { ACCENT, isActive } from "@/lib/status";
 import { useZou } from "@/lib/store";
@@ -48,7 +49,10 @@ function TaskNode({ id }: NodeProps) {
               {task.id}
             </code>
             {isActive(task.status) && (
-              <span className="inline-block size-2 shrink-0 border border-ink bg-signal animate-pulse motion-reduce:animate-none" />
+              <Spinner
+                className="size-3 text-signal-ink"
+                label={`${task.id} is running`}
+              />
             )}
           </div>
           <p className="text-xs font-bold leading-snug mt-1 line-clamp-2 break-words">

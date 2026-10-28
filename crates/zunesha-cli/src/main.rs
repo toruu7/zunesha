@@ -17,9 +17,10 @@
 mod update;
 
 use std::collections::HashSet;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex};
 
 use clap::{Parser, Subcommand};
 
@@ -638,6 +639,159 @@ fn cmd_diff(target: &Path, task_id: &str) -> zunesha_core::Result<()> {
     Ok(())
 }
 
+/// Shared terminal output for `zou run`'s live log relay and spinner.
+///
+/// The spinner writes to stderr and the agent logs to stdout. Both go through
+/// this lock so a log line clears the spinner before printing instead of
+/// leaving a half-overwritten status line behind. On a non-TTY stderr the
+/// spinner is disabled and the clear sequences are omitted, so redirected
+/// output stays clean.
+#[derive(Clone)]
+struct TerminalOutput {
+    lock: Arc<Mutex<()>>,
+    interactive: bool,
+}
+
+impl TerminalOutput {
+    fn new() -> Self {
+        Self {
+            lock: Arc::new(Mutex::new(())),
+            interactive: io::stderr().is_terminal(),
+        }
+    }
+
+    fn clear_line(&self) {
+        if self.interactive {
+            eprint!("\r\x1b[2K");
+            let _ = io::stderr().flush();
+        }
+    }
+
+    fn log(&self, tag: &str, task_id: &str, line: &str) {
+        self.line(&format!("[{tag}] {task_id}: {line}"));
+    }
+
+    /// Print a non-log line without leaving the spinner mid-line.
+    fn line(&self, text: &str) {
+        let _guard = self
+            .lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.clear_line();
+        println!("{text}");
+    }
+
+    fn finish(&self) {
+        let _guard = self
+            .lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.clear_line();
+    }
+}
+
+/// Spawn the 10 Hz terminal spinner while `zou run` owns tasks.
+///
+/// Counts only the ids this invocation claimed and that are still in a
+/// worker-owned state, so a concurrent daemon or CLI does not inflate the
+/// number. The set is updated by the log relay when a worker finishes.
+fn spawn_spinner(
+    db_path: PathBuf,
+    running: Arc<Mutex<HashSet<String>>>,
+    output: TerminalOutput,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let mut frame = 0usize;
+        loop {
+            let count = {
+                let ids = running
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if ids.is_empty() {
+                    0
+                } else {
+                    Database::open(&db_path)
+                        .ok()
+                        .map(|db| {
+                            ids.iter()
+                                .filter(|id| {
+                                    db.get_task(id).ok().flatten().is_some_and(|task| {
+                                        matches!(
+                                            task.status,
+                                            TaskStatus::InProgress
+                                                | TaskStatus::Evaluating
+                                                | TaskStatus::ResolvingConflicts
+                                        )
+                                    })
+                                })
+                                .count()
+                        })
+                        .unwrap_or(ids.len())
+                }
+            };
+
+            {
+                let _guard = output
+                    .lock
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let label = if count == 0 {
+                    "waiting for tasks…".to_string()
+                } else {
+                    format!("{count} task{} running", if count == 1 { "" } else { "s" })
+                };
+                eprint!("\r\x1b[2K{} {label}", FRAMES[frame % FRAMES.len()]);
+                let _ = io::stderr().flush();
+            }
+
+            frame = frame.wrapping_add(1);
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    })
+}
+
+/// Owns the spinner for one `zou run`; stopping it clears the status line.
+struct TerminalUi {
+    spinner: Option<tokio::task::JoinHandle<()>>,
+    output: TerminalOutput,
+    stopped: bool,
+}
+
+impl TerminalUi {
+    fn start(
+        db_path: PathBuf,
+        running: Arc<Mutex<HashSet<String>>>,
+        output: TerminalOutput,
+    ) -> Self {
+        let spinner = output
+            .interactive
+            .then(|| spawn_spinner(db_path, running, output.clone()));
+        Self {
+            spinner,
+            output,
+            stopped: false,
+        }
+    }
+
+    fn stop(&mut self) {
+        if self.stopped {
+            return;
+        }
+        self.stopped = true;
+        if let Some(spinner) = self.spinner.take() {
+            spinner.abort();
+        }
+        self.output.finish();
+    }
+}
+
+impl Drop for TerminalUi {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 /// `zou run` – execute the agent on every ready (TODO) task, in parallel.
 ///
 /// A bounded worker pool spawns isolated agent subprocesses, streams their
@@ -656,77 +810,117 @@ fn cmd_run(target: &Path, jobs: usize, follow: bool) -> zunesha_core::Result<()>
         .map_err(|e| Error::Workspace(format!("failed to build async runtime: {e}")))?;
 
     rt.block_on(async move {
+        let output = TerminalOutput::new();
+        let running: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+        let mut ui = TerminalUi::start(paths.state_db(), running.clone(), output.clone());
+
         let mut rx = pool.subscribe();
         let mut total_started = 0usize;
         let mut total_ok = 0usize;
 
-        // Live-relay agent output to the terminal as it happens.
+        // Live-relay agent output to the terminal as it happens. A finished
+        // task leaves the spinner's set immediately; the spinner itself reads
+        // the database so it only counts tasks that are still worker-owned.
+        let relay_output = output.clone();
+        let relay_running = running.clone();
         let relay = tokio::spawn(async move {
             while let Ok(ev) = rx.recv().await {
-                if let WorkerEvent::Log {
-                    task_id,
-                    stream,
-                    line,
-                    seq: _,
-                } = ev
-                {
-                    let tag = match stream {
-                        StreamKind::Stdout => "out",
-                        StreamKind::Stderr => "err",
-                    };
-                    println!("[{tag}] {task_id}: {line}");
+                match ev {
+                    WorkerEvent::Log {
+                        task_id,
+                        stream,
+                        line,
+                        seq: _,
+                    } => {
+                        let tag = match stream {
+                            StreamKind::Stdout => "out",
+                            StreamKind::Stderr => "err",
+                        };
+                        relay_output.log(tag, &task_id, &line);
+                    }
+                    WorkerEvent::TaskFinished { task_id, .. } => {
+                        relay_running
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .remove(&task_id);
+                    }
+                    WorkerEvent::StatusChanged { .. } => {}
                 }
             }
         });
 
-        loop {
-            // Run one wave of ready tasks.
-            let started_ids = pool.run_ready().await?;
-            if started_ids.is_empty() && total_started == 0 {
-                println!("no ready (TODO) tasks to run");
-                break;
-            }
-            total_started += started_ids.len();
-
-            // Wait for *this wave only*: drain the ids we claimed. Waiting on
-            // the global IN_PROGRESS count would hang forever if some other
-            // runner (the daemon, another CLI) holds a task — or if a crashed
-            // worker left one stuck (see `zou recover`). A task is in flight
-            // while a worker owns it: IN_PROGRESS (agent) *or* EVALUATING
-            // (validation) — exiting early would kill the runtime out from
-            // under the self-healing loop and strand the task.
+        let outcome: zunesha_core::Result<()> = async {
             loop {
-                let db = Database::open(&paths.state_db())?;
-                let in_flight = started_ids
-                    .iter()
-                    .filter(|id| {
-                        db.get_task(id).ok().flatten().is_some_and(|t| {
-                            matches!(t.status, TaskStatus::InProgress | TaskStatus::Evaluating)
-                        })
-                    })
-                    .count();
-                if in_flight == 0 {
+                // Run one wave of ready tasks.
+                let started_ids = pool.run_ready().await?;
+                if started_ids.is_empty() && total_started == 0 {
+                    output.line("no ready (TODO) tasks to run");
                     break;
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
+                total_started += started_ids.len();
+                running
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .extend(started_ids.iter().cloned());
 
-            let db = Database::open(&paths.state_db())?;
-            let review = db.list_tasks_by_status(TaskStatus::Review)?.len();
-            total_ok = review;
+                // Wait for *this wave only*: drain the ids we claimed. Waiting
+                // on the global IN_PROGRESS count would hang forever if some
+                // other runner (the daemon, another CLI) holds a task — or if
+                // a crashed worker left one stuck (see `zou recover`). A task
+                // is in flight while a worker owns it: IN_PROGRESS (agent)
+                // *or* EVALUATING (validation) — exiting early would kill the
+                // runtime out from under the self-healing loop and strand the
+                // task.
+                loop {
+                    let db = Database::open(&paths.state_db())?;
+                    let in_flight = started_ids
+                        .iter()
+                        .filter(|id| {
+                            db.get_task(id).ok().flatten().is_some_and(|t| {
+                                matches!(
+                                    t.status,
+                                    TaskStatus::InProgress
+                                        | TaskStatus::Evaluating
+                                        | TaskStatus::ResolvingConflicts
+                                )
+                            })
+                        })
+                        .count();
+                    if in_flight == 0 {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
 
-            if !follow {
-                break;
+                running
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .retain(|id| !started_ids.contains(id));
+
+                let db = Database::open(&paths.state_db())?;
+                let review = db.list_tasks_by_status(TaskStatus::Review)?.len();
+                total_ok = review;
+
+                if !follow {
+                    break;
+                }
+                // Phase 2 engine: unlock whatever the completed wave unblocked.
+                let promoted = zunesha_core::promote_ready(&db)?;
+                if promoted.is_empty() {
+                    break;
+                }
+                output.line(&format!(
+                    "— promoted {} newly-ready task(s)",
+                    promoted.len()
+                ));
             }
-            // Phase 2 engine: unlock whatever the completed wave unblocked.
-            let promoted = zunesha_core::promote_ready(&db)?;
-            if promoted.is_empty() {
-                break;
-            }
-            println!("— promoted {} newly-ready task(s)", promoted.len());
+            Ok(())
         }
+        .await;
 
         relay.abort();
+        ui.stop();
+        outcome?;
 
         println!();
         println!("ran {total_started} task(s); {total_ok} now in REVIEW awaiting approval");
@@ -792,33 +986,56 @@ fn run_resolution(paths: &ZuneshaPaths, task_id: &str) -> zunesha_core::Result<(
         .map_err(|e| Error::Workspace(format!("failed to build async runtime: {e}")))?;
 
     rt.block_on(async move {
+        let output = TerminalOutput::new();
+        let running: Arc<Mutex<HashSet<String>>> =
+            Arc::new(Mutex::new(HashSet::from([task_id.to_string()])));
+        let mut ui = TerminalUi::start(paths.state_db(), running.clone(), output.clone());
+
         let mut rx = pool.subscribe();
+        let relay_output = output.clone();
+        let relay_running = running.clone();
         let relay = tokio::spawn(async move {
             while let Ok(ev) = rx.recv().await {
-                if let WorkerEvent::Log {
-                    task_id,
-                    stream,
-                    line,
-                    seq: _,
-                } = ev
-                {
-                    let tag = match stream {
-                        StreamKind::Stdout => "out",
-                        StreamKind::Stderr => "err",
-                    };
-                    println!("[{tag}] {task_id}: {line}");
+                match ev {
+                    WorkerEvent::Log {
+                        task_id,
+                        stream,
+                        line,
+                        seq: _,
+                    } => {
+                        let tag = match stream {
+                            StreamKind::Stdout => "out",
+                            StreamKind::Stderr => "err",
+                        };
+                        relay_output.log(tag, &task_id, &line);
+                    }
+                    WorkerEvent::TaskFinished { task_id, .. } => {
+                        relay_running
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .remove(&task_id);
+                    }
+                    WorkerEvent::StatusChanged { .. } => {}
                 }
             }
         });
 
-        let handle = pool.spawn_resolution(task_id.to_string()).await?;
-        let resolved = handle
-            .await
-            .map_err(|e| Error::Workspace(format!("resolution task panicked: {e}")))??;
-        relay.abort();
+        let outcome: zunesha_core::Result<(bool, TaskStatus)> = async {
+            let handle = pool.spawn_resolution(task_id.to_string()).await?;
+            let resolved = handle
+                .await
+                .map_err(|e| Error::Workspace(format!("resolution task panicked: {e}")))??;
 
-        let db = Database::open(&paths.state_db())?;
-        let status = db.require_task(task_id)?.status;
+            let db = Database::open(&paths.state_db())?;
+            let status = db.require_task(task_id)?.status;
+            Ok((resolved, status))
+        }
+        .await;
+
+        relay.abort();
+        ui.stop();
+
+        let (resolved, status) = outcome?;
         match (resolved, status) {
             (true, TaskStatus::Review) => {
                 println!("✔ conflict resolved; task {task_id} is back in REVIEW");

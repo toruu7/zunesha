@@ -18,8 +18,8 @@
 //! | Method | Path                      | Purpose                                  |
 //! |--------|---------------------------|------------------------------------------|
 //! | GET    | `/health`                 | Liveness probe.                          |
-//! | GET    | `/api/status`             | Per-status counts + concurrency cap.     |
-//! | GET    | `/api/tasks`              | Every task, the dependency DAG, and per-status counts. |
+//! | GET    | `/api/status`             | Project identity, per-status counts + concurrency cap. |
+//! | GET    | `/api/tasks`              | Project identity, every task, the dependency DAG, and per-status counts. |
 //! | GET    | `/api/tasks/:id`          | One task (logs + diff included).         |
 //! | POST   | `/api/plan`               | Decompose a prompt into a task DAG (built-in or `ZOU_PLANNER_CMD`). |
 //! | POST   | `/api/run`                | Start agents on all ready (`TODO`) tasks.|

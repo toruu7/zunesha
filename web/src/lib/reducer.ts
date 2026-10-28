@@ -8,6 +8,7 @@ import type {
   ApiEvent,
   DependencyEdge,
   LogEvent,
+  ProjectInfo,
   StatusCount,
   StreamKind,
   Task,
@@ -24,6 +25,8 @@ export interface LogLine {
 
 /** The slice of UI state that events mutate. */
 export interface BoardState {
+  /** The repository this daemon serves; `null` until the first snapshot. */
+  project: ProjectInfo | null;
   tasks: Task[];
   logs: Record<string, LogLine[]>;
   /**
@@ -33,7 +36,12 @@ export interface BoardState {
   deps: DependencyEdge[];
 }
 
-export const EMPTY_STATE: BoardState = { tasks: [], logs: {}, deps: [] };
+export const EMPTY_STATE: BoardState = {
+  project: null,
+  tasks: [],
+  logs: {},
+  deps: [],
+};
 
 /**
  * Split a task's persisted `worker_logs` into indexed lines.
@@ -113,7 +121,12 @@ export function applyEvent(state: BoardState, ev: ApiEvent): BoardState {
             ? []
             : mergeLogLines(state.logs[task.id] ?? [], persisted);
       }
-      return { tasks: ev.tasks, logs, deps: ev.dependencies };
+      return {
+        project: ev.project,
+        tasks: ev.tasks,
+        logs,
+        deps: ev.dependencies,
+      };
     }
 
     case "task_updated": {
@@ -130,7 +143,7 @@ export function applyEvent(state: BoardState, ev: ApiEvent): BoardState {
         ...state.logs,
         [ev.task.id]: mergeLogLines(base, splitLogs(ev.task.worker_logs)),
       };
-      return { tasks, logs, deps: state.deps };
+      return { project: state.project, tasks, logs, deps: state.deps };
     }
 
     case "log": {

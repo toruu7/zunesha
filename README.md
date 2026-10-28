@@ -139,9 +139,9 @@ workspace and dashboard. Every push that changes the project bumps
 ```sh
 sh scripts/bump-version.sh minor   # major|minor|patch, or an explicit X.Y.Z
 git add Cargo.toml Cargo.lock web/package.json web/package-lock.json
-git commit -m "release: v0.5.0"
-git tag v0.5.0
-git push origin master v0.5.0      # tag triggers the release workflow
+git commit -m "release: v0.6.0"
+git tag v0.6.0
+git push origin master v0.6.0      # tag triggers the release workflow
 ```
 
 The script keeps `Cargo.toml`, `Cargo.lock`, `web/package.json`, and
@@ -203,8 +203,9 @@ zou start                     # http://127.0.0.1:57804
 
 The daemon serves the Kanban board: type a prompt in the plan bar, hit **Run**,
 watch agent output stream live, then open a `REVIEW` card and **Approve** or
-**Reject** it. Same state as the CLI — they share `.zou/state.db` and
-can run side by side.
+**Reject** it. The header names the repository being served and shows a
+spinner for every running task; `zou run` mirrors that spinner in the terminal.
+Same state as the CLI — they share `.zou/state.db` and can run side by side.
 
 ### Configure the agent
 

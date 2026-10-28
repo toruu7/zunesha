@@ -104,6 +104,12 @@ async fn status_zero_fills_every_column() {
     assert_eq!(counts.len(), 8, "all eight statuses present, incl. zeros");
     assert!(counts.iter().all(|c| c["count"] == json!(0)));
     assert_eq!(body["max_concurrency"], json!(2));
+    let root = std::fs::canonicalize(paths.root()).unwrap();
+    assert_eq!(
+        body["project"]["name"],
+        json!(root.file_name().unwrap().to_str().unwrap())
+    );
+    assert_eq!(body["project"]["root"], json!(root.display().to_string()));
 }
 
 #[tokio::test]
@@ -124,6 +130,13 @@ async fn plan_creates_tasks_and_lists_them() {
 
     let (status, body) = json_req(&app, Method::GET, "/api/tasks", None).await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["project"]["root"],
+        json!(std::fs::canonicalize(paths.root())
+            .unwrap()
+            .display()
+            .to_string())
+    );
     assert_eq!(body["tasks"].as_array().unwrap().len(), 3);
     // The chain's two edges ride along (task 2 ← task 1, task 3 ← task 2),
     // which is what the dashboard's DAG view renders.

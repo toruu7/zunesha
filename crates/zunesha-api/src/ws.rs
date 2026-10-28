@@ -34,7 +34,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // Send the initial full state so the client never renders an empty board.
     {
         let snapshot = match Database::open(&state.paths.state_db()) {
-            Ok(db) => snapshot_event(&db).ok(),
+            Ok(db) => snapshot_event(&db, &state.paths).ok(),
             Err(_) => None,
         };
         if let Some(event) = snapshot {
@@ -61,7 +61,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     Err(RecvError::Lagged(_)) => {
                         match Database::open(&state.paths.state_db())
                             .ok()
-                            .and_then(|db| snapshot_event(&db).ok())
+                            .and_then(|db| snapshot_event(&db, &state.paths).ok())
                         {
                             Some(snapshot) => snapshot,
                             None => continue,

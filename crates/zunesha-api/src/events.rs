@@ -8,7 +8,34 @@
 
 use serde::Serialize;
 
-use zunesha_core::{Database, StreamKind, Task, TaskStatus};
+use zunesha_core::{Database, StreamKind, Task, TaskStatus, ZuneshaPaths};
+
+/// The repository this daemon is working on.
+///
+/// The dashboard is a single-project view, so every snapshot and REST response
+/// carries this identity. `root` is canonicalized when possible, which keeps
+/// relative `zou --path .` invocations from displaying a bare ".".
+#[derive(Clone, Debug, Serialize)]
+pub struct ProjectInfo {
+    /// Final path component, e.g. `saas-ops-hub`.
+    pub name: String,
+    /// Absolute (or best-effort) repository root.
+    pub root: String,
+}
+
+/// Build the display identity for an installation.
+pub fn project_info(paths: &ZuneshaPaths) -> ProjectInfo {
+    let root = std::fs::canonicalize(paths.root()).unwrap_or_else(|_| paths.root().to_path_buf());
+    let name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("project")
+        .to_string();
+    ProjectInfo {
+        name,
+        root: root.display().to_string(),
+    }
+}
 
 /// Per-status task count, zero-filled so the UI always shows all seven columns.
 #[derive(Clone, Debug, Serialize)]
@@ -38,6 +65,8 @@ pub enum ApiEvent {
     /// mutation (plan / approve / reject). Clients can treat it as a hard
     /// resynchronisation point.
     Snapshot {
+        /// Which repository this daemon serves.
+        project: ProjectInfo,
         tasks: Vec<Task>,
         /// Dependency edges (`task_id` ← `depends_on`); immutable after
         /// planning, so they only change with the plan itself.
@@ -94,11 +123,12 @@ pub fn dependency_edges(db: &Database) -> zunesha_core::Result<Vec<DependencyEdg
 }
 
 /// Build the authoritative `Snapshot` for the current database state.
-pub fn snapshot_event(db: &Database) -> zunesha_core::Result<ApiEvent> {
+pub fn snapshot_event(db: &Database, paths: &ZuneshaPaths) -> zunesha_core::Result<ApiEvent> {
     let tasks = db.list_tasks()?;
     let dependencies = dependency_edges(db)?;
     let counts = zero_filled_counts(db)?;
     Ok(ApiEvent::Snapshot {
+        project: project_info(paths),
         tasks,
         dependencies,
         counts,

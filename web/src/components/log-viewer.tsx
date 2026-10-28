@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
+import Spinner from "@/components/spinner";
 import { useZou } from "@/lib/store";
 
 /**
@@ -54,7 +55,7 @@ export default function LogViewer({
         </span>
         {running && (
           <span className="flex items-center gap-1 border-2 border-ink bg-emphasis px-1.5 py-0.5 text-[10px] font-black uppercase tracking-[0.06em]">
-            <span className="inline-block size-2 border border-ink bg-signal animate-pulse motion-reduce:animate-none" />
+            <Spinner className="size-2.5 text-ink" label="task running" />
             running
           </span>
         )}

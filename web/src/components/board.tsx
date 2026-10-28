@@ -1,5 +1,6 @@
 "use client";
 
+import Spinner from "@/components/spinner";
 import { ACCENT, isActive } from "@/lib/status";
 import { useZou } from "@/lib/store";
 import { STATUSES, type Task, type TaskStatus } from "@/lib/types";
@@ -22,7 +23,13 @@ function TaskCard({ id }: { id: string }) {
               {task.id}
             </code>
             {isActive(task.status) && (
-              <span className="inline-block size-2 shrink-0 border border-ink bg-signal animate-pulse motion-reduce:animate-none" />
+              <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-[0.08em]">
+                <Spinner
+                  className="size-3 text-signal-ink"
+                  label={`${task.id} is running`}
+                />
+                running
+              </span>
             )}
           </div>
           <p className="text-[13px] font-bold leading-snug mt-1 line-clamp-2 break-words">
@@ -56,6 +63,12 @@ export default function Board() {
               <h2 className="text-[11px] font-black uppercase tracking-[0.08em] text-contrast">
                 {status.replaceAll("_", " ")}
               </h2>
+              {isActive(status) && counts[status] > 0 && (
+                <Spinner
+                  className="size-2.5 text-contrast"
+                  label={`${counts[status]} task${counts[status] === 1 ? "" : "s"} running`}
+                />
+              )}
               <span className="ml-auto border-2 border-ink bg-emphasis px-1.5 py-0.5 text-[10px] font-black text-ink">
                 {counts[status]}
               </span>
