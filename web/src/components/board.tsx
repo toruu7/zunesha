@@ -38,10 +38,10 @@ export default function Board() {
   const tasks = useZou((s) => s.tasks);
   const counts = countsFrom(tasks);
 
-  // Below xl the sheet stacks and the page scrolls; at xl+ the columns fill
-  // the viewport and scroll their own card lists.
+  // Desktop is a fixed 4×2 sheet: four status columns per row, two rows.
+  // Each cell scrolls its own card list; below `lg` the board stacks.
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8 gap-3 xl:flex-1 xl:min-h-0">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 lg:grid-rows-2 lg:auto-rows-fr gap-3 lg:flex-1 lg:min-h-0">
       {STATUSES.map((status) => {
         const column = tasks.filter((t) => t.status === status);
         return (

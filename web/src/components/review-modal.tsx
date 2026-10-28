@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { useZou } from "@/lib/store";
+import { isActive } from "@/lib/status";
 import type { Task } from "@/lib/types";
 import LogViewer from "./log-viewer";
 import MarkdownView from "./markdown-view";
@@ -79,13 +80,26 @@ export default function ReviewModal({ task }: { task: Task }) {
   const error = useZou((s) => s.error);
   const clearError = useZou((s) => s.clearError);
   const [feedback, setFeedback] = useState("");
+  // A live worker owns these (recover releases either).
+  const isWorkerOwned = isActive(task.status);
   const [tab, setTab] = useState<"output" | "diff" | "logs">(() => {
-    // Analysis tasks produce no diff; open their answer instead of an empty
-    // diff pane. Code tasks keep the review-first default.
+    // While a worker owns the task, its live transcript is the useful view.
+    // Once it finishes, analysis tasks open their answer instead of an empty
+    // diff pane; code tasks keep the review-first default.
+    if (isWorkerOwned) return "logs";
     if (task.diff.trim()) return "diff";
     if (task.agent_output.trim()) return "output";
     return "logs";
   });
+
+  // If the user starts a run from this dialog, follow the live transcript as
+  // soon as the task is claimed. Adjusting state during render is the React
+  // pattern for deriving from a prop; it avoids an extra effect render.
+  const [wasWorkerOwned, setWasWorkerOwned] = useState(isWorkerOwned);
+  if (isWorkerOwned !== wasWorkerOwned) {
+    setWasWorkerOwned(isWorkerOwned);
+    if (isWorkerOwned) setTab("logs");
+  }
 
   // Close on Escape.
   useEffect(() => {
@@ -98,11 +112,6 @@ export default function ReviewModal({ task }: { task: Task }) {
 
   const isReview = task.status === "REVIEW";
   const isTodo = task.status === "TODO";
-  // A live worker owns these (recover releases either).
-  const isWorkerOwned =
-    task.status === "IN_PROGRESS" ||
-    task.status === "EVALUATING" ||
-    task.status === "RESOLVING_CONFLICTS";
   // Parked after 3 failed validations; the human frees it back to the queue.
   const isFailed = task.status === "FAILED_NEEDS_HUMAN";
   const close = () => select(null);

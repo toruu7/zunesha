@@ -139,9 +139,9 @@ workspace and dashboard. Every push that changes the project bumps
 ```sh
 sh scripts/bump-version.sh minor   # major|minor|patch, or an explicit X.Y.Z
 git add Cargo.toml Cargo.lock web/package.json web/package-lock.json
-git commit -m "release: v0.4.1"
-git tag v0.4.1
-git push origin master v0.4.1      # tag triggers the release workflow
+git commit -m "release: v0.5.0"
+git tag v0.5.0
+git push origin master v0.5.0      # tag triggers the release workflow
 ```
 
 The script keeps `Cargo.toml`, `Cargo.lock`, `web/package.json`, and
@@ -816,8 +816,9 @@ cd web && npm install && npm run build   # emits web/out, served by `zou start`
 The Axum server auto-discovers `web/out` (override with `ZOU_DASHBOARD_DIR` or
 `zou start --dashboard <dir>`); without a build it serves a placeholder page.
 
-- **Board** — eight-column Kanban (`BACKLOG → TODO → IN_PROGRESS → EVALUATING →
-  REVIEW → RESOLVING_CONFLICTS → DONE → FAILED_NEEDS_HUMAN`), driven by WebSocket
+- **Board** — a fixed 4×2 desktop Kanban (`BACKLOG → TODO → IN_PROGRESS →
+  EVALUATING` on the first row, `REVIEW → RESOLVING_CONFLICTS → DONE →
+  FAILED_NEEDS_HUMAN` on the second), driven by WebSocket
   `snapshot`/`task_updated` events. Click a card to open the review modal.
   `FAILED_NEEDS_HUMAN` cards open with a **Send back to queue** action (with
   optional feedback, resetting the retry budget).
@@ -845,8 +846,10 @@ The Axum server auto-discovers `web/out` (override with `ZOU_DASHBOARD_DIR` or
   (`TODO → IN_PROGRESS`, the start of a new run) resets the buffer so two
   runs never mix — as does an approval that starts a resolution run (an empty
   persisted buffer in a snapshot means "fresh run", not "no output yet");
-  `[eval]` lines during `EVALUATING` append to the same
-  stream.
+  `[eval]` lines during `EVALUATING` append to the same stream. A running
+  task also opens a **live logs dock** at the bottom of the board (and the
+  review modal defaults to Logs while a worker owns the task); the header
+  button toggles the dock for any selected task.
 - **Planning** — a prompt bar posts to `/api/plan`; the Run button starts every
   ready (`TODO`) task.
 

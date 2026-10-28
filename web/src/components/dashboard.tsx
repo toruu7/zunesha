@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 
 import Board from "@/components/board";
+import LogViewer from "@/components/log-viewer";
 import PlanBar from "@/components/plan-bar";
 import ReviewModal from "@/components/review-modal";
+import { isActive } from "@/lib/status";
 import { useZou } from "@/lib/store";
+import type { Task } from "@/lib/types";
 
 // reactflow measures the DOM (and needs `window`), so the graph view loads
 // client-side only. The code split also keeps it — and its stylesheet — out
@@ -89,6 +92,56 @@ function ViewToggle() {
   );
 }
 
+/** A bottom dock that keeps the selected/running task's transcript visible. */
+function LiveLogsDock({ task, onHide }: { task: Task; onHide: () => void }) {
+  const select = useZou((s) => s.select);
+  const live = isActive(task.status);
+  return (
+    <section
+      aria-label="Live task logs"
+      className="shrink-0 border-t-4 border-ink bg-ground"
+    >
+      <div className="mx-auto max-w-[1600px] px-3 py-2 sm:px-4">
+        <div className="mb-1.5 flex flex-wrap items-center gap-2">
+          <span className="border-2 border-ink bg-ink px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.1em] text-emphasis">
+            {live ? "live logs" : "logs"}
+          </span>
+          <code className="border border-ink bg-contrast px-1 font-mono text-[10px] font-bold uppercase">
+            {task.id}
+          </code>
+          <span className="min-w-0 flex-1 truncate text-[12px] font-bold">
+            {task.title}
+          </span>
+          <span className="border-2 border-ink bg-contrast px-1.5 py-0.5 text-[10px] font-black uppercase tracking-[0.06em]">
+            {task.status.replaceAll("_", " ")}
+          </span>
+          <button
+            onClick={() => select(task.id)}
+            className="border-2 border-ink bg-emphasis px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.06em] hover:bg-contrast focus-visible:outline-4"
+          >
+            open task
+          </button>
+          <button
+            onClick={onHide}
+            aria-label="Hide live logs"
+            className="grid size-6 place-items-center border-2 border-ink bg-contrast hover:bg-emphasis focus-visible:outline-4"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M4 4l8 8M12 4l-8 8"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="square"
+              />
+            </svg>
+          </button>
+        </div>
+        <LogViewer taskId={task.id} maxHeightClass="max-h-48" />
+      </div>
+    </section>
+  );
+}
+
 export default function Dashboard() {
   const connect = useZou((s) => s.connect);
   const disconnect = useZou((s) => s.disconnect);
@@ -97,6 +150,32 @@ export default function Dashboard() {
   const selectedTask = useZou((s) =>
     s.tasks.find((t) => t.id === s.selectedId),
   );
+  const activeTask = useZou((s) => {
+    let latest: Task | undefined;
+    for (const task of s.tasks) {
+      if (!isActive(task.status)) continue;
+      if (!latest || task.updated_at > latest.updated_at) latest = task;
+    }
+    return latest;
+  });
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [lastActiveId, setLastActiveId] = useState<string | null>(null);
+  const logTask = selectedTask ?? activeTask ?? null;
+  const activeId = activeTask?.id ?? null;
+
+  // Open the dock when a new task is claimed, but never force it open on a
+  // mere selection: the review modal already owns that interaction. Adjusting
+  // state during render avoids an effect-driven cascading update.
+  if (activeId !== lastActiveId) {
+    setLastActiveId(activeId);
+    if (activeId) {
+      setLogsOpen(true);
+    } else if (!selectedTask) {
+      setLogsOpen(false);
+    }
+  }
+
+  const toggleLogs = () => setLogsOpen((open) => !open);
 
   // Connect to the daemon on mount; tear down on unmount. `connect` is
   // idempotent, so React StrictMode's double-invoke is safe.
@@ -132,6 +211,29 @@ export default function Dashboard() {
               </svg>
             </span>
             <div className="ml-auto flex flex-wrap items-center gap-2 sm:gap-3">
+              <button
+                onClick={toggleLogs}
+                disabled={!logTask}
+                aria-pressed={logsOpen}
+                title={
+                  logTask
+                    ? `${logsOpen ? "Hide" : "Show"} logs for ${logTask.id}`
+                    : "No task selected or running"
+                }
+                className={`flex h-10 items-center gap-2 border-4 border-ink px-2.5 text-[10px] font-black uppercase tracking-[0.1em] shadow-brutal-sm disabled:border-ink/40 disabled:text-ink/40 disabled:shadow-none ${
+                  logsOpen
+                    ? "bg-ink text-emphasis"
+                    : "bg-contrast text-ink hover:bg-emphasis"
+                }`}
+              >
+                {logTask && isActive(logTask.status) && (
+                  <span className="inline-block size-2 border border-ink bg-signal animate-pulse motion-reduce:animate-none" />
+                )}
+                <span className="hidden sm:inline">
+                  {logTask && isActive(logTask.status) ? "live logs" : "logs"}
+                </span>
+                <span className="sm:hidden">logs</span>
+              </button>
               <ViewToggle />
               <ConnectionDot />
             </div>
@@ -159,6 +261,10 @@ export default function Dashboard() {
           {view === "dag" ? <DagView /> : <Board />}
         </div>
       </main>
+
+      {logsOpen && logTask && (
+        <LiveLogsDock task={logTask} onHide={() => setLogsOpen(false)} />
+      )}
 
       {selectedId && selectedTask && (
         <ReviewModal key={selectedTask.id} task={selectedTask} />

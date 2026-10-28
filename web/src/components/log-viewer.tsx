@@ -15,7 +15,14 @@ import { useZou } from "@/lib/store";
  * The agent's final Markdown answer is shown separately in the Output tab; this
  * view keeps tool calls, stderr, and `[eval]` output for debugging.
  */
-export default function LogViewer({ taskId }: { taskId: string }) {
+export default function LogViewer({
+  taskId,
+  maxHeightClass = "max-h-64",
+}: {
+  taskId: string;
+  /** Tailwind max-height utility; the dashboard dock uses a shorter pane. */
+  maxHeightClass?: string;
+}) {
   const lines = useZou((s) => s.logs[taskId]);
   const status = useZou((s) => s.tasks.find((t) => t.id === taskId)?.status);
   const scroller = useRef<HTMLDivElement>(null);
@@ -59,7 +66,7 @@ export default function LogViewer({ taskId }: { taskId: string }) {
       </div>
       <div
         ref={scroller}
-        className="p-2.5 font-mono text-[12px] leading-relaxed overflow-auto max-h-64 min-h-[4rem]"
+        className={`p-2.5 font-mono text-[12px] leading-relaxed overflow-auto ${maxHeightClass} min-h-[4rem]`}
       >
         {empty ? (
           <p className="font-medium italic text-ink/60">
