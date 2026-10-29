@@ -6,7 +6,7 @@
 //! waits for the next `Snapshot`, and a client that connects mid-run gets a
 //! `Snapshot` immediately so it never renders an empty board.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use zunesha_core::{Database, StreamKind, Task, TaskStatus, ZuneshaPaths};
 
@@ -15,7 +15,7 @@ use zunesha_core::{Database, StreamKind, Task, TaskStatus, ZuneshaPaths};
 /// The dashboard is a single-project view, so every snapshot and REST response
 /// carries this identity. `root` is canonicalized when possible, which keeps
 /// relative `zou --path .` invocations from displaying a bare ".".
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectInfo {
     /// Final path component, e.g. `saas-ops-hub`.
     pub name: String,
@@ -38,7 +38,7 @@ pub fn project_info(paths: &ZuneshaPaths) -> ProjectInfo {
 }
 
 /// Per-status task count, zero-filled so the UI always shows all seven columns.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StatusCount {
     pub status: TaskStatus,
     pub count: usize,
@@ -46,7 +46,7 @@ pub struct StatusCount {
 
 /// One edge of the task DAG: `task_id` may start only once `depends_on` is
 /// `DONE`. Created with the plan and never mutated afterwards.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DependencyEdge {
     pub task_id: String,
     pub depends_on: String,
@@ -55,7 +55,7 @@ pub struct DependencyEdge {
 /// A single message pushed to the dashboard.
 ///
 /// Tagged by `type` so the frontend can `switch` on it without ambiguity.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ApiEvent {
     /// The entire board state: every task, the task DAG, and per-status

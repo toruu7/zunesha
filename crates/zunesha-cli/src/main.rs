@@ -14,6 +14,7 @@
 //! * `update`  – check release tags and optionally reinstall.
 //! * `start`   – serve the local API, WebSockets, and dashboard.
 
+mod tui;
 mod update;
 
 use std::collections::HashSet;
@@ -102,6 +103,30 @@ enum Commands {
     },
     /// Show orchestrator status and task counts.
     Status,
+    /// Open the interactive terminal UI.
+    ///
+    /// Attaches to a running daemon by default. The TUI is a client of the
+    /// same REST + WebSocket protocol as the dashboard, so both can be open at
+    /// once. Use `--start` to spawn a daemon first when one is not running.
+    Tui {
+        /// Daemon base URL.
+        #[arg(
+            long,
+            alias = "attach",
+            value_name = "URL",
+            default_value = "http://127.0.0.1:57804"
+        )]
+        url: String,
+        /// Start a local daemon first if none is reachable.
+        #[arg(long)]
+        start: bool,
+        /// Built-in theme name (paper, midnight, solarized, high-contrast, mono).
+        #[arg(long)]
+        theme: Option<String>,
+        /// Disable mouse capture.
+        #[arg(long)]
+        no_mouse: bool,
+    },
     /// Choose the OpenCode model used by the agent (saved user-wide).
     ///
     /// With no arguments, lists the models reported by `opencode models` and
@@ -186,6 +211,12 @@ fn main() -> ExitCode {
         Commands::Approve { task_id } => cmd_approve(&target, &task_id),
         Commands::Recover { task_id } => cmd_recover(&target, task_id.as_deref()),
         Commands::Status => cmd_status(&target),
+        Commands::Tui {
+            url,
+            start,
+            theme,
+            no_mouse,
+        } => tui::run(&target, &url, start, theme.as_deref(), no_mouse),
         Commands::Model {
             model,
             list,

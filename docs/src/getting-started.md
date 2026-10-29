@@ -144,6 +144,22 @@ caveat: on boot the daemon **resumes tasks a crash left claimed**, which would
 collide with a live `zou run` in the same project — start it with
 `zou start --no-resume` in that case.
 
+## The terminal UI
+
+```sh
+zou tui                 # attach to the daemon at 127.0.0.1:57804
+zou tui --start         # spawn a daemon first if none is reachable
+zou tui --theme midnight
+```
+
+The TUI is a client of the same REST + WebSocket API: task list, logs, agent
+output, diffs, plan/run/approve/reject/recover, a command palette, and a model
+picker. It is customizable through `~/.config/zou/tui.toml` or a project
+`.zou/tui.toml` — themes, keymaps, status-bar items, layout, mouse, and colors
+are re-read while it runs. See the
+[full reference](reference.md#terminal-ui) for the config example and key
+table.
+
 ## What lands on disk
 
 ```text

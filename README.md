@@ -199,6 +199,9 @@ git diff                       # the approved changes are in your working tree
 
 # --- or drive it from the dashboard ---
 zou start                     # http://127.0.0.1:57804
+zou tui                       # attach the terminal UI to that daemon
+# or let the TUI spawn the daemon when it is not running:
+zou tui --start
 ```
 
 The daemon serves the Kanban board: type a prompt in the plan bar, hit **Run**,
@@ -403,7 +406,9 @@ zunesha/
 │   │       ├── events.rs            # ApiEvent + snapshots
 │   │       └── ws.rs                # live event stream
 │   └── zunesha-cli/            # `zou` binary
-│       └── src/main.rs
+│       └── src/
+│           ├── main.rs              # CLI entrypoint
+│           └── tui.rs               # ratatui terminal client
 └── web/                             # Next.js dashboard → static `web/out`
 ```
 
@@ -431,6 +436,8 @@ zou update  [--check] [--yes] [--repo URL|PATH] [--prefix DIR] [--no-dashboard]
                                         # check release tags; prompt before updating
 zou status  [--path <PATH>]             # per-status counts + task list
 zou start   [--host H] [--port N] [--jobs N] [--no-resume]  # serve the local API + dashboard (port: --port or ZOU_PORT)
+zou tui     [--url URL] [--start] [--theme NAME] [--no-mouse]
+                                        # attach the interactive terminal UI (or start a daemon first)
 ```
 
 `init` refuses to run outside a git work tree unless `--force` is passed, and
@@ -858,6 +865,73 @@ Client logic that can silently break lives in `web/src/lib/reducer.ts` (pure,
 unit-tested with Vitest) rather than inside components, so the merge and
 idempotency rules are exercised by `npm test` in `web/`.
 
+## Terminal UI
+
+`zou tui` is a first-class client of the same REST + WebSocket protocol as the
+dashboard. It attaches to an already-running daemon by default, so the browser
+and terminal can watch and control the same run at once:
+
+```sh
+zou start                 # in one shell
+zou tui                   # in another
+
+zou tui --start           # or let the TUI spawn `zou start` when needed
+zou tui --theme midnight  # one-off theme override
+```
+
+The layout has a task list, a detail pane (`logs`, `output`, `diff`, `task`),
+and a status bar. Agent output stays on its own **output** tab, separate from
+the live log/tool transcript. All actions go through the public API:
+
+| Key | Action |
+|-----|--------|
+| `j` / `k`, `↑` / `↓` | select task |
+| `tab` | cycle detail tabs |
+| `l` / `o` / `d` / `i` | logs / output / diff / task |
+| `p` | plan a feature |
+| `r` / `R` | run all ready tasks / run selected task |
+| `a` / `x` | approve / reject with feedback |
+| `c` | recover a stuck task |
+| `g` | refresh from REST |
+| `m` | model picker (saves the choice user-wide) |
+| `f` | filter tasks |
+| `t` | cycle theme |
+| `:` | command palette (`:run`, `:approve`, `:theme solarized`, …) |
+| `?` | help |
+| `q` / `Ctrl-C` | quit |
+
+Customize it with `~/.config/zou/tui.toml` or a project-local
+`.zou/tui.toml` (the project file wins):
+
+```toml
+theme = "midnight"          # paper | midnight | solarized | high-contrast | mono
+mouse = true
+follow_logs = true
+layout = "auto"             # auto | split | stack
+statusbar = ["project", "connection", "running", "review", "theme"]
+
+[keys]
+quit = "q"
+plan = "p"
+run = "r"
+run_one = "R"
+approve = "a"
+reject = "x"
+recover = "c"
+command = ":"
+
+[colors]
+accent = "#ffb000"
+success = "#00dd88"
+danger = "#ff5a5a"
+```
+
+The config is re-read every two seconds while the TUI is open, so theme,
+keymap, status-bar, layout, and colour edits apply without restarting. `--theme`
+still wins for that session. The model picker (`m`) lists `opencode models` and
+writes `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`; restart a running daemon
+after changing it.
+
 ## Integration: merging approved work (Phase 7)
 
 `integrator::approve_task` is the **only** code path that writes into your
@@ -1009,6 +1083,7 @@ connection pool.
 | 10    | Codebase map injected into agent prompts           | ✅ done |
 | 11    | Interactive DAG view + automatic crash resumption  | ✅ done |
 | 12    | Prior-agent context from uncommitted work          | ✅ done |
+| 13    | Customizable terminal UI (ratatui, themes, keymaps) | ✅ done |
 
 Beyond the blueprint: a real **external planner** (`ZOU_PLANNER_CMD` — any LLM
 CLI that reads a prompt on stdin and prints a JSON plan; see
