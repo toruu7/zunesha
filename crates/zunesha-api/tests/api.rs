@@ -168,6 +168,38 @@ async fn plan_creates_tasks_and_lists_them() {
 }
 
 #[tokio::test]
+async fn playground_projection_is_compact_and_maps_lifecycle_states() {
+    let (_tmp, paths) = scratch();
+    let app = app_for(&paths);
+    let (_, planned) = json_req(
+        &app,
+        Method::POST,
+        "/api/plan",
+        Some(json!({ "prompt": "build the office" })),
+    )
+    .await;
+    assert_eq!(planned["task_ids"].as_array().unwrap().len(), 3);
+
+    let (status, body) = json_req(&app, Method::GET, "/api/playground", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let agents = body["agents"].as_array().unwrap();
+    assert_eq!(agents.len(), 3);
+    let states: Vec<&str> = agents
+        .iter()
+        .map(|agent| agent["state"].as_str().unwrap())
+        .collect();
+    assert!(states.contains(&"idle"), "head task is TODO");
+    assert!(states.contains(&"sleeping"), "dependents are BACKLOG");
+    assert_eq!(body["running"], json!(0));
+
+    // The office must never receive logs, final output, or diffs.
+    let raw = serde_json::to_string(&body).unwrap();
+    assert!(!raw.contains("worker_logs"));
+    assert!(!raw.contains("agent_output"));
+    assert!(!raw.contains("\"diff\""));
+}
+
+#[tokio::test]
 async fn get_missing_task_is_404() {
     let (_tmp, paths) = scratch();
     let app = app_for(&paths);

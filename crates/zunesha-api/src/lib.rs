@@ -27,6 +27,8 @@
 //! | POST   | `/api/tasks/:id/approve`  | Accept reviewed work; merge or auto-resolve a conflict. |
 //! | POST   | `/api/tasks/:id/reject`   | Send reviewed work back with feedback.   |
 //! | POST   | `/api/recover`            | Release stuck tasks (worker crashed; on `zou start` this happens automatically). |
+//! | GET    | `/api/playground`         | Compact task projection for the pixel office. |
+//! | WS     | `/api/playground/ws`      | Compact live office events (no logs/diffs). |
 //! | WS     | `/ws`                     | Live snapshots + streaming agent logs.   |
 //!
 //! Unmatched GET paths fall back to a static dashboard (served from `web/out`
@@ -44,6 +46,7 @@
 
 pub mod events;
 pub mod handlers;
+pub mod playground;
 pub mod ws;
 
 use std::sync::Arc;
@@ -139,6 +142,8 @@ pub fn router(state: AppState, dashboard_dir: Option<std::path::PathBuf>) -> Rou
         .route("/api/tasks/{id}/approve", post(handlers::approve))
         .route("/api/tasks/{id}/reject", post(handlers::reject))
         .route("/api/recover", post(handlers::recover))
+        .route("/api/playground", get(playground::snapshot))
+        .route("/api/playground/ws", get(playground::ws_handler))
         // Catch-all for unknown API paths: JSON 404 instead of the HTML
         // dashboard fallback (a JSON client would otherwise see `200` + HTML
         // for a typo'd endpoint). Specific routes above always win.

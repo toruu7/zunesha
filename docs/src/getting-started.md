@@ -160,6 +160,14 @@ are re-read while it runs. See the
 [full reference](reference.md#terminal-ui) for the config example and key
 table.
 
+## The pixel office
+
+`http://127.0.0.1:57804/playground/` is a read-only pixel office: each task is
+an agent working, waiting for review, idle, asleep in the backlog, done, or
+blocked on a human. It uses a compact projection and WebSocket, so logs, diffs,
+and source code never reach the page. The normal dashboard build also builds
+this page.
+
 ## What lands on disk
 
 ```text

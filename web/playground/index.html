@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <title>Zou Office — agent playground</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">▶</span>
+        <span class="brand-name">ZOU</span>
+        <span class="brand-sub">OFFICE</span>
+      </div>
+      <div class="project">
+        <span id="project-name">connecting…</span>
+        <span id="project-root"></span>
+      </div>
+      <div class="counts" aria-label="agent counts">
+        <span><b id="agent-count">0</b> agents</span>
+        <span class="working"><b id="working-count">0</b> working</span>
+        <span class="waiting"><b id="waiting-count">0</b> waiting</span>
+        <span class="sleeping"><b id="sleeping-count">0</b> sleeping</span>
+      </div>
+      <div id="status" class="status disconnected" role="status">connecting…</div>
+    </header>
+
+    <main class="stage">
+      <section class="office-shell" aria-label="Pixel office">
+        <canvas id="office" width="1080" height="840"></canvas>
+        <div id="empty" class="empty" hidden>
+          No tasks yet — run <code>zou plan "your feature"</code> to populate the office.
+        </div>
+      </section>
+
+      <aside class="legend">
+        <h2>office states</h2>
+        <ul>
+          <li><i class="dot working"></i><span><b>working</b> agent is running a task</span></li>
+          <li><i class="dot waiting"></i><span><b>waiting</b> review or human input</span></li>
+          <li><i class="dot idle"></i><span><b>idle</b> ready to start</span></li>
+          <li><i class="dot sleeping"></i><span><b>sleeping</b> backlog / off duty</span></li>
+          <li><i class="dot done"></i><span><b>done</b> landed in the repository</span></li>
+          <li><i class="dot error"></i><span><b>error</b> needs human attention</span></li>
+        </ul>
+        <p class="readonly">
+          Read-only. Logs, diffs, and source code are never sent to this page.
+        </p>
+        <a class="back" href="/">← back to dashboard</a>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>Zou Office · pixel office adapted from <a href="https://github.com/isnardokun/pixel-agents-openclaw" target="_blank" rel="noreferrer">pixel-agents-openclaw</a> (MIT)</span>
+      <span>live via <code>/api/playground/ws</code></span>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

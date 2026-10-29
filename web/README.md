@@ -1,4 +1,9 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+This is the Zunesha dashboard: a Next.js static export served by `zou start`.
+
+`npm run build` also builds the read-only pixel office in `playground/` with
+Vite and emits it to `out/playground`. Use `npm run dev` for the dashboard and
+`npm run dev:playground` for the office (the latter proxies `/api` and the
+playground WebSocket to `127.0.0.1:57804`).
 
 ## Getting Started
 

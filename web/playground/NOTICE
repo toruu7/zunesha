@@ -1,0 +1,15 @@
+Zou Office playground
+=====================
+
+The pixel-office renderer, character sprites, desk/furniture drawing, layout
+engine, and speech-bubble rendering are adapted from:
+
+  pixel-agents-openclaw
+  https://github.com/isnardokun/pixel-agents-openclaw
+  Copyright (c) 2026 isnardokun
+  Licensed under the MIT License (see LICENSE in this directory).
+
+The original project visualizes OpenClaw gateway agents. This adaptation
+replaces the gateway transport with Zunesha's read-only `/api/playground`
+projection, removes the OpenClaw admin/setup/hardware features, and maps task
+lifecycle states to working / waiting / idle / sleeping / done / error.

@@ -404,12 +404,14 @@ zunesha/
 │   │       ├── lib.rs               # routes, state, static dashboard
 │   │       ├── handlers.rs          # REST endpoints
 │   │       ├── events.rs            # ApiEvent + snapshots
+│   │       ├── playground.rs        # compact read-only office projection
 │   │       └── ws.rs                # live event stream
 │   └── zunesha-cli/            # `zou` binary
 │       └── src/
 │           ├── main.rs              # CLI entrypoint
 │           └── tui.rs               # ratatui terminal client
 └── web/                             # Next.js dashboard → static `web/out`
+    └── playground/                  # Vite pixel office → `web/out/playground`
 ```
 
 ## Target-repo layout (created by `zou init`)
@@ -932,6 +934,33 @@ still wins for that session. The model picker (`m`) lists `opencode models` and
 writes `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`; restart a running daemon
 after changing it.
 
+## Playground (pixel office)
+
+`zou start` also serves a read-only pixel office at
+<http://127.0.0.1:57804/playground/>. Every task is an agent at a desk; the
+office animates the lifecycle at a glance:
+
+| Task status | Office state |
+|-------------|--------------|
+| `IN_PROGRESS`, `EVALUATING`, `RESOLVING_CONFLICTS` | working |
+| `REVIEW` | waiting (review bubble) |
+| `TODO` | idle |
+| `BACKLOG` | sleeping |
+| `DONE` | done / off duty |
+| `FAILED_NEEDS_HUMAN` | error (needs-human bubble) |
+
+The page consumes a compact projection (`GET /api/playground`) and a compact
+WebSocket (`/api/playground/ws`). It never receives worker logs, final output,
+diffs, or source code, and it has no mutation controls. The office renderer is
+adapted from [pixel-agents-openclaw](https://github.com/isnardokun/pixel-agents-openclaw)
+(MIT); the attribution and license live in `web/playground/`.
+
+The normal `npm run build` emits both the dashboard and the playground:
+
+```sh
+cd web && npm run build   # Next export + Vite playground → web/out/playground
+```
+
 ## Integration: merging approved work (Phase 7)
 
 `integrator::approve_task` is the **only** code path that writes into your
@@ -1084,6 +1113,7 @@ connection pool.
 | 11    | Interactive DAG view + automatic crash resumption  | ✅ done |
 | 12    | Prior-agent context from uncommitted work          | ✅ done |
 | 13    | Customizable terminal UI (ratatui, themes, keymaps) | ✅ done |
+| 14    | Read-only pixel-office playground                  | ✅ done |
 
 Beyond the blueprint: a real **external planner** (`ZOU_PLANNER_CMD` — any LLM
 CLI that reads a prompt on stdin and prints a JSON plan; see
