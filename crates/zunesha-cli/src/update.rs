@@ -3,9 +3,9 @@
 //! The installed binary carries its own Cargo version. Updates are published
 //! as semver Git tags (`v1.2.3`); the updater compares the highest tag in the
 //! source repository with `env!("CARGO_PKG_VERSION")` and asks before running
-//! `install.sh` from that tag.
+//! `install.sh` (or `install.ps1` on Windows) from that tag.
 //!
-//! `install.sh` records where the binary came from in
+//! The installer records where the binary came from in
 //! `<prefix>/share/zou/install.json`, so an installed `zou` can find its
 //! source checkout or remote. `--repo` and `ZOU_UPDATE_REPO` override it.
 
@@ -378,36 +378,74 @@ fn install(
         )));
     }
 
-    let installer = checkout.join("install.sh");
-    if !installer.is_file() {
-        return Err(Error::Config(format!(
-            "release {tag} has no install.sh at its root"
-        )));
-    }
+    #[cfg(windows)]
+    let status = {
+        let installer = checkout.join("install.ps1");
+        if !installer.is_file() {
+            return Err(Error::Config(format!(
+                "release {tag} has no install.ps1 at its root"
+            )));
+        }
 
-    println!("  installing with {}", installer.display());
-    let mut command = Command::new("sh");
-    command.arg(&installer).args(["--repo", source]);
-    if let Some(release_base) = release_base {
-        command.args(["--release-base", release_base]);
-    } else {
-        command.arg("--source");
-    }
-    command
-        .args(["--version", tag])
-        .arg("--prefix")
-        .arg(prefix)
-        .args(["--profile", "release"])
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    if no_dashboard {
-        command.arg("--no-dashboard");
-    }
+        println!("  installing with {}", installer.display());
+        let mut command = Command::new("powershell");
+        command
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(&installer)
+            .args(["-Repo", source, "-Version", tag])
+            .arg("-Prefix")
+            .arg(prefix)
+            .args(["-CargoProfile", "release"]);
+        if let Some(release_base) = release_base {
+            command.args(["-ReleaseBase", release_base]);
+        } else {
+            command.arg("-Source");
+        }
+        if no_dashboard {
+            command.arg("-NoDashboard");
+        }
+        command
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        command
+            .status()
+            .map_err(|e| Error::Config(format!("could not run the installer: {e}")))?
+    };
 
-    let status = command
-        .status()
-        .map_err(|e| Error::Config(format!("could not run the installer: {e}")))?;
+    #[cfg(not(windows))]
+    let status = {
+        let installer = checkout.join("install.sh");
+        if !installer.is_file() {
+            return Err(Error::Config(format!(
+                "release {tag} has no install.sh at its root"
+            )));
+        }
+
+        println!("  installing with {}", installer.display());
+        let mut command = Command::new("sh");
+        command.arg(&installer).args(["--repo", source]);
+        if let Some(release_base) = release_base {
+            command.args(["--release-base", release_base]);
+        } else {
+            command.arg("--source");
+        }
+        command
+            .args(["--version", tag])
+            .arg("--prefix")
+            .arg(prefix)
+            .args(["--profile", "release"])
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        if no_dashboard {
+            command.arg("--no-dashboard");
+        }
+        command
+            .status()
+            .map_err(|e| Error::Config(format!("could not run the installer: {e}")))?
+    };
+
     if !status.success() {
         return Err(Error::Config(format!(
             "installer exited with {status}; the previous binary was left in place"

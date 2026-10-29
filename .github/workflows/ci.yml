@@ -73,6 +73,16 @@ jobs:
       - name: Installer PATH integration
         run: sh scripts/test-install.sh
 
+  installer-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse the PowerShell installer
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          .\install.ps1 -Help | Out-Null
+
   docs:
     runs-on: ubuntu-latest
     steps:

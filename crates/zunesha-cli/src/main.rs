@@ -150,8 +150,9 @@ enum Commands {
     ///
     /// Compares the running binary's version with the highest `vX.Y.Z` tag in
     /// the source recorded at install time. When a newer tag exists it asks
-    /// before running that tag's `install.sh`; an installed version that is
-    /// already current prints `up to date`.
+    /// before running that tag's installer (`install.sh` on Unix,
+    /// `install.ps1` on Windows); an installed version that is already
+    /// current prints `up to date`.
     Update {
         /// Source checkout or Git URL to check instead of the install record.
         #[arg(long, value_name = "URL|PATH")]

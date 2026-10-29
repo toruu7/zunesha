@@ -4,59 +4,112 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
+    <meta name="description" content="Interactive pixel office for the Zunesha orchestrator: watch agents work, inspect logs, and plan, run, approve or reject tasks." />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <title>Zou Office — agent playground</title>
+    <title>Zou Office — control room</title>
   </head>
   <body>
     <header class="topbar">
-      <div class="brand">
+      <a class="brand" href="/playground/" aria-label="Zou Office home">
         <span class="brand-mark">▶</span>
         <span class="brand-name">ZOU</span>
         <span class="brand-sub">OFFICE</span>
-      </div>
+      </a>
       <div class="project">
         <span id="project-name">connecting…</span>
-        <span id="project-root"></span>
+        <span id="project-root" class="project-root"></span>
       </div>
-      <div class="counts" aria-label="agent counts">
-        <span><b id="agent-count">0</b> agents</span>
-        <span class="working"><b id="working-count">0</b> working</span>
-        <span class="waiting"><b id="waiting-count">0</b> waiting</span>
-        <span class="sleeping"><b id="sleeping-count">0</b> sleeping</span>
-      </div>
-      <div id="status" class="status disconnected" role="status">connecting…</div>
+      <div id="counts" class="counts" aria-label="task counts"></div>
+      <div id="connection" class="connection connecting" role="status">connecting…</div>
+      <a class="dashboard-link" href="/">Dashboard ↗</a>
     </header>
 
-    <main class="stage">
-      <section class="office-shell" aria-label="Pixel office">
-        <canvas id="office" width="1080" height="840"></canvas>
-        <div id="empty" class="empty" hidden>
-          No tasks yet — run <code>zou plan "your feature"</code> to populate the office.
+    <div id="error" class="error-banner" hidden>
+      <span id="error-text"></span>
+      <button id="error-close" type="button" aria-label="Dismiss error">✕</button>
+    </div>
+
+    <main class="workspace">
+      <aside class="rail" aria-label="Tasks and planner">
+        <div class="rail-head">
+          <div>
+            <h1>Control room</h1>
+            <p id="task-summary">0 tasks</p>
+          </div>
+          <span class="rail-live">LIVE</span>
         </div>
+
+        <div class="plan-box">
+          <label for="prompt">Plan a feature</label>
+          <textarea id="prompt" rows="3" placeholder="Add CSV export to the collections table…"></textarea>
+          <div class="plan-actions">
+            <button id="plan-btn" class="btn primary" type="button">Plan</button>
+            <button id="run-all-btn" class="btn ghost" type="button" disabled>Run ready</button>
+          </div>
+        </div>
+
+        <div class="rail-tools">
+          <input id="search" type="search" placeholder="Filter tasks…" autocomplete="off" />
+        </div>
+        <div id="task-list" class="task-list" role="list"></div>
+      </aside>
+
+      <section class="office-column" aria-label="Pixel office">
+        <div class="office-shell">
+          <canvas id="office" width="1080" height="840" role="img" aria-label="Pixel office with one desk per task"></canvas>
+          <div id="empty" class="empty" hidden>
+            <div class="empty-card">
+              <span class="empty-mark">⌁</span>
+              <h2>The office is empty</h2>
+              <p>Plan a feature in the rail to create the first agent and task.</p>
+              <button id="empty-plan" class="btn primary" type="button">Plan something</button>
+            </div>
+          </div>
+        </div>
+        <div class="live-dock" aria-label="Live transcript">
+          <div class="live-dock-head">
+            <span id="live-title">Live transcript</span>
+            <span id="live-meta"></span>
+          </div>
+          <pre id="live-logs">Select a task to see its live transcript.</pre>
+        </div>
+        <div class="office-foot">
+          <div id="office-status" class="office-status"></div>
+          <div class="legend" aria-label="Office state legend">
+            <span><i class="dot working"></i>working</span>
+            <span><i class="dot waiting"></i>review</span>
+            <span><i class="dot idle"></i>ready</span>
+            <span><i class="dot sleeping"></i>backlog</span>
+            <span><i class="dot done"></i>done</span>
+            <span><i class="dot error"></i>needs human</span>
+          </div>
+        </div>
+        <p class="hint">Click a desk or task to inspect. <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>p</kbd> plan, <kbd>r</kbd> run, <kbd>a</kbd> approve, <kbd>x</kbd> reject.</p>
       </section>
 
-      <aside class="legend">
-        <h2>office states</h2>
-        <ul>
-          <li><i class="dot working"></i><span><b>working</b> agent is running a task</span></li>
-          <li><i class="dot waiting"></i><span><b>waiting</b> review or human input</span></li>
-          <li><i class="dot idle"></i><span><b>idle</b> ready to start</span></li>
-          <li><i class="dot sleeping"></i><span><b>sleeping</b> backlog / off duty</span></li>
-          <li><i class="dot done"></i><span><b>done</b> landed in the repository</span></li>
-          <li><i class="dot error"></i><span><b>error</b> needs human attention</span></li>
-        </ul>
-        <p class="readonly">
-          Read-only. Logs, diffs, and source code are never sent to this page.
-        </p>
-        <a class="back" href="/">← back to dashboard</a>
-      </aside>
+      <aside id="inspector" class="inspector" aria-label="Task inspector"></aside>
     </main>
 
     <footer class="footer">
       <span>Zou Office · pixel office adapted from <a href="https://github.com/isnardokun/pixel-agents-openclaw" target="_blank" rel="noreferrer">pixel-agents-openclaw</a> (MIT)</span>
-      <span>live via <code>/api/playground/ws</code></span>
+      <span>interactive via <code>/api/tasks</code> + <code>/ws</code></span>
     </footer>
+
+    <div id="modal" class="modal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <h2 id="modal-title">Reject task</h2>
+        <p class="modal-copy">The feedback is appended to the task description so the next attempt sees it. The workspace is kept.</p>
+        <label for="reject-feedback">Feedback</label>
+        <textarea id="reject-feedback" rows="5" placeholder="What should change? Be specific…"></textarea>
+        <div class="modal-actions">
+          <button id="modal-cancel" class="btn ghost" type="button">Cancel</button>
+          <button id="modal-submit" class="btn danger" type="button">Reject task</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

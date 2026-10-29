@@ -1,9 +1,9 @@
 // Zunesha task tracker for the pixel office.
 //
 // The office renderer only needs a small, stable view of the board. This
-// tracker accepts the compact `/api/playground` projection (never logs or
-// diffs), keeps task order stable, and turns lifecycle changes into short
-// speech bubbles so a review/error is visible at a glance.
+// tracker accepts task projections from the control room (it ignores logs,
+// diffs, and output), keeps task order stable, and turns lifecycle changes
+// into short speech bubbles so a review/error is visible at a glance.
 
 import { agentColor, agentEmoji, computeLayout, type AgentLayout } from './layout';
 import type { AgentState, Bubble, VisualState } from './types';

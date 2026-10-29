@@ -279,7 +279,7 @@ export default function Dashboard() {
             <div className="ml-auto flex flex-wrap items-center gap-2 sm:gap-3">
               <a
                 href="/playground/"
-                title="Open the read-only pixel office"
+                title="Open the interactive pixel office"
                 className="flex h-10 items-center gap-2 border-4 border-ink bg-contrast px-2.5 text-[10px] font-black uppercase tracking-[0.1em] shadow-brutal-sm hover:bg-emphasis focus-visible:outline-4"
               >
                 <span>office</span>

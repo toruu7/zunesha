@@ -10,6 +10,8 @@ engine, and speech-bubble rendering are adapted from:
   Licensed under the MIT License (see LICENSE in this directory).
 
 The original project visualizes OpenClaw gateway agents. This adaptation
-replaces the gateway transport with Zunesha's read-only `/api/playground`
-projection, removes the OpenClaw admin/setup/hardware features, and maps task
-lifecycle states to working / waiting / idle / sleeping / done / error.
+replaces the gateway transport with Zunesha's `/api/tasks` snapshot and `/ws`
+stream, removes the OpenClaw admin/setup/hardware features, and maps task
+lifecycle states to working / waiting / idle / sleeping / done / error. The
+surrounding control-room UI (task rail, inspector, plan/run/review controls,
+live logs, Markdown output) is original Zunesha code.

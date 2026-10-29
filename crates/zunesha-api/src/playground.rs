@@ -1,12 +1,12 @@
-//! Compact, read-only projection of the task board for the pixel office
-//! playground.
+//! Compact, read-only projection of the task board for lightweight office
+//! clients.
 //!
-//! The dashboard protocol intentionally carries full task rows (logs, diffs,
-//! agent output) so a reviewer can inspect everything. The playground is a
-//! different audience: it only needs a stable id, a label, a lifecycle status,
-//! and a visual state. Keeping a separate projection avoids shipping source
-//! diffs and transcripts to a page whose only job is to show who is working,
-//! waiting, or asleep.
+//! The interactive `/playground/` page uses the full `/api/tasks` + `/ws`
+//! protocol so it can inspect logs, diffs, and final output. This endpoint is
+//! kept for small monitors that only need a stable id, a label, a lifecycle
+//! status, and a visual state; it avoids shipping source diffs and
+//! transcripts to a page whose only job is to show who is working, waiting,
+//! or asleep.
 
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
@@ -28,7 +28,7 @@ pub struct PlaygroundAgent {
     pub id: String,
     /// Display name used by the office labels.
     pub name: String,
-    /// Full task title, shown in the read-only detail panel.
+    /// Full task title, shown in the compact detail panel.
     pub title: String,
     /// Human-readable lifecycle status (`IN_PROGRESS`, `REVIEW`, …).
     pub status: String,

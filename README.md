@@ -53,6 +53,45 @@ dashboard), then falls back to a **source build** (`git clone` + `cargo
 build`) on any miss. Every URL is a flag, so mirrors, forks, and local
 checkouts work identically — flags go after `sh -s --`:
 
+### Windows (native, no WSL)
+
+Windows uses the PowerShell installer and the `zou-windows-amd64.zip` release:
+
+```powershell
+irm https://raw.githubusercontent.com/toruu7/zunesha/master/install.ps1 -OutFile "$env:TEMP\install-zou.ps1"
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\install-zou.ps1"
+```
+
+Or from a checkout:
+
+```powershell
+.\install.ps1
+.\install.ps1 -Version v0.9.0
+.\install.ps1 -Source -Repo https://github.com/you/zunesha
+```
+
+The installer puts `zou.exe` in `%LOCALAPPDATA%\Programs\Zunesha\bin`, the
+dashboard next to it in `%LOCALAPPDATA%\Programs\Zunesha\web\out`, and adds the
+`bin` directory to your **user** PATH. Open a new terminal, then run:
+
+```powershell
+zou --version
+zou model
+zou init
+zou start
+```
+
+If the prebuilt zip is missing (for example an older tag), the script falls
+back to a source build. That path needs Git, Rust (MSVC toolchain), and Node.js
+22+; the prebuilt path needs none of them. The binary is unsigned, so
+SmartScreen may warn on first run.
+
+`zou update` uses the same PowerShell installer on Windows. It still needs
+`git` to compare release tags; install Git for Windows if you want in-place
+updates. Re-run the installer if you prefer a clean install.
+
+### Unix
+
 ```sh
 # …or run the installer from a checkout:
 sh install.sh
@@ -70,11 +109,12 @@ sh install.sh --tarball file:///tmp/rel/zou-linux-amd64.tar.gz --prefix ~/.local
 ```
 
 Releases are built by `.github/workflows/release.yml` on every `v*` tag
-(`zou-linux-amd64`, `zou-macos-arm64`, `zou-macos-amd64`; each tarball holds
-`zou` + `web/out`). While this repository is **private**, the public URLs above
-are not readable — run the installer from a checkout instead
-(`sh install.sh --source --repo "$PWD"`), or point `--repo` / `--release-base`
-at a mirror you can authenticate to.
+(`zou-linux-amd64`, `zou-macos-arm64`, `zou-macos-amd64`,
+`zou-windows-amd64`; each archive holds the binary + `web/out`). While this
+repository is **private**, the public URLs above are not readable — run the
+installer from a checkout instead (`sh install.sh --source --repo "$PWD"` or
+`.\install.ps1 -Source -Repo .`), or point `--repo` / `--release-base` at a
+mirror you can authenticate to.
 
 | Flag | Default | Purpose |
 |------|---------|---------|
@@ -101,7 +141,7 @@ Source builds skip the dashboard with a warning when node/npm are absent.
 ### Updates
 
 After installing, `zou update` checks the release tags in the source recorded
-by `install.sh` and compares them with the running binary:
+by the installer and compares them with the running binary:
 
 ```sh
 zou update           # check; prompt before installing a newer release
@@ -123,8 +163,9 @@ zou update --repo git@github.com:you/zunesha.git
 # or set ZOU_UPDATE_REPO once
 ```
 
-`zou update` uses the same `install.sh` and `--prefix` as the original
-install; pass `--prefix DIR` or `--no-dashboard` to adjust the update.
+`zou update` uses the same installer and prefix as the original install
+(`install.sh` on Unix, `install.ps1` on Windows); pass `--prefix DIR` or
+`--no-dashboard` to adjust the update.
 
 ### Versioning
 
@@ -139,9 +180,9 @@ workspace and dashboard. Every push that changes the project bumps
 ```sh
 sh scripts/bump-version.sh minor   # major|minor|patch, or an explicit X.Y.Z
 git add Cargo.toml Cargo.lock web/package.json web/package-lock.json
-git commit -m "release: v0.6.0"
-git tag v0.6.0
-git push origin master v0.6.0      # tag triggers the release workflow
+git commit -m "release: v0.9.0"
+git tag v0.9.0
+git push origin master v0.9.0      # tag triggers the release workflow
 ```
 
 The script keeps `Cargo.toml`, `Cargo.lock`, `web/package.json`, and
@@ -378,7 +419,8 @@ Ports and caps: `zou start --host --port --jobs` (`--port` falls back to
 ```
 zunesha/
 ├── Cargo.toml                      # cargo workspace + build profiles
-├── install.sh                      # curl-able installer (prebuilt → source)
+├── install.sh                      # Unix installer (prebuilt → source)
+├── install.ps1                     # Windows installer (zip → source)
 ├── docs/                           # mdBook site (guides + this README as reference)
 ├── .github/workflows/              # CI, release tarballs, docs deployment
 ├── crates/
@@ -404,7 +446,7 @@ zunesha/
 │   │       ├── lib.rs               # routes, state, static dashboard
 │   │       ├── handlers.rs          # REST endpoints
 │   │       ├── events.rs            # ApiEvent + snapshots
-│   │       ├── playground.rs        # compact read-only office projection
+│   │       ├── playground.rs        # compact office projection (legacy/lightweight clients)
 │   │       └── ws.rs                # live event stream
 │   └── zunesha-cli/            # `zou` binary
 │       └── src/
@@ -932,11 +974,12 @@ The config is re-read every two seconds while the TUI is open, so theme,
 keymap, status-bar, layout, and colour edits apply without restarting. `--theme`
 still wins for that session. The model picker (`m`) lists `opencode models` and
 writes `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`; restart a running daemon
-after changing it.
+after changing it. See [Terminal UI](docs/src/tui.md) for every key, palette
+command, key-spec syntax, status-bar item, and theme.
 
-## Playground (pixel office)
+## Playground (pixel office control room)
 
-`zou start` also serves a read-only pixel office at
+`zou start` also serves an interactive pixel office at
 <http://127.0.0.1:57804/playground/>. Every task is an agent at a desk; the
 office animates the lifecycle at a glance:
 
@@ -949,10 +992,16 @@ office animates the lifecycle at a glance:
 | `DONE` | done / off duty |
 | `FAILED_NEEDS_HUMAN` | error (needs-human bubble) |
 
-The page consumes a compact projection (`GET /api/playground`) and a compact
-WebSocket (`/api/playground/ws`). It never receives worker logs, final output,
-diffs, or source code, and it has no mutation controls. The office renderer is
-adapted from [pixel-agents-openclaw](https://github.com/isnardokun/pixel-agents-openclaw)
+It is a real control room, not a read-only monitor. Select a desk or task to
+inspect its **Output** (styled Markdown), **Logs** (live stream), **Diff**, and
+**Task** metadata. The inspector has the same lifecycle controls as the
+dashboard and TUI: plan a feature, run all ready tasks, run one task, approve,
+reject with feedback, recover a stuck task, and refresh. Plan/run/reject
+actions are confirmed, and errors stay visible in a dismissible banner.
+
+The page consumes the full `GET /api/tasks` snapshot and the `/ws` stream, so
+logs and output arrive live. The office renderer is adapted from
+[pixel-agents-openclaw](https://github.com/isnardokun/pixel-agents-openclaw)
 (MIT); the attribution and license live in `web/playground/`.
 
 The normal `npm run build` emits both the dashboard and the playground:
@@ -1113,7 +1162,7 @@ connection pool.
 | 11    | Interactive DAG view + automatic crash resumption  | ✅ done |
 | 12    | Prior-agent context from uncommitted work          | ✅ done |
 | 13    | Customizable terminal UI (ratatui, themes, keymaps) | ✅ done |
-| 14    | Read-only pixel-office playground                  | ✅ done |
+| 14    | Interactive pixel-office control room              | ✅ done |
 
 Beyond the blueprint: a real **external planner** (`ZOU_PLANNER_CMD` — any LLM
 CLI that reads a prompt on stdin and prints a JSON plan; see

@@ -26,6 +26,8 @@ export class Renderer {
   private bgCache: HTMLCanvasElement | null = null;
   private lastBgFrame = -1;
   private projectName = 'ZOU OFFICE';
+  private selectedId: string | null = null;
+  private running = false;
 
   constructor(canvas: HTMLCanvasElement, tracker: AgentTracker) {
     this.canvas = canvas;
@@ -46,12 +48,35 @@ export class Renderer {
     this.lastBgFrame = -1;
   }
 
+  setSelected(id: string | null): void {
+    this.selectedId = id;
+  }
+
+  /** Return the task id whose desk/character contains logical point (x, y). */
+  agentAt(x: number, y: number): string | null {
+    const layouts = this.tracker.getLayouts();
+    for (let i = layouts.length - 1; i >= 0; i--) {
+      const layout = layouts[i];
+      if (x >= layout.deskX - 3 && x <= layout.deskX + 33 && y >= layout.deskY - 4 && y <= layout.deskY + 44) {
+        return layout.id;
+      }
+    }
+    return null;
+  }
+
   start(): void {
+    if (this.running) return;
+    this.running = true;
     this.lastTime = performance.now();
     this.loop(this.lastTime);
   }
 
+  stop(): void {
+    this.running = false;
+  }
+
   private loop = (time: number): void => {
+    if (!this.running) return;
     const dt = Math.min((time - this.lastTime) / 1000, 0.1);
     this.lastTime = time;
     this.frameTimer += dt;
@@ -88,6 +113,21 @@ export class Renderer {
       drawCharacter(ctx, layout.deskX, layout.deskY, layout.color, layout.secondaryColor,
         agent.visualState, animFrame, layout.id);
       this.drawStatusDot(ctx, layout.deskX, layout.deskY, agent.visualState);
+
+      if (layout.id === this.selectedId) {
+        ctx.save();
+        ctx.strokeStyle = '#7DD3FC';
+        ctx.globalAlpha = 0.55 + 0.25 * Math.sin(this.frame * 0.4);
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(
+          (layout.deskX - 4) * S,
+          (layout.deskY - 5) * S,
+          40 * S,
+          47 * S,
+        );
+        ctx.restore();
+      }
 
       if (agent.bubble) {
         drawBubble(ctx, layout.deskX, layout.deskY, agent.bubble.text, agent.bubble.type);

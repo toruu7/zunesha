@@ -41,7 +41,7 @@ zou approve <TASK_ID>                 # merge it → DONE, next task promoted
 Prefer a UI? `zou start` serves the dashboard on
 <http://127.0.0.1:57804> with a Kanban board, a live dependency graph, streamed
 agent logs, and the approve/reject flow. The same daemon also serves a
-read-only pixel office at `/playground/`, and `zou tui` attaches a customizable
+interactive pixel office at `/playground/`, and `zou tui` attaches a customizable
 terminal UI with the same controls.
 
 ## Where to go next
