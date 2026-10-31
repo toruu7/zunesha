@@ -5,6 +5,17 @@ import { ACCENT, isActive } from "@/lib/status";
 import { useZou } from "@/lib/store";
 import { STATUSES, type Task, type TaskStatus } from "@/lib/types";
 
+function crewEmoji(member?: string): string {
+  if (!member) return "";
+  const lower = member.toLowerCase();
+  if (lower.includes("luffy")) return "👒";
+  if (lower.includes("zoro")) return "⚔️";
+  if (lower.includes("nami")) return "🗺️";
+  if (lower.includes("usopp")) return "🎯";
+  if (lower.includes("sanji")) return "🍳";
+  return "🏴‍☠️";
+}
+
 function TaskCard({ id }: { id: string }) {
   const task = useZou((s) => s.tasks.find((t) => t.id === id));
   const select = useZou((s) => s.select);
@@ -18,10 +29,15 @@ function TaskCard({ id }: { id: string }) {
       <div className="flex">
         <div className={`w-2 shrink-0 border-r-[3px] border-ink ${ACCENT[task.status]}`} />
         <div className="p-2.5 min-w-0">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <code className="shrink-0 border border-ink bg-ground px-1 font-mono text-[10px] font-bold uppercase">
               {task.id}
             </code>
+            {task.crew_member && (
+              <span className="shrink-0 border border-ink bg-emphasis/40 px-1 text-[10px] font-bold">
+                {crewEmoji(task.crew_member)} {task.crew_member}
+              </span>
+            )}
             {isActive(task.status) && (
               <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-[0.08em]">
                 <Spinner

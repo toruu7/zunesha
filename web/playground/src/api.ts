@@ -21,6 +21,7 @@ export interface Task {
   title: string;
   description: string;
   status: TaskStatus;
+  crew_member?: string;
   retry_count: number;
   worker_logs: string;
   agent_output: string;

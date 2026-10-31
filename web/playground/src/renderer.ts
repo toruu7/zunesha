@@ -108,10 +108,11 @@ export class Renderer {
       const agent = agentMap.get(layout.id);
       if (!agent) continue;
 
-      drawDesk(ctx, layout.deskX, layout.deskY, layout.color, layout.label, layout.id);
+      const crewOrId = agent.crew_member ?? layout.id;
+      drawDesk(ctx, layout.deskX, layout.deskY, layout.color, layout.label, crewOrId);
       const animFrame = this.getAnimFrame(agent.visualState);
       drawCharacter(ctx, layout.deskX, layout.deskY, layout.color, layout.secondaryColor,
-        agent.visualState, animFrame, layout.id);
+        agent.visualState, animFrame, crewOrId);
       this.drawStatusDot(ctx, layout.deskX, layout.deskY, agent.visualState);
 
       if (layout.id === this.selectedId) {

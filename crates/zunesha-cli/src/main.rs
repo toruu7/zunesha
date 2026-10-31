@@ -29,9 +29,9 @@ use std::sync::{Arc, Mutex};
 use clap::{Parser, Subcommand};
 
 use zunesha_core::{
-    approve_task, init_project, normalize_agent_model, recover_stuck, AgentCommand, AgentProvider,
-    Config, Database, Error, MergeOutcome, StreamKind, TaskStatus, WorkerEvent, WorkerPool,
-    WorkspaceManager, ZuneshaPaths,
+    approve_task, crew_member_info, init_project, normalize_agent_model, recover_stuck,
+    AgentCommand, AgentProvider, Config, Database, Error, MergeOutcome, StreamKind, TaskStatus,
+    WorkerEvent, WorkerPool, WorkspaceManager, ZuneshaPaths,
 };
 
 #[derive(Parser, Debug)]
@@ -199,6 +199,24 @@ enum Commands {
         #[arg(long)]
         clear: bool,
     },
+    /// View or configure Straw Hat crew members (Luffy, Zoro, Nami, Usopp, Sanji).
+    ///
+    /// With no arguments, lists all 5 crew members with their specialty, configured provider,
+    /// and model. Specify a member to configure their model/provider:
+    /// `zou crew zoro --model claude-3-7-sonnet --provider opencode`
+    Crew {
+        /// Crew member name (luffy, zoro, nami, usopp, sanji).
+        member: Option<String>,
+        /// Model to assign to this crew member.
+        #[arg(long)]
+        model: Option<String>,
+        /// Provider for this crew member (opencode or antigravity).
+        #[arg(long)]
+        provider: Option<String>,
+        /// Reset this crew member back to the default agent model.
+        #[arg(long)]
+        reset: bool,
+    },
     /// Check for a newer release and update this installation.
     ///
     /// Compares the running binary's version with the highest `vX.Y.Z` tag in
@@ -284,6 +302,17 @@ fn main() -> ExitCode {
             show,
             clear,
         } => cmd_model(model.as_deref(), list, show, clear),
+        Commands::Crew {
+            member,
+            model,
+            provider,
+            reset,
+        } => cmd_crew(
+            member.as_deref(),
+            model.as_deref(),
+            provider.as_deref(),
+            reset,
+        ),
         Commands::Update {
             repo,
             prefix,
@@ -364,7 +393,12 @@ fn cmd_plan(target: &Path, prompt: &str, attachments: &[PathBuf]) -> zunesha_cor
         } else {
             format!("  (depends on: {})", deps.join(", "))
         };
-        println!("  {}. [{}] {}{depends_on}", i + 1, task.status, task.title);
+        let crew = task
+            .crew_member
+            .as_deref()
+            .map(|c| format!(" [{}{c}]", task.crew_emoji()))
+            .unwrap_or_default();
+        println!("  {}. [{}] {}{crew}{depends_on}", i + 1, task.status, task.title);
     }
     Ok(())
 }
@@ -477,7 +511,12 @@ fn cmd_status(target: &Path) -> zunesha_core::Result<()> {
         println!();
         for status in TaskStatus::ALL {
             for task in db.list_tasks_by_status(status)? {
-                println!("  {:<12} {:<24} {}", status, task.id, task.title);
+                let crew = task
+                    .crew_member
+                    .as_deref()
+                    .map(|c| format!(" [{}{c}]", task.crew_emoji()))
+                    .unwrap_or_default();
+                println!("  {:<12} {:<24} {}{crew}", status, task.id, task.title);
             }
         }
     }
@@ -768,6 +807,97 @@ fn choose_model(
             Err(e) => eprintln!("  {e}"),
         }
     }
+}
+
+/// `zou crew` – view or configure Straw Hat crew members (Luffy, Zoro, Nami, Usopp, Sanji).
+fn cmd_crew(
+    member: Option<&str>,
+    model: Option<&str>,
+    provider: Option<&str>,
+    reset: bool,
+) -> zunesha_core::Result<()> {
+    let crew_keys = ["luffy", "zoro", "nami", "usopp", "sanji"];
+
+    if let Some(member) = member {
+        let member_lower = member.to_ascii_lowercase();
+        if !crew_keys.contains(&member_lower.as_str()) {
+            return Err(Error::Config(format!(
+                "unknown crew member `{member}`; choose from: {}",
+                crew_keys.join(", ")
+            )));
+        }
+
+        if reset {
+            let path = Config::clear_crew_member(&member_lower)?;
+            println!("✔ reset crew member `{member_lower}` to default agent model");
+            println!("  config : {}", path.display());
+            return Ok(());
+        }
+
+        if model.is_some() || provider.is_some() {
+            let parsed_provider = match provider {
+                Some(p) => Some(AgentProvider::parse(p)?),
+                None => None,
+            };
+            let path = Config::set_crew_member(&member_lower, parsed_provider, model)?;
+            let config = Config::load_from(&path).unwrap_or_default();
+            println!("✔ configured crew member `{member_lower}`");
+            println!("  config   : {}", path.display());
+            println!(
+                "  provider : {}",
+                config.resolve_crew_provider(&member_lower).as_str()
+            );
+            println!(
+                "  model    : {}",
+                config
+                    .resolve_crew_model(&member_lower)
+                    .as_deref()
+                    .unwrap_or("(default)")
+            );
+            return Ok(());
+        }
+
+        // Show single member
+        let config = Config::load().unwrap_or_default();
+        let (name, role, specialty) = crew_member_info(&member_lower);
+        println!("Straw Hat Crew Member: {name}");
+        println!("  role     : {role}");
+        println!("  focus    : {specialty}");
+        println!(
+            "  provider : {}",
+            config.resolve_crew_provider(&member_lower).as_str()
+        );
+        println!(
+            "  model    : {}",
+            config
+                .resolve_crew_model(&member_lower)
+                .as_deref()
+                .unwrap_or("(default)")
+        );
+        return Ok(());
+    }
+
+    // List all 5 crew members
+    let config = Config::load().unwrap_or_default();
+    println!("Straw Hat Pirates Crew — Autonomous Agent Roster");
+    println!("===============================================");
+    for key in crew_keys {
+        let (name, role, specialty) = crew_member_info(key);
+        let resolved_prov = config.resolve_crew_provider(key);
+        let resolved_model = config.resolve_crew_model(key);
+        println!(
+            "  {:<8} {:<24} {:<12} model: {}",
+            key,
+            name,
+            resolved_prov.as_str(),
+            resolved_model.as_deref().unwrap_or("(default)")
+        );
+        println!("           Role: {role} | Specialty: {specialty}");
+    }
+    println!();
+    println!("Configure a crew member: `zou crew <member> --model <model> [--provider <provider>]`");
+    println!("Reset a crew member:     `zou crew <member> --reset`");
+    Ok(())
 }
 
 /// `zou start` – run the local API + WebSocket server until interrupted.
@@ -1574,5 +1704,18 @@ mod tests {
 
         let db = zunesha_core::Database::open(&paths.state_db()).unwrap();
         assert!(db.get_task("t1").unwrap().is_none());
+    }
+
+    #[test]
+    fn cmd_crew_validates_known_members_and_lists() {
+        // Unknown member fails
+        let err = super::cmd_crew(Some("chopper"), None, None, false).unwrap_err();
+        assert!(err.to_string().contains("unknown crew member `chopper`"));
+
+        // Listing all crew members succeeds
+        assert!(super::cmd_crew(None, None, None, false).is_ok());
+
+        // Inspecting a specific known member succeeds
+        assert!(super::cmd_crew(Some("zoro"), None, None, false).is_ok());
     }
 }

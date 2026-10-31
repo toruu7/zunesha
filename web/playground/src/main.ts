@@ -168,6 +168,17 @@ function statusClass(status: TaskStatus): string {
   return `status-${status.toLowerCase().replace(/_/g, '-')}`;
 }
 
+function crewEmoji(member?: string): string {
+  if (!member) return '';
+  const lower = member.toLowerCase();
+  if (lower.includes('luffy')) return '👒';
+  if (lower.includes('zoro')) return '⚔️';
+  if (lower.includes('nami')) return '🗺️';
+  if (lower.includes('usopp')) return '🎯';
+  if (lower.includes('sanji')) return '🍳';
+  return '🏴‍☠️';
+}
+
 function selectedTask(): Task | undefined {
   return state.tasks.find((task) => task.id === state.selectedId);
 }
@@ -199,6 +210,14 @@ function mergedLogs(task: Task): string[] {
   return persisted;
 }
 
+const DEFAULT_CREW: PlaygroundAgent[] = [
+  { id: 'luffy', name: 'Luffy', title: 'Captain', status: 'TODO', state: 'idle', crew_member: 'luffy', updated_at: '', retry_count: 0 },
+  { id: 'zoro', name: 'Zoro', title: 'Combatant', status: 'TODO', state: 'idle', crew_member: 'zoro', updated_at: '', retry_count: 0 },
+  { id: 'nami', name: 'Nami', title: 'Navigator', status: 'TODO', state: 'idle', crew_member: 'nami', updated_at: '', retry_count: 0 },
+  { id: 'usopp', name: 'Usopp', title: 'Sniper', status: 'TODO', state: 'idle', crew_member: 'usopp', updated_at: '', retry_count: 0 },
+  { id: 'sanji', name: 'Sanji', title: 'Cook', status: 'TODO', state: 'idle', crew_member: 'sanji', updated_at: '', retry_count: 0 },
+];
+
 function taskToAgent(task: Task): PlaygroundAgent {
   return {
     id: task.id,
@@ -206,6 +225,7 @@ function taskToAgent(task: Task): PlaygroundAgent {
     title: task.title,
     status: task.status,
     state: STATUS_VISUAL[task.status] ?? 'idle',
+    crew_member: task.crew_member,
     updated_at: task.updated_at,
     retry_count: task.retry_count,
   };
@@ -410,11 +430,12 @@ function renderRail(): void {
       .map((task) => {
         const selected = task.id === state.selectedId ? ' selected' : '';
         const visual = STATUS_VISUAL[task.status] ?? 'idle';
+        const crewBadge = task.crew_member ? `<span class="task-crew">${crewEmoji(task.crew_member)} ${escapeHtml(task.crew_member)}</span>` : '';
         return `<button class="task-item${selected}" data-task-id="${escapeHtml(task.id)}" type="button">
           <span class="task-dot ${visual}" aria-hidden="true"></span>
           <span class="task-copy">
             <span class="task-title">${escapeHtml(task.title)}</span>
-            <span class="task-meta"><span class="task-state ${statusClass(task.status)}">${statusLabel(task.status)}</span><span class="task-id">${escapeHtml(task.id.slice(-7))}</span></span>
+            <span class="task-meta">${crewBadge}<span class="task-state ${statusClass(task.status)}">${statusLabel(task.status)}</span><span class="task-id">${escapeHtml(task.id.slice(-7))}</span></span>
           </span>
         </button>`;
       })
@@ -560,6 +581,7 @@ function renderInspector(): void {
   } else {
     content = `<dl class="meta-grid">
       <dt>Status</dt><dd><span class="status-pill ${statusClass(task.status)}">${statusLabel(task.status)}</span></dd>
+      <dt>Crew</dt><dd>${task.crew_member ? `${crewEmoji(task.crew_member)} ${escapeHtml(task.crew_member)}` : '—'}</dd>
       <dt>Task id</dt><dd class="mono">${escapeHtml(task.id)}</dd>
       <dt>Retries</dt><dd>${task.retry_count}</dd>
       <dt>Created</dt><dd>${escapeHtml(formatDate(task.created_at))}</dd>
@@ -574,6 +596,7 @@ function renderInspector(): void {
       <h2>${escapeHtml(task.title)}</h2>
       <div class="inspector-state">
         <span class="status-pill ${statusClass(task.status)}">${statusLabel(task.status)}</span>
+        ${task.crew_member ? `<span class="crew-pill">${crewEmoji(task.crew_member)} ${escapeHtml(task.crew_member)}</span>` : ''}
         ${state.busy ? `<span class="busy-label">${escapeHtml(state.busy)}…</span>` : ''}
       </div>
     </div>
@@ -644,7 +667,11 @@ function showToast(message: string, kind: 'info' | 'error' = 'info'): void {
 // ── state application ──────────────────────────────────────────────────────
 
 function syncOffice(): void {
-  tracker.setSnapshot(state.tasks.map(taskToAgent));
+  if (state.tasks.length > 0) {
+    tracker.setSnapshot(state.tasks.map(taskToAgent));
+  } else {
+    tracker.setSnapshot(DEFAULT_CREW);
+  }
   renderer.setProject(state.project?.name ?? 'ZOU');
   renderer.setSelected(state.selectedId);
 }

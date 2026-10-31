@@ -22,6 +22,17 @@ function diffLineClass(line: string): string {
   return "text-ink/85";
 }
 
+function crewEmoji(member?: string): string {
+  if (!member) return "";
+  const lower = member.toLowerCase();
+  if (lower.includes("luffy")) return "👒";
+  if (lower.includes("zoro")) return "⚔️";
+  if (lower.includes("nami")) return "🗺️";
+  if (lower.includes("usopp")) return "🎯";
+  if (lower.includes("sanji")) return "🍳";
+  return "🏴‍☠️";
+}
+
 function DiffView({ diff }: { diff: string }) {
   if (!diff.trim()) {
     return (
@@ -149,6 +160,14 @@ export default function ReviewModal({ task }: { task: Task }) {
                 )}
                 {task.status.replaceAll("_", " ")}
               </span>
+              {task.crew_member && (
+                <span
+                  title={`Assigned Straw Hat crew member: ${task.crew_member}`}
+                  className="border-2 border-ink bg-contrast px-1.5 py-0.5 font-mono text-[10px] font-bold text-ink"
+                >
+                  {crewEmoji(task.crew_member)} {task.crew_member}
+                </span>
+              )}
               {task.retry_count > 0 && (
                 <span
                   title="Failed validations in the current review cycle (max 3)"

@@ -35,6 +35,9 @@ pub struct PlaygroundAgent {
     /// Renderer state: `working`, `waiting`, `idle`, `sleeping`, `done`, or
     /// `error`.
     pub state: String,
+    /// Crew member assigned to this task (e.g. "luffy", "zoro", etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crew_member: Option<String>,
     pub updated_at: String,
     pub retry_count: u32,
 }
@@ -185,12 +188,18 @@ fn snapshot_from_paths(paths: &ZuneshaPaths) -> zunesha_core::Result<PlaygroundS
 
 /// Project one task into the renderer's vocabulary.
 pub fn map_task(task: &Task) -> PlaygroundAgent {
+    let name = task
+        .crew_member
+        .as_deref()
+        .map(|c| c.to_uppercase())
+        .unwrap_or_else(|| task.title.clone());
     PlaygroundAgent {
         id: task.id.clone(),
-        name: task.title.clone(),
+        name,
         title: task.title.clone(),
         status: status_label(task.status).to_string(),
         state: visual_state(task.status).to_string(),
+        crew_member: task.crew_member.clone(),
         updated_at: task.updated_at.clone(),
         retry_count: task.retry_count,
     }
@@ -232,6 +241,7 @@ mod tests {
             title: "Ship the playground".into(),
             description: String::new(),
             status,
+            crew_member: Some("zoro".into()),
             retry_count: 0,
             worker_logs: "secret transcript".into(),
             agent_output: "secret output".into(),

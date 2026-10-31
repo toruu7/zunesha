@@ -208,18 +208,21 @@ fn mock_draft(prompt: &str) -> PlanDraft {
                 title: format!("Analyze & design: {prompt}"),
                 description: plan_step_description(prompt, 1),
                 depends_on: Vec::new(),
+                crew_member: Some("nami".to_string()),
             },
             PlannedTask {
                 key: "implement".to_string(),
                 title: format!("Implement the change: {prompt}"),
                 description: plan_step_description(prompt, 2),
                 depends_on: vec!["design".to_string()],
+                crew_member: Some("luffy".to_string()),
             },
             PlannedTask {
                 key: "verify".to_string(),
                 title: format!("Test & document: {prompt}"),
                 description: plan_step_description(prompt, 3),
                 depends_on: vec!["implement".to_string()],
+                crew_member: Some("usopp".to_string()),
             },
         ],
     }
@@ -367,9 +370,15 @@ fn build_prompt(request: &str, repo_root: &Path) -> String {
          \n\
          Rules:\n\
          - 1-8 tasks. Prefer the fewest tasks that can be reviewed independently.\n\
-         - Every task needs a short `key` (unique in this plan), a `title`, and a\n\
+         - Every task needs a short `key` (unique in this plan), a `title`, a\n\
            self-contained `description` with enough context for an agent that has\n\
-           not seen this message.\n\
+           not seen this message, and an optional `crew_member`.\n\
+         - Assign each task to the Straw Hat crew member best suited for it:\n\
+           * \"luffy\": core feature implementation, new functional modules, greenfield logic\n\
+           * \"zoro\": refactoring, performance optimization, tech debt cleanup, type safety\n\
+           * \"nami\": architecture design, schema migrations, API contracts\n\
+           * \"usopp\": tests, edge-case validation, verification commands, error reproduction\n\
+           * \"sanji\": UI/UX styling, frontend components, CLI ergonomics, docs & polish\n\
          - Maximize parallelism: start independent tasks with `depends_on: []` so\n\
            they can be worked on concurrently. Only declare dependencies where one\n\
            task strictly requires code, types, or schemas produced by an earlier\n\
@@ -383,7 +392,7 @@ fn build_prompt(request: &str, repo_root: &Path) -> String {
          - The graph must be acyclic.\n\
          \n\
          Answer with one JSON object and nothing else (no markdown fence, no prose):\n\
-         {{\"tasks\":[{{\"key\":\"short-slug\",\"title\":\"...\",\"description\":\"...\",\"depends_on\":[\"other-key\"]}}]}}\n"
+         {{\"tasks\":[{{\"key\":\"short-slug\",\"title\":\"...\",\"description\":\"...\",\"crew_member\":\"luffy\",\"depends_on\":[\"other-key\"]}}]}}\n"
     )
 }
 
@@ -420,6 +429,9 @@ struct PlannedTask {
     /// `null` is treated as "no dependencies" so a loose model still works.
     #[serde(default, alias = "dependsOn", deserialize_with = "string_list")]
     depends_on: Vec<String>,
+    /// Optional crew member assigned to this task (e.g. "luffy", "zoro", "nami", "usopp", "sanji").
+    #[serde(default, alias = "crewMember", alias = "crew")]
+    crew_member: Option<String>,
 }
 
 /// Deserialize `Vec<String>` from a present array or from `null`/absent.
@@ -631,7 +643,11 @@ fn insert_plan(db: &Database, tasks: &[PlannedTask]) -> Result<Vec<String>> {
         } else {
             task.description.clone()
         };
-        db.insert_task(&Task::new(&id, task.title.clone(), description))?;
+        let mut new_task = Task::new(&id, task.title.clone(), description);
+        if let Some(crew) = &task.crew_member {
+            new_task.crew_member = Some(crew.clone());
+        }
+        db.insert_task(&new_task)?;
         ids.insert(task.key.as_str(), id.clone());
         created.push(id);
     }
@@ -1002,6 +1018,22 @@ printf '%s' '{"tasks":[{"key":"a","title":"Only a title"}]}'
         .unwrap();
         let task = db.require_task(&ids[0]).unwrap();
         assert_eq!(task.description, "Only a title");
+    }
+
+    #[test]
+    fn external_plan_captures_crew_member() {
+        let db = db();
+        let ids = external(
+            &db,
+            r#"#!/bin/sh
+cat > /dev/null
+printf '%s' '{"tasks":[{"key":"a","title":"Refactor","description":"D","crew_member":"zoro"}]}'
+"#,
+        )
+        .unwrap();
+        let task = db.require_task(&ids[0]).unwrap();
+        assert_eq!(task.crew_member.as_deref(), Some("zoro"));
+        assert_eq!(task.crew_emoji(), "⚔️");
     }
 
     #[test]

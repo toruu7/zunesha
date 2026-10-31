@@ -36,6 +36,8 @@ export interface Task {
   agent_output: string;
   /** Unified diff captured when the task last reached REVIEW. */
   diff: string;
+  /** Optional Straw Hat crew member assigned to this task. */
+  crew_member?: string;
   created_at: string;
   updated_at: string;
 }

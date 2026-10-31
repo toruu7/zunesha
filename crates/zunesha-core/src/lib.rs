@@ -54,7 +54,10 @@ pub use attachments::{
     append_attachments, attachment_block, save_attachments, AttachmentUpload, SavedAttachment,
     MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, MAX_TOTAL_ATTACHMENT_BYTES,
 };
-pub use config::{normalize_agent_model, normalize_model, AgentConfig, AgentProvider, Config};
+pub use config::{
+    crew_member_info, default_crew_persona, normalize_agent_model, normalize_model, AgentConfig,
+    AgentProvider, Config,
+};
 pub use control::{RunControl, RunRegistry};
 pub use dag::{blocked_tasks, promote_ready, recover_stuck, remove_task, render_roadmap};
 pub use db::{Database, RunEvent, RunRecord, WorkspaceRecord};

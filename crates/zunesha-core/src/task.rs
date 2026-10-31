@@ -198,6 +198,9 @@ pub struct Task {
     pub agent_output: String,
     /// Captured `git diff` of the task's workspace (populated in Phase 3).
     pub diff: String,
+    /// Optional crew member assigned to this task (e.g. "luffy", "zoro", "nami", "usopp", "sanji").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crew_member: Option<String>,
     /// `YYYY-MM-DD HH:MM:SS` (UTC), set by the database.
     pub created_at: String,
     /// `YYYY-MM-DD HH:MM:SS` (UTC), set by the database.
@@ -227,8 +230,32 @@ impl Task {
             worker_logs: String::new(),
             agent_output: String::new(),
             diff: String::new(),
+            crew_member: None,
             created_at: String::new(),
             updated_at: String::new(),
+        }
+    }
+
+    /// Assign a crew member to this task.
+    pub fn with_crew(mut self, crew_member: impl Into<String>) -> Self {
+        self.crew_member = Some(crew_member.into());
+        self
+    }
+
+    /// Return an emoji badge for the assigned crew member.
+    pub fn crew_emoji(&self) -> &'static str {
+        match self
+            .crew_member
+            .as_deref()
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("luffy") => "👒",
+            Some("zoro") => "⚔️",
+            Some("nami") => "🗺️",
+            Some("usopp") => "🎯",
+            Some("sanji") => "🍳",
+            _ => "🏴‍☠️",
         }
     }
 }

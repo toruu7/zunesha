@@ -27,7 +27,7 @@ export interface AgentAppearance {
   hairColor: string;      // hex, e.g. '#2A1A0A'
   outfitColor: string;    // hex — overrides the character's shirt/body color
   skinTone: string;       // hex, e.g. '#D4A870'
-  accessory: 'none' | 'glasses' | 'headset' | 'hat' | 'cap';
+  accessory: 'none' | 'glasses' | 'headset' | 'hat' | 'cap' | 'strawhat' | 'earrings' | 'logpose' | 'goggles' | 'cigarette';
 }
 
 export interface CronJobState {
@@ -61,6 +61,7 @@ export interface AgentState {
   name: string;
   title: string;
   status: string;
+  crew_member?: string;
   retryCount: number;
   emoji: string;
   color: string;

@@ -248,6 +248,54 @@ impl AgentCommand {
         }
     }
 
+    /// Whether this is the default builtin OpenCode command with no custom model or flags.
+    pub fn is_builtin(&self) -> bool {
+        self.program == "opencode"
+            && self.args.contains(&"--format".to_string())
+            && self.args.contains(&"json".to_string())
+            && !self.args.contains(&"--model".to_string())
+            && !self.args.contains(&"--auto".to_string())
+    }
+
+    /// Build an agent invocation for a specific crew member (or fallback).
+    pub fn for_crew_member(config: &Config, crew_member: Option<&str>) -> Self {
+        if let Some(member) = crew_member {
+            let env_cmd_key = format!("ZOU_CREW_{}_CMD", member.to_ascii_uppercase());
+            if let Ok(spec) = std::env::var(&env_cmd_key) {
+                if !spec.trim().is_empty() {
+                    if let Ok(cmd) = AgentCommand::from_spec(&spec) {
+                        return cmd;
+                    }
+                }
+            }
+            let provider = config.resolve_crew_provider(member);
+            let model = config.resolve_crew_model(member);
+            match provider {
+                AgentProvider::Opencode => {
+                    let mut args = vec![
+                        "run".to_string(),
+                        "--auto".to_string(),
+                        "--format".to_string(),
+                        "json".to_string(),
+                    ];
+                    if let Some(m) = model {
+                        args.push("--model".to_string());
+                        args.push(m);
+                    }
+                    args.push("{prompt}".to_string());
+                    return AgentCommand {
+                        program: "opencode".to_string(),
+                        args,
+                    };
+                }
+                AgentProvider::Antigravity => {
+                    return Self::antigravity(model.as_deref());
+                }
+            }
+        }
+        Self::from_config(config).unwrap_or_else(Self::builtin)
+    }
+
     /// Parse a full command line (program + args) from a string.
     ///
     /// Honors single quotes, double quotes, and backslash escapes so callers
@@ -927,6 +975,16 @@ async fn run_one(
                 RunMode::Normal => render_prompt(&task.title, &description),
                 RunMode::ResolveConflicts => render_conflict_prompt(&task.title, &description),
             };
+            // Pre-made crew member persona (Straw Hat crew or custom):
+            if let Some(crew) = &task.crew_member {
+                if let Ok(config) = Config::load() {
+                    let persona = config.resolve_crew_persona(crew);
+                    if !persona.trim().is_empty() {
+                        prompt.push_str("\n\n");
+                        prompt.push_str(&persona);
+                    }
+                }
+            }
             // Macro feature roadmap: when part of a multi-task plan, give the
             // agent visibility into completed prerequisites and downstream dependents.
             if let Some(roadmap) = &roadmap {
@@ -951,7 +1009,15 @@ async fn run_one(
                     "timeout_secs": pool.agent_timeout.as_secs(),
                 }),
             );
-            let outcome = run_agent_once(pool, &ws_dir, &prompt, &line_tx, &control).await?;
+            let outcome = run_agent_once(
+                pool,
+                &ws_dir,
+                &prompt,
+                task.crew_member.as_deref(),
+                &line_tx,
+                &control,
+            )
+            .await?;
             journal.event(
                 "agent_finished",
                 serde_json::json!({ "outcome": outcome.label() }),
@@ -1225,6 +1291,7 @@ async fn run_agent_once(
     pool: &WorkerHandle,
     ws_dir: &str,
     prompt: &str,
+    crew_member: Option<&str>,
     line_tx: &mpsc::UnboundedSender<(StreamKind, String)>,
     control: &RunControl,
 ) -> Result<AgentOutcome> {
@@ -1240,7 +1307,16 @@ async fn run_agent_once(
     let policy = SandboxPolicy::new(ws_dir, pool.sandbox_mode)?;
     policy.validate()?;
 
-    let (program, args) = pool.agent.render(prompt, ws_dir);
+    let agent_cmd = if pool.agent.is_builtin() {
+        if let Ok(config) = Config::load() {
+            AgentCommand::for_crew_member(&config, crew_member)
+        } else {
+            pool.agent.clone()
+        }
+    } else {
+        pool.agent.clone()
+    };
+    let (program, args) = agent_cmd.render(prompt, ws_dir);
     let (program, args) = policy.wrap(&program, &args)?;
 
     // Spawn the agent with piped output, running inside the workspace. The
@@ -2030,6 +2106,7 @@ mod tests {
                 model: Some("opencode/deepseek-v4.1-flash-free".into()),
                 models: Default::default(),
             },
+            crew: Default::default(),
         };
         let cmd = AgentCommand::from_config(&config).expect("saved model");
         assert_eq!(cmd.program, "opencode");
@@ -2060,6 +2137,7 @@ mod tests {
                 model: Some("gemini-3.8-flash-medium".into()),
                 models: Default::default(),
             },
+            crew: Default::default(),
         };
         let cmd = AgentCommand::from_config(&config).expect("antigravity provider");
         assert_eq!(cmd.program, "agy");
@@ -2076,6 +2154,7 @@ mod tests {
                 model: None,
                 models: Default::default(),
             },
+            crew: Default::default(),
         };
         let cmd = AgentCommand::from_config(&config).expect("provider default");
         assert_eq!(cmd.program, "agy");
@@ -2363,6 +2442,36 @@ mod tests {
         assert!(logs.contains("roadmap-in-prompt=1"), "missing roadmap in prompt: {logs}");
         assert!(logs.contains("current-in-prompt=1"), "missing current task marker in prompt: {logs}");
         assert!(logs.contains("downstream-in-prompt=1"), "missing downstream note in prompt: {logs}");
+        assert_eq!(task.status, TaskStatus::Review);
+    }
+
+    #[tokio::test]
+    async fn agent_prompts_carry_crew_persona() {
+        let (_repo, paths) = scratch_install();
+        let db = Database::open(&paths.state_db()).unwrap();
+        let task = Task::new("t0", "Refactor core loop", "clean up debt").with_crew("zoro");
+        db.insert_task(&task).unwrap();
+        crate::dag::promote_ready(&db).unwrap(); // t0 -> TODO
+
+        let pool = WorkerPool::new(
+            paths.clone(),
+            1,
+            AgentCommand::shell(
+                "P=\"$0\"; \
+                 echo \"zoro-in-prompt=$(printf '%s' \"$P\" | grep -c 'Roronoa Zoro')\"; \
+                 echo \"debt-in-prompt=$(printf '%s' \"$P\" | grep -c 'slaying technical debt')\"; \
+                 printf 'fn cleaned() {}\n' > cleaned.rs",
+            ),
+        );
+
+        let handle = pool.spawn_task("t0".into()).await.unwrap();
+        assert!(handle.await.unwrap().unwrap(), "agent exit 0 => success");
+
+        let db = Database::open(&paths.state_db()).unwrap();
+        let task = db.get_task("t0").unwrap().unwrap();
+        let logs = &task.worker_logs;
+        assert!(!logs.contains("zoro-in-prompt=0"), "missing Zoro persona in prompt: {logs}");
+        assert!(logs.contains("debt-in-prompt=1"), "missing Zoro technical debt focus in prompt: {logs}");
         assert_eq!(task.status, TaskStatus::Review);
     }
 

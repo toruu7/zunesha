@@ -2047,6 +2047,12 @@ fn draw_task_list(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 spans.push(Span::raw("  "));
             }
+            if task.crew_member.is_some() {
+                spans.push(Span::styled(
+                    format!("{} ", task.crew_emoji()),
+                    Style::default().fg(app.theme.accent),
+                ));
+            }
             spans.push(Span::styled(
                 task.id.clone(),
                 Style::default().fg(app.theme.muted),
@@ -2128,9 +2134,11 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
         ),
         DetailTab::Diff => draw_diff(frame, app, chunks[1], &task.diff),
         DetailTab::Task => {
+            let crew_str = task.crew_member.as_deref().unwrap_or("—");
             let text = format!(
-                "id       : {}\nstatus   : {}\nretries  : {}\ncreated  : {}\nupdated  : {}\n\n{}",
+                "id       : {}\ncrew     : {}\nstatus   : {}\nretries  : {}\ncreated  : {}\nupdated  : {}\n\n{}",
                 task.id,
+                crew_str,
                 status_label(task.status),
                 task.retry_count,
                 task.created_at,
@@ -2537,6 +2545,7 @@ mod tests {
             title: title.into(),
             description: "A task description".into(),
             status,
+            crew_member: None,
             retry_count: 0,
             worker_logs: "line one\nline two".into(),
             agent_output: "final output".into(),

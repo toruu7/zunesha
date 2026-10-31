@@ -40,6 +40,23 @@ pub struct Config {
     /// Agent-related settings (`zou agent` / `zou model` write here).
     #[serde(default)]
     pub agent: AgentConfig,
+    /// Pre-made crew member settings (e.g. "luffy", "zoro", "nami", "usopp", "sanji").
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub crew: BTreeMap<String, CrewMemberConfig>,
+}
+
+/// Settings for a pre-made or custom crew member (e.g. "luffy", "zoro", "nami", "usopp", "sanji").
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CrewMemberConfig {
+    /// Optional provider override for this crew member (`opencode` / `antigravity`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<AgentProvider>,
+    /// Optional model override for this crew member.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Optional custom system prompt / persona instructions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
 }
 
 /// Which coding-agent CLI Zunesha should launch.
@@ -310,6 +327,137 @@ impl Config {
     pub fn provider(&self) -> AgentProvider {
         self.agent.provider
     }
+
+    /// Configure a crew member's model and/or provider user-wide.
+    pub fn set_crew_member(
+        member: &str,
+        provider: Option<AgentProvider>,
+        model: Option<&str>,
+    ) -> Result<PathBuf> {
+        let path = Self::path()?;
+        let mut config = Self::load_from(&path).unwrap_or_default();
+        let entry = config
+            .crew
+            .entry(member.to_ascii_lowercase())
+            .or_default();
+        if let Some(p) = provider {
+            entry.provider = Some(p);
+        }
+        if let Some(m) = model {
+            let p = entry.provider.unwrap_or(config.agent.provider);
+            let normalized = normalize_agent_model(p, m)?;
+            entry.model = Some(normalized);
+        }
+        config.save_to(&path)?;
+        Ok(path)
+    }
+
+    /// Reset a crew member's configuration back to defaults.
+    pub fn clear_crew_member(member: &str) -> Result<PathBuf> {
+        let path = Self::path()?;
+        let mut config = Self::load_from(&path).unwrap_or_default();
+        config.crew.remove(&member.to_ascii_lowercase());
+        config.save_to(&path)?;
+        Ok(path)
+    }
+
+    /// Resolve the effective provider for a crew member.
+    pub fn resolve_crew_provider(&self, member: &str) -> AgentProvider {
+        let env_key = format!("ZOU_CREW_{}_PROVIDER", member.to_ascii_uppercase());
+        if let Ok(val) = std::env::var(&env_key) {
+            if let Ok(p) = AgentProvider::parse(&val) {
+                return p;
+            }
+        }
+        if let Some(c) = self.crew.get(member) {
+            if let Some(p) = c.provider {
+                return p;
+            }
+        }
+        self.provider()
+    }
+
+    /// Resolve the effective model for a crew member.
+    pub fn resolve_crew_model(&self, member: &str) -> Option<String> {
+        let env_key = format!("ZOU_CREW_{}_MODEL", member.to_ascii_uppercase());
+        if let Ok(val) = std::env::var(&env_key) {
+            let val = val.trim();
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+        if let Some(c) = self.crew.get(member) {
+            if let Some(m) = &c.model {
+                return Some(m.clone());
+            }
+        }
+        self.model().map(|s| s.to_string())
+    }
+
+    /// Get persona instructions for a crew member, using custom config if set or default Straw Hat persona.
+    pub fn resolve_crew_persona(&self, member: &str) -> String {
+        if let Some(c) = self.crew.get(member) {
+            if let Some(p) = &c.prompt {
+                return p.clone();
+            }
+        }
+        default_crew_persona(member).to_string()
+    }
+}
+
+/// Default persona guidelines for the Straw Hat crew members.
+pub fn default_crew_persona(member: &str) -> &'static str {
+    match member.to_ascii_lowercase().as_str() {
+        "luffy" => {
+            "## Persona: Monkey D. Luffy (Captain / Feature Driver)\n\
+             You are Monkey D. Luffy, captain of the Straw Hat crew.\n\
+             Your mission is bold, fearless implementation of new features and capabilities.\n\
+             Focus on high-agency, pragmatic problem solving. Write working code that accomplishes\n\
+             the objective directly without getting bogged down in analysis paralysis or pedantic nitpicks.\n\
+             Ensure the feature works end-to-end!"
+        }
+        "zoro" => {
+            "## Persona: Roronoa Zoro (Combatant / Debt & Refactoring Slayer)\n\
+             You are Roronoa Zoro, the master swordsman of the Straw Hat crew.\n\
+             Your mission is relentless refactoring, performance optimization, and slaying technical debt.\n\
+             Cut away redundant code, eliminate inefficient allocations, enforce strict typing and compiler\n\
+             cleanliness (zero warnings), and leave the codebase sharper and more disciplined than you found it."
+        }
+        "nami" => {
+            "## Persona: Nami (Navigator / Planner & Architect)\n\
+             You are Nami, navigator of the Straw Hat crew.\n\
+             Your mission is mapping out clear architectures, schemas, contracts, and routes.\n\
+             Think ahead: ensure components fit together smoothly, interfaces are intuitive, and dependencies\n\
+             are cleanly structured to avoid bottlenecks or merge conflicts."
+        }
+        "usopp" => {
+            "## Persona: Usopp (Sniper / Edge-Case Hunter & Test Scout)\n\
+             You are Usopp, sniper of the Straw Hat crew.\n\
+             Your mission is hunting down sneaky bugs, handling every possible failure mode, and crafting thorough tests.\n\
+             Anticipate edge cases: boundary conditions, empty inputs, network drops, malformed data, and race conditions.\n\
+             Snipe errors before they can reach production!"
+        }
+        "sanji" => {
+            "## Persona: Sanji (Chef / Review & Presentation Polish)\n\
+             You are Sanji, chef of the Straw Hat crew.\n\
+             Your mission is ergonomics, UI/UX aesthetics, and preparing high-quality code for human review.\n\
+             Focus on clean formatting, delightful user interfaces, clear documentation, intuitive CLI/TUI outputs,\n\
+             and crafting git diffs that are an absolute pleasure for the human reviewer to inspect."
+        }
+        _ => "",
+    }
+}
+
+/// Structured summary of a Straw Hat crew member's identity and specialty.
+pub fn crew_member_info(member: &str) -> (&'static str, &'static str, &'static str) {
+    match member.to_ascii_lowercase().as_str() {
+        "luffy" => ("Monkey D. Luffy", "Captain", "High impact features & bold solutions"),
+        "zoro" => ("Roronoa Zoro", "Combatant", "Deep refactoring, performance & debt elimination"),
+        "nami" => ("Nami", "Navigator", "Architecture, systems mapping & API design"),
+        "usopp" => ("Usopp", "Sniper", "Edge cases, tests, scripts & utilities"),
+        "sanji" => ("Sanji", "Cook", "UX aesthetics, formatting & review presentation"),
+        _ => ("Pirate", "Crew Member", "Autonomous coding agent"),
+    }
 }
 
 /// Trim and validate an OpenCode model id, returning the stored form.
@@ -381,6 +529,7 @@ mod tests {
                 model: Some("opencode/deepseek-v4.1-flash-free".into()),
                 models: Default::default(),
             },
+            crew: Default::default(),
         };
         config.save_to(&path).unwrap();
 
@@ -401,6 +550,7 @@ mod tests {
                 model: Some("gemini-3.8-flash-medium".into()),
                 models: Default::default(),
             },
+            crew: Default::default(),
         };
         config.save_to(&path).unwrap();
 
@@ -495,5 +645,32 @@ mod tests {
         let err = Config::load_from(&path).unwrap_err();
         assert!(matches!(err, Error::Config(_)));
         assert!(err.to_string().contains("provider/model"));
+    }
+
+    #[test]
+    fn crew_configuration_and_fallbacks() {
+        let mut config = Config::default();
+        config.agent.provider = AgentProvider::Opencode;
+        config.agent.model = Some("default/model".to_string());
+
+        // Default fallbacks
+        assert_eq!(config.resolve_crew_provider("luffy"), AgentProvider::Opencode);
+        assert_eq!(config.resolve_crew_model("luffy").as_deref(), Some("default/model"));
+        assert!(config.resolve_crew_persona("luffy").contains("Monkey D. Luffy"));
+        assert!(config.resolve_crew_persona("zoro").contains("Roronoa Zoro"));
+
+        // Crew specific overrides
+        config.crew.insert(
+            "zoro".to_string(),
+            CrewMemberConfig {
+                provider: Some(AgentProvider::Antigravity),
+                model: Some("custom-zoro-slug".to_string()),
+                prompt: Some("Custom Zoro prompt".to_string()),
+            },
+        );
+
+        assert_eq!(config.resolve_crew_provider("zoro"), AgentProvider::Antigravity);
+        assert_eq!(config.resolve_crew_model("zoro").as_deref(), Some("custom-zoro-slug"));
+        assert_eq!(config.resolve_crew_persona("zoro"), "Custom Zoro prompt");
     }
 }

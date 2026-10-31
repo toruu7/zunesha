@@ -23,16 +23,50 @@ export function drawCharacter(
   const cy = y * s;
   ctx.save();
 
-  // Resolve colors — use appearance overrides if provided
-  const skinColor  = appearance?.skinTone  ?? '#D4A870';
-  const outfitColor = appearance?.outfitColor ?? color;
+  const rawId = (agentId ?? '').toLowerCase();
+  const isLuffy = rawId.includes('luffy');
+  const isZoro = rawId.includes('zoro');
+  const isNami = rawId.includes('nami');
+  const isUsopp = rawId.includes('usopp');
+  const isSanji = rawId.includes('sanji');
+
+  // Resolve colors — use appearance overrides if provided, or Straw Hat character defaults
+  const skinColor  = appearance?.skinTone
+    ?? (isLuffy ? '#F2C290'
+      : isZoro ? '#E2AF7C'
+      : isNami ? '#F7D0B2'
+      : isUsopp ? '#C89260'
+      : isSanji ? '#F4C8A0'
+      : '#D4A870');
+
+  const outfitColor = appearance?.outfitColor
+    ?? (isLuffy ? '#D92020' // Red vest
+      : isZoro ? '#1E5830'  // Deep green coat
+      : isNami ? '#2A82BE'  // Blue & white
+      : isUsopp ? '#8B5A2B' // Brown dungarees
+      : isSanji ? '#181822' // Midnight suit
+      : color);
+
   const hairColor  = appearance?.hairColor
-    ?? (agentId === 'analista' ? '#2A4A2A'
+    ?? (isLuffy ? '#111111' // Black
+      : isZoro ? '#3CB371'  // Marimo green
+      : isNami ? '#E65100'  // Vibrant orange
+      : isUsopp ? '#1A1A1A' // Dark curly
+      : isSanji ? '#F4D03F' // Golden blonde
+      : agentId === 'analista' ? '#2A4A2A'
       : agentId === 'bibliotecario' ? '#3A2060'
       : agentId === 'rafael' ? '#A05010'
       : '#2A1A0A');
+
   const accessory  = appearance?.accessory
-    ?? (agentId === 'main' ? 'headset' : agentId === 'analista' ? 'glasses' : 'none');
+    ?? (isLuffy ? 'strawhat'
+      : isZoro ? 'earrings'
+      : isNami ? 'logpose'
+      : isUsopp ? 'goggles'
+      : isSanji ? 'cigarette'
+      : agentId === 'main' ? 'headset'
+      : agentId === 'analista' ? 'glasses'
+      : 'none');
 
   let bodyOffsetY = 0;
   let armOffset = 0;
@@ -77,14 +111,50 @@ export function drawCharacter(
   ctx.fillStyle = secondaryColor;
   ctx.fillRect(cx + 5 * s, by + 18 * s, 3 * s, 4 * s);
   ctx.fillRect(cx + 9 * s, by + 18 * s, 3 * s, 4 * s);
+  if (isLuffy) {
+    // Blue shorts cuff, then bare skin ankles and sandals
+    ctx.fillStyle = skinColor;
+    ctx.fillRect(cx + 5 * s, by + 20 * s, 3 * s, 2 * s);
+    ctx.fillRect(cx + 9 * s, by + 20 * s, 3 * s, 2 * s);
+    ctx.fillStyle = '#8B4513'; // Straw sandals
+    ctx.fillRect(cx + 5 * s, by + 21 * s, 3 * s, 1 * s);
+    ctx.fillRect(cx + 9 * s, by + 21 * s, 3 * s, 1 * s);
+  }
 
   // Torso
   ctx.fillStyle = outfitColor;
   ctx.fillRect(cx + 4 * s, by + 10 * s, 9 * s, 8 * s);
 
-  // Collar/shirt detail
-  ctx.fillStyle = lighten(outfitColor, 30);
-  ctx.fillRect(cx + 7 * s, by + 10 * s, 3 * s, 2 * s);
+  if (isLuffy) {
+    // Open red vest with visible chest
+    ctx.fillStyle = skinColor;
+    ctx.fillRect(cx + 8 * s, by + 10 * s, 1 * s, 6 * s);
+    // Yellow waist sash
+    ctx.fillStyle = '#F1C40F';
+    ctx.fillRect(cx + 4 * s, by + 16 * s, 9 * s, 2 * s);
+  } else if (isZoro) {
+    // Olive green haramaki bellyband
+    ctx.fillStyle = '#7CB342';
+    ctx.fillRect(cx + 4 * s, by + 15 * s, 9 * s, 3 * s);
+  } else if (isNami) {
+    // White stripe on blue top
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(cx + 4 * s, by + 12 * s, 9 * s, 2 * s);
+  } else if (isUsopp) {
+    // Tool strap across torso
+    ctx.fillStyle = '#E0E0E0';
+    ctx.fillRect(cx + 5 * s, by + 10 * s, 2 * s, 8 * s);
+  } else if (isSanji) {
+    // Blue dress shirt and black tie
+    ctx.fillStyle = '#90CAF9';
+    ctx.fillRect(cx + 7 * s, by + 10 * s, 3 * s, 3 * s);
+    ctx.fillStyle = '#0F172A';
+    ctx.fillRect(cx + 8 * s, by + 11 * s, 1 * s, 5 * s);
+  } else {
+    // Collar/shirt detail
+    ctx.fillStyle = lighten(outfitColor, 30);
+    ctx.fillRect(cx + 7 * s, by + 10 * s, 3 * s, 2 * s);
+  }
 
   // Arms
   ctx.fillStyle = outfitColor;
@@ -124,12 +194,66 @@ export function drawCharacter(
 
   // Hair
   ctx.fillStyle = hairColor;
-  ctx.fillRect(cx + 4 * s, by + 1 * s, 9 * s, 3 * s);
-  ctx.fillRect(cx + 4 * s, by + 2 * s, 1 * s, 5 * s);
-  ctx.fillRect(cx + 12 * s, by + 2 * s, 1 * s, 5 * s);
+  if (isNami) {
+    // Long flowing orange hair down shoulders
+    ctx.fillRect(cx + 4 * s, by + 1 * s, 9 * s, 3 * s);
+    ctx.fillRect(cx + 3 * s, by + 2 * s, 2 * s, 14 * s);
+    ctx.fillRect(cx + 12 * s, by + 2 * s, 2 * s, 14 * s);
+  } else if (isSanji) {
+    // Swooped blonde hair covering right eye
+    ctx.fillRect(cx + 4 * s, by + 1 * s, 9 * s, 4 * s);
+    ctx.fillRect(cx + 4 * s, by + 2 * s, 1 * s, 6 * s);
+    ctx.fillRect(cx + 9 * s, by + 2 * s, 4 * s, 7 * s); // Covers right eye
+  } else {
+    ctx.fillRect(cx + 4 * s, by + 1 * s, 9 * s, 3 * s);
+    ctx.fillRect(cx + 4 * s, by + 2 * s, 1 * s, 5 * s);
+    ctx.fillRect(cx + 12 * s, by + 2 * s, 1 * s, 5 * s);
+  }
 
   // Accessories
-  if (accessory === 'headset') {
+  if (accessory === 'strawhat') {
+    // Luffy's iconic Straw Hat
+    ctx.fillStyle = '#F1C40F'; // Straw yellow brim
+    ctx.fillRect(cx + 1 * s, by + 1 * s, 15 * s, 2 * s);
+    ctx.fillStyle = '#C0392B'; // Red ribbon band
+    ctx.fillRect(cx + 4 * s, by - 1 * s, 9 * s, 2 * s);
+    ctx.fillStyle = '#F1C40F'; // Top straw dome
+    ctx.fillRect(cx + 5 * s, by - 4 * s, 7 * s, 3 * s);
+  } else if (accessory === 'earrings') {
+    // Zoro's 3 gold earrings on left ear
+    ctx.fillStyle = '#FFD700';
+    ctx.fillRect(cx + 3 * s, by + 5 * s, 1 * s, 1 * s);
+    ctx.fillRect(cx + 3 * s, by + 7 * s, 1 * s, 1 * s);
+    ctx.fillRect(cx + 3 * s, by + 9 * s, 1 * s, 1 * s);
+  } else if (accessory === 'logpose') {
+    // Nami's Log Pose compass on wrist
+    ctx.fillStyle = '#FFD700';
+    ctx.fillRect(cx + 2 * s, by + 16 * s, 2 * s, 2 * s);
+    ctx.fillStyle = '#38BDF8';
+    ctx.fillRect(cx + 2 * s, by + 16 * s, 1 * s, 1 * s);
+  } else if (accessory === 'goggles') {
+    // Usopp's bandana & goggles
+    ctx.fillStyle = '#556B2F'; // Olive bandana
+    ctx.fillRect(cx + 4 * s, by + 1 * s, 9 * s, 2 * s);
+    ctx.fillStyle = '#D97706'; // Brass goggle frame
+    ctx.fillRect(cx + 5 * s, by + 1 * s, 3 * s, 2 * s);
+    ctx.fillRect(cx + 9 * s, by + 1 * s, 3 * s, 2 * s);
+    ctx.fillStyle = '#60A5FA'; // Blue lens
+    ctx.fillRect(cx + 6 * s, by + 1 * s, 1 * s, 1 * s);
+    ctx.fillRect(cx + 10 * s, by + 1 * s, 1 * s, 1 * s);
+    // Long nose
+    ctx.fillStyle = skinColor;
+    ctx.fillRect(cx + 12 * s, by + 6 * s, 3 * s, 2 * s);
+  } else if (accessory === 'cigarette') {
+    // Sanji's cigarette
+    ctx.fillStyle = '#FFFFFF'; // Cigarette stick
+    ctx.fillRect(cx + 10 * s, by + 8 * s, 3 * s, 1 * s);
+    ctx.fillStyle = '#EF4444'; // Glowing ember
+    ctx.fillRect(cx + 13 * s, by + 8 * s, 1 * s, 1 * s);
+    // Rising smoke
+    ctx.fillStyle = 'rgba(220, 220, 220, 0.7)';
+    ctx.fillRect(cx + 14 * s, by + 5 * s, 1 * s, 2 * s);
+  } else if (accessory === 'headset') {
     ctx.fillStyle = '#444';
     ctx.fillRect(cx + 3 * s, by + 2 * s, 11 * s, 1 * s);
     ctx.fillRect(cx + 3 * s, by + 2 * s, 1 * s, 3 * s);
@@ -162,14 +286,30 @@ export function drawCharacter(
   if (state === 'sleeping') {
     ctx.fillStyle = hairColor;
     ctx.fillRect(cx + 6 * s, by + 5 * s, 2 * s, 1 * s);
-    ctx.fillRect(cx + 10 * s, by + 5 * s, 2 * s, 1 * s);
+    if (!isSanji) ctx.fillRect(cx + 10 * s, by + 5 * s, 2 * s, 1 * s);
   } else {
     ctx.fillStyle = '#111';
     ctx.fillRect(cx + 6 * s, by + 5 * s, 2 * s, 2 * s);
-    ctx.fillRect(cx + 10 * s, by + 5 * s, 2 * s, 2 * s);
+    if (!isSanji) ctx.fillRect(cx + 10 * s, by + 5 * s, 2 * s, 2 * s);
     ctx.fillStyle = '#FFF';
     ctx.fillRect(cx + 7 * s, by + 5 * s, 1 * s, 1 * s);
-    ctx.fillRect(cx + 11 * s, by + 5 * s, 1 * s, 1 * s);
+    if (!isSanji) ctx.fillRect(cx + 11 * s, by + 5 * s, 1 * s, 1 * s);
+  }
+
+  // Scars & Details
+  if (isLuffy) {
+    // Under eye stitch scar
+    ctx.fillStyle = '#B91C1C';
+    ctx.fillRect(cx + 6 * s, by + 7 * s, 2 * s, 1 * s);
+    ctx.fillRect(cx + 6 * s, by + 8 * s, 1 * s, 1 * s);
+  } else if (isZoro) {
+    // Katana scar slicing through left eye
+    ctx.fillStyle = '#7F1D1D';
+    ctx.fillRect(cx + 7 * s, by + 4 * s, 1 * s, 4 * s);
+  } else if (isSanji) {
+    // Curly eyebrow tip on visible left eye
+    ctx.fillStyle = '#D97706';
+    ctx.fillRect(cx + 5 * s, by + 4 * s, 1 * s, 1 * s);
   }
 
   // Mouth
@@ -328,6 +468,11 @@ export function drawDesk(
 
   // Draw agent-specific desk props
   switch (agentId) {
+    case 'luffy': drawLuffyDesk(ctx, dx, dy); break;
+    case 'zoro': drawZoroDesk(ctx, dx, dy); break;
+    case 'nami': drawNamiDesk(ctx, dx, dy); break;
+    case 'usopp': drawUsoppDesk(ctx, dx, dy); break;
+    case 'sanji': drawSanjiDesk(ctx, dx, dy); break;
     case 'main': drawJarvisDesk(ctx, dx, dy); break;
     case 'analista': drawAnalistaDesk(ctx, dx, dy); break;
     case 'rafael': drawFelipeDesk(ctx, dx, dy); break;
@@ -363,6 +508,227 @@ function drawChair(ctx: CanvasRenderingContext2D, x: number, y: number, accentCo
   ctx.fillStyle = '#444';
   ctx.fillRect(x + 1 * s, y + 5 * s, 2 * s, 1 * s);
   ctx.fillRect(x + 6 * s, y + 5 * s, 2 * s, 1 * s);
+}
+
+function drawLuffyDesk(ctx: CanvasRenderingContext2D, dx: number, dy: number): void {
+  // Center: Pirate terminal monitor
+  ctx.fillStyle = '#111';
+  ctx.fillRect(dx + 2 * s, dy + 1 * s, 11 * s, 7 * s);
+  ctx.fillStyle = '#1A0808';
+  ctx.fillRect(dx + 3 * s, dy + 2 * s, 9 * s, 5 * s);
+
+  // Skull icon on screen (Jolly Roger)
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(dx + 6 * s, dy + 3 * s, 3 * s, 2 * s);
+  ctx.fillRect(dx + 7 * s, dy + 5 * s, 1 * s, 1 * s);
+  ctx.fillStyle = '#1A0808';
+  ctx.fillRect(dx + 6 * s, dy + 4 * s, 1 * s, 1 * s);
+  ctx.fillRect(dx + 8 * s, dy + 4 * s, 1 * s, 1 * s);
+  ctx.fillStyle = '#FF4444';
+  ctx.fillRect(dx + 5 * s, dy + 3 * s, 5 * s, 1 * s);
+
+  // Monitor stand
+  ctx.fillStyle = '#333';
+  ctx.fillRect(dx + 7 * s, dy + 8 * s, 2 * s, 1 * s);
+
+  // Left: Big juicy meat on bone
+  ctx.fillStyle = '#F5F5DC';
+  ctx.fillRect(dx - 4 * s, dy + 4 * s, 2 * s, 2 * s);
+  ctx.fillRect(dx + 0 * s, dy + 4 * s, 2 * s, 2 * s);
+  ctx.fillStyle = '#8B2500';
+  ctx.fillRect(dx - 3 * s, dy + 3 * s, 3 * s, 4 * s);
+  ctx.fillStyle = '#CD5C5C';
+  ctx.fillRect(dx - 2 * s, dy + 4 * s, 2 * s, 2 * s);
+
+  // Right: Straw Hat mug with steaming drink
+  ctx.fillStyle = '#F4D03F';
+  ctx.fillRect(dx + 14 * s, dy + 6 * s, 3 * s, 4 * s);
+  ctx.fillStyle = '#E74C3C';
+  ctx.fillRect(dx + 14 * s, dy + 7 * s, 3 * s, 1 * s);
+  ctx.fillStyle = '#F4D03F';
+  ctx.fillRect(dx + 17 * s, dy + 7 * s, 1 * s, 2 * s);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.globalAlpha = 0.5;
+  ctx.fillRect(dx + 15 * s, dy + 4 * s, 1 * s, 1 * s);
+  ctx.fillRect(dx + 16 * s, dy + 3 * s, 1 * s, 1 * s);
+  ctx.globalAlpha = 1.0;
+
+  // Keyboard
+  ctx.fillStyle = '#991B1B';
+  ctx.fillRect(dx + 3 * s, dy + 9 * s, 9 * s, 2 * s);
+}
+
+function drawZoroDesk(ctx: CanvasRenderingContext2D, dx: number, dy: number): void {
+  // Center: Slashing terminal monitor
+  ctx.fillStyle = '#111';
+  ctx.fillRect(dx + 2 * s, dy + 1 * s, 11 * s, 7 * s);
+  ctx.fillStyle = '#05180A';
+  ctx.fillRect(dx + 3 * s, dy + 2 * s, 9 * s, 5 * s);
+
+  // Slashing green energy aura lines
+  ctx.fillStyle = '#10B981';
+  ctx.fillRect(dx + 4 * s, dy + 3 * s, 4 * s, 1 * s);
+  ctx.fillRect(dx + 7 * s, dy + 4 * s, 4 * s, 1 * s);
+  ctx.fillRect(dx + 5 * s, dy + 5 * s, 5 * s, 1 * s);
+
+  // Monitor stand
+  ctx.fillStyle = '#333';
+  ctx.fillRect(dx + 7 * s, dy + 8 * s, 2 * s, 1 * s);
+
+  // Left: 3 Katana rack on desk (Wado Ichimonji, Sandai Kitetsu, Enma)
+  ctx.fillStyle = '#FAFAFA';
+  ctx.fillRect(dx - 4 * s, dy + 3 * s, 4 * s, 1 * s);
+  ctx.fillStyle = '#CBD5E1';
+  ctx.fillRect(dx - 1 * s, dy + 3 * s, 2 * s, 1 * s);
+  ctx.fillStyle = '#DC2626';
+  ctx.fillRect(dx - 4 * s, dy + 5 * s, 4 * s, 1 * s);
+  ctx.fillStyle = '#CBD5E1';
+  ctx.fillRect(dx - 1 * s, dy + 5 * s, 2 * s, 1 * s);
+  ctx.fillStyle = '#7C3AED';
+  ctx.fillRect(dx - 4 * s, dy + 7 * s, 4 * s, 1 * s);
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(dx - 1 * s, dy + 7 * s, 1 * s, 1 * s);
+
+  // Right: Sake gourd & small cup
+  ctx.fillStyle = '#854D0E';
+  ctx.fillRect(dx + 15 * s, dy + 6 * s, 2 * s, 3 * s);
+  ctx.fillRect(dx + 15 * s, dy + 4 * s, 1 * s, 2 * s);
+  ctx.fillStyle = '#DC2626';
+  ctx.fillRect(dx + 14 * s, dy + 5 * s, 3 * s, 1 * s);
+  ctx.fillStyle = '#FEF3C7';
+  ctx.fillRect(dx + 13 * s, dy + 8 * s, 2 * s, 1 * s);
+
+  // Keyboard
+  ctx.fillStyle = '#064E3B';
+  ctx.fillRect(dx + 3 * s, dy + 9 * s, 9 * s, 2 * s);
+}
+
+function drawNamiDesk(ctx: CanvasRenderingContext2D, dx: number, dy: number): void {
+  // Center: Weather / Navigation radar monitor
+  ctx.fillStyle = '#111';
+  ctx.fillRect(dx + 2 * s, dy + 1 * s, 11 * s, 7 * s);
+  ctx.fillStyle = '#041B2D';
+  ctx.fillRect(dx + 3 * s, dy + 2 * s, 9 * s, 5 * s);
+
+  // Radar circular rings / weather storm patterns
+  ctx.fillStyle = '#06B6D4';
+  ctx.fillRect(dx + 6 * s, dy + 3 * s, 3 * s, 1 * s);
+  ctx.fillRect(dx + 4 * s, dy + 4 * s, 7 * s, 1 * s);
+  ctx.fillRect(dx + 7 * s, dy + 5 * s, 4 * s, 1 * s);
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(dx + 7 * s, dy + 4 * s, 1 * s, 1 * s);
+
+  // Monitor stand
+  ctx.fillStyle = '#333';
+  ctx.fillRect(dx + 7 * s, dy + 8 * s, 2 * s, 1 * s);
+
+  // Left: Rolled sea charts & maps
+  ctx.fillStyle = '#FEF3C7';
+  ctx.fillRect(dx - 4 * s, dy + 4 * s, 5 * s, 4 * s);
+  ctx.fillStyle = '#D97706';
+  ctx.fillRect(dx - 3 * s, dy + 5 * s, 3 * s, 1 * s);
+  ctx.fillRect(dx - 2 * s, dy + 6 * s, 2 * s, 1 * s);
+  ctx.fillStyle = '#B45309';
+  ctx.fillRect(dx - 4 * s, dy + 7 * s, 5 * s, 1 * s);
+
+  // Right: Mikan (tangerine) & Beli gold coin pouch
+  ctx.fillStyle = '#EA580C';
+  ctx.fillRect(dx + 14 * s, dy + 5 * s, 3 * s, 3 * s);
+  ctx.fillStyle = '#15803D';
+  ctx.fillRect(dx + 15 * s, dy + 4 * s, 1 * s, 1 * s);
+  ctx.fillStyle = '#FBBF24';
+  ctx.fillRect(dx + 13 * s, dy + 8 * s, 3 * s, 2 * s);
+  ctx.fillStyle = '#D97706';
+  ctx.fillRect(dx + 14 * s, dy + 7 * s, 1 * s, 1 * s);
+
+  // Keyboard
+  ctx.fillStyle = '#0891B2';
+  ctx.fillRect(dx + 3 * s, dy + 9 * s, 9 * s, 2 * s);
+}
+
+function drawUsoppDesk(ctx: CanvasRenderingContext2D, dx: number, dy: number): void {
+  // Center: Blueprint / Invention gadget terminal
+  ctx.fillStyle = '#111';
+  ctx.fillRect(dx + 2 * s, dy + 1 * s, 11 * s, 7 * s);
+  ctx.fillStyle = '#0F2618';
+  ctx.fillRect(dx + 3 * s, dy + 2 * s, 9 * s, 5 * s);
+
+  // Blueprint schematic wireframes
+  ctx.fillStyle = '#34D399';
+  ctx.fillRect(dx + 4 * s, dy + 3 * s, 4 * s, 1 * s);
+  ctx.fillRect(dx + 4 * s, dy + 4 * s, 1 * s, 2 * s);
+  ctx.fillRect(dx + 7 * s, dy + 4 * s, 4 * s, 1 * s);
+  ctx.fillStyle = '#FBBF24';
+  ctx.fillRect(dx + 8 * s, dy + 5 * s, 2 * s, 1 * s);
+
+  // Monitor stand
+  ctx.fillStyle = '#333';
+  ctx.fillRect(dx + 7 * s, dy + 8 * s, 2 * s, 1 * s);
+
+  // Left: Kuro Kabuto slingshot & Pop Green seeds
+  ctx.fillStyle = '#1E3A1E';
+  ctx.fillRect(dx - 3 * s, dy + 3 * s, 1 * s, 5 * s);
+  ctx.fillStyle = '#22C55E';
+  ctx.fillRect(dx - 4 * s, dy + 2 * s, 3 * s, 1 * s);
+  ctx.fillStyle = '#10B981';
+  ctx.fillRect(dx - 1 * s, dy + 7 * s, 2 * s, 2 * s);
+
+  // Right: Inventor toolbox & wrench
+  ctx.fillStyle = '#B91C1C';
+  ctx.fillRect(dx + 14 * s, dy + 5 * s, 4 * s, 4 * s);
+  ctx.fillStyle = '#94A3B8';
+  ctx.fillRect(dx + 15 * s, dy + 4 * s, 2 * s, 1 * s);
+  ctx.fillStyle = '#E2E8F0';
+  ctx.fillRect(dx + 14 * s, dy + 7 * s, 2 * s, 1 * s);
+
+  // Keyboard
+  ctx.fillStyle = '#D97706';
+  ctx.fillRect(dx + 3 * s, dy + 9 * s, 9 * s, 2 * s);
+}
+
+function drawSanjiDesk(ctx: CanvasRenderingContext2D, dx: number, dy: number): void {
+  // Center: Baratie / French cuisine stylish terminal
+  ctx.fillStyle = '#111';
+  ctx.fillRect(dx + 2 * s, dy + 1 * s, 11 * s, 7 * s);
+  ctx.fillStyle = '#0F172A';
+  ctx.fillRect(dx + 3 * s, dy + 2 * s, 9 * s, 5 * s);
+
+  // Golden cursive receipt / recipe stream
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(dx + 4 * s, dy + 3 * s, 6 * s, 1 * s);
+  ctx.fillRect(dx + 4 * s, dy + 4 * s, 4 * s, 1 * s);
+  ctx.fillRect(dx + 4 * s, dy + 5 * s, 5 * s, 1 * s);
+  ctx.fillStyle = '#38BDF8';
+  ctx.fillRect(dx + 8 * s, dy + 5 * s, 2 * s, 1 * s);
+
+  // Monitor stand
+  ctx.fillStyle = '#333';
+  ctx.fillRect(dx + 7 * s, dy + 8 * s, 2 * s, 1 * s);
+
+  // Left: Polished chef pan & santoku knife
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(dx - 4 * s, dy + 5 * s, 4 * s, 3 * s);
+  ctx.fillStyle = '#64748B';
+  ctx.fillRect(dx - 5 * s, dy + 6 * s, 2 * s, 1 * s);
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(dx - 3 * s, dy + 6 * s, 2 * s, 1 * s);
+
+  // Right: Fine porcelain espresso cup on saucer + rising steam
+  ctx.fillStyle = '#E2E8F0';
+  ctx.fillRect(dx + 13 * s, dy + 8 * s, 4 * s, 1 * s);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(dx + 14 * s, dy + 6 * s, 2 * s, 2 * s);
+  ctx.fillStyle = '#1E293B';
+  ctx.fillRect(dx + 14 * s, dy + 6 * s, 2 * s, 1 * s);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.globalAlpha = 0.5;
+  ctx.fillRect(dx + 15 * s, dy + 4 * s, 1 * s, 1 * s);
+  ctx.fillRect(dx + 14 * s, dy + 3 * s, 1 * s, 1 * s);
+  ctx.globalAlpha = 1.0;
+
+  // Keyboard
+  ctx.fillStyle = '#1E3A8A';
+  ctx.fillRect(dx + 3 * s, dy + 9 * s, 9 * s, 2 * s);
 }
 
 function drawJarvisDesk(ctx: CanvasRenderingContext2D, dx: number, dy: number): void {

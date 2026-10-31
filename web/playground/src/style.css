@@ -426,6 +426,31 @@ code, pre, .mono, kbd {
   color: var(--faint);
   font-size: 10px;
 }
+.task-crew {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #F8FAFC;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.crew-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.1);
+  color: #FCD34D;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
 .task-id { font-family: "JetBrains Mono", ui-monospace, monospace; }
 
 .task-state {

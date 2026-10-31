@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     worker_logs  TEXT NOT NULL DEFAULT '',
     agent_output TEXT NOT NULL DEFAULT '',
     diff         TEXT NOT NULL DEFAULT '',
+    crew_member  TEXT,
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -80,7 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_run_events_task ON run_events(task_id, id);
 "#;
 
 /// Columns selected when hydrating a [`Task`], in struct-field order.
-const TASK_COLUMNS: &str = "id, title, description, status, retry_count, worker_logs, agent_output, diff, created_at, updated_at";
+const TASK_COLUMNS: &str = "id, title, description, status, retry_count, worker_logs, agent_output, diff, crew_member, created_at, updated_at";
 
 /// `tasks` table shape as of the Markdown-output release.
 ///
@@ -194,53 +195,56 @@ impl Database {
             |row| row.get(0),
         )?;
         let current = current.unwrap_or_default();
-        // A database created by the current SCHEMA already has all markers.
-        if current.contains("RESOLVING_CONFLICTS")
-            && current.contains("retry_count")
-            && current.contains("agent_output")
+        // If an older database lacks v3 markers, rebuild it first.
+        if !current.contains("RESOLVING_CONFLICTS")
+            || !current.contains("retry_count")
+            || !current.contains("agent_output")
         {
-            return Ok(());
+            // Foreign keys must be off while swapping the table (the pragma is a
+            // no-op inside a transaction), so they are toggled around it.
+            let copy_retry = current.contains("retry_count");
+            let copy_output = current.contains("agent_output");
+            let values = match (copy_retry, copy_output) {
+                (true, true) => {
+                    "id, title, description, status, retry_count, worker_logs, agent_output, diff, created_at, updated_at"
+                }
+                (true, false) => {
+                    "id, title, description, status, retry_count, worker_logs, '', diff, created_at, updated_at"
+                }
+                (false, true) => {
+                    "id, title, description, status, 0, worker_logs, agent_output, diff, created_at, updated_at"
+                }
+                (false, false) => {
+                    "id, title, description, status, 0, worker_logs, '', diff, created_at, updated_at"
+                }
+            };
+            conn.pragma_update(None, "foreign_keys", "OFF")?;
+            let rebuild = conn.execute_batch(&format!(
+                "BEGIN;
+                 {TASKS_TABLE_V3};
+                 INSERT INTO tasks_v3 (id, title, description, status, retry_count, worker_logs, agent_output, diff, created_at, updated_at)
+                     SELECT {values} FROM tasks;
+                 DROP TABLE tasks;
+                 ALTER TABLE tasks_v3 RENAME TO tasks;
+                 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+                 COMMIT;"
+            ));
+            if let Err(e) = rebuild {
+                let _ = conn.execute_batch("ROLLBACK;");
+                let _ = conn.pragma_update(None, "foreign_keys", "ON");
+                return Err(e.into());
+            }
+            conn.pragma_update(None, "foreign_keys", "ON")?;
         }
 
-        // Foreign keys must be off while swapping the table (the pragma is a
-        // no-op inside a transaction), so they are toggled around it.
-        // The source may or may not carry these columns (each was added by a
-        // later release), so the value list is chosen from the actual source
-        // columns — a database that has one must keep its data, one that
-        // doesn't gets the default.
-        let copy_retry = current.contains("retry_count");
-        let copy_output = current.contains("agent_output");
-        let values = match (copy_retry, copy_output) {
-            (true, true) => {
-                "id, title, description, status, retry_count, worker_logs, agent_output, diff, created_at, updated_at"
-            }
-            (true, false) => {
-                "id, title, description, status, retry_count, worker_logs, '', diff, created_at, updated_at"
-            }
-            (false, true) => {
-                "id, title, description, status, 0, worker_logs, agent_output, diff, created_at, updated_at"
-            }
-            (false, false) => {
-                "id, title, description, status, 0, worker_logs, '', diff, created_at, updated_at"
-            }
-        };
-        conn.pragma_update(None, "foreign_keys", "OFF")?;
-        let rebuild = conn.execute_batch(&format!(
-            "BEGIN;
-             {TASKS_TABLE_V3};
-             INSERT INTO tasks_v3 (id, title, description, status, retry_count, worker_logs, agent_output, diff, created_at, updated_at)
-                 SELECT {values} FROM tasks;
-             DROP TABLE tasks;
-             ALTER TABLE tasks_v3 RENAME TO tasks;
-             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-             COMMIT;"
-        ));
-        if let Err(e) = rebuild {
-            let _ = conn.execute_batch("ROLLBACK;");
-            let _ = conn.pragma_update(None, "foreign_keys", "ON");
-            return Err(e.into());
+        // Add crew_member column if absent.
+        let has_crew: bool = conn
+            .prepare("SELECT crew_member FROM tasks LIMIT 0")
+            .is_ok();
+        if !has_crew {
+            conn.execute("ALTER TABLE tasks ADD COLUMN crew_member TEXT", [])?;
         }
-        conn.pragma_update(None, "foreign_keys", "ON")?;
+
         Ok(())
     }
 
@@ -249,8 +253,8 @@ impl Database {
     /// Insert a new task. Fails if the id already exists.
     pub fn insert_task(&self, task: &Task) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO tasks (id, title, description, status, retry_count, worker_logs, agent_output, diff)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO tasks (id, title, description, status, retry_count, worker_logs, agent_output, diff, crew_member)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 task.id,
                 task.title,
@@ -260,8 +264,21 @@ impl Database {
                 task.worker_logs,
                 task.agent_output,
                 task.diff,
+                task.crew_member,
             ],
         )?;
+        Ok(())
+    }
+
+    /// Update a task's assigned crew member, bumping `updated_at`.
+    pub fn set_crew_member(&self, id: &str, crew_member: Option<&str>) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE tasks SET crew_member = ?2, updated_at = datetime('now') WHERE id = ?1",
+            params![id, crew_member],
+        )?;
+        if changed == 0 {
+            return Err(Error::TaskNotFound(id.to_string()));
+        }
         Ok(())
     }
 
@@ -809,8 +826,9 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         worker_logs: row.get(5)?,
         agent_output: row.get(6)?,
         diff: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        crew_member: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
     })
 }
 
@@ -834,6 +852,26 @@ mod tests {
             count, 5,
             "task, DAG, workspace, and run-journal tables exist"
         );
+    }
+
+    #[test]
+    fn task_persists_and_updates_crew_member() {
+        let db = Database::open_in_memory().unwrap();
+        let task = Task::new("t1", "Build engine", "").with_crew("luffy");
+        db.insert_task(&task).unwrap();
+
+        let loaded = db.require_task("t1").unwrap();
+        assert_eq!(loaded.crew_member.as_deref(), Some("luffy"));
+        assert_eq!(loaded.crew_emoji(), "👒");
+
+        db.set_crew_member("t1", Some("zoro")).unwrap();
+        let updated = db.require_task("t1").unwrap();
+        assert_eq!(updated.crew_member.as_deref(), Some("zoro"));
+        assert_eq!(updated.crew_emoji(), "⚔️");
+
+        db.set_crew_member("t1", None).unwrap();
+        let cleared = db.require_task("t1").unwrap();
+        assert_eq!(cleared.crew_member, None);
     }
 
     #[test]

@@ -14,6 +14,7 @@ export interface PlaygroundAgent {
   title: string;
   status: string;
   state: string;
+  crew_member?: string;
   updated_at: string;
   retry_count: number;
 }
@@ -77,6 +78,7 @@ export class AgentTracker {
       this.getAll().map((agent) => ({
         id: agent.id,
         name: agent.title || agent.name,
+        crew_member: agent.crew_member,
       })),
     );
   }
@@ -87,7 +89,8 @@ export class AgentTracker {
 
   private toState(agent: PlaygroundAgent, previous?: AgentState): AgentState {
     const state = visualState(agent.state);
-    const { color, secondary } = agentColor(agent.id);
+    const lookupKey = agent.crew_member ?? agent.id;
+    const { color, secondary } = agentColor(lookupKey);
     const changed = previous && previous.visualState !== state;
     let bubble = previous?.bubble ?? null;
     if (changed) {
@@ -98,8 +101,9 @@ export class AgentTracker {
       name: agent.name,
       title: agent.title,
       status: agent.status,
+      crew_member: agent.crew_member,
       retryCount: agent.retry_count,
-      emoji: agentEmoji(agent.id),
+      emoji: agentEmoji(lookupKey),
       color,
       secondaryColor: secondary,
       visualState: state,
