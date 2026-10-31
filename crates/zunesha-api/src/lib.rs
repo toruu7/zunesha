@@ -21,6 +21,7 @@
 //! | GET    | `/api/status`             | Project identity, per-status counts + concurrency cap. |
 //! | GET    | `/api/tasks`              | Project identity, every task, the dependency DAG, and per-status counts. |
 //! | GET    | `/api/tasks/:id`          | One task (logs + diff included).         |
+//! | DELETE | `/api/tasks/:id`          | Remove a task, its workspace, and unblock DAG. |
 //! | POST   | `/api/plan`               | Decompose a prompt into a task DAG (built-in or `ZOU_PLANNER_CMD`). |
 //! | POST   | `/api/run`                | Start agents on all ready (`TODO`) tasks.|
 //! | POST   | `/api/tasks/:id/run`      | Start the agent on one ready task.       |
@@ -137,7 +138,10 @@ pub fn router(state: AppState, dashboard_dir: Option<std::path::PathBuf>) -> Rou
         .route("/health", get(handlers::health))
         .route("/api/status", get(handlers::status))
         .route("/api/tasks", get(handlers::list_tasks))
-        .route("/api/tasks/{id}", get(handlers::get_task))
+        .route(
+            "/api/tasks/{id}",
+            get(handlers::get_task).delete(handlers::delete_task),
+        )
         // Attachments are base64 in the JSON body; the default 2 MiB limit
         // would reject a normal screenshot before the handler can validate
         // it. 24 MiB decoded is ~32 MiB encoded, so leave room for JSON and

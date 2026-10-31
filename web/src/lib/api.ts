@@ -12,6 +12,7 @@ import type {
   ApiEvent,
   ApproveResponse,
   CancelResponse,
+  DeleteResponse,
   RecoverResponse,
   StatusResponse,
   Task,
@@ -73,6 +74,12 @@ function post<T>(path: string, body?: unknown): Promise<T> {
   });
 }
 
+function del<T>(path: string): Promise<T> {
+  return request<T>(path, {
+    method: "DELETE",
+  });
+}
+
 export const api = {
   tasks: () => request<TasksResponse>("/api/tasks"),
   status: () => request<StatusResponse>("/api/status"),
@@ -84,6 +91,8 @@ export const api = {
     post<{ started: number }>(`/api/tasks/${encodeURIComponent(id)}/run`),
   cancel: (id: string) =>
     post<CancelResponse>(`/api/tasks/${encodeURIComponent(id)}/cancel`),
+  deleteTask: (id: string) =>
+    del<DeleteResponse>(`/api/tasks/${encodeURIComponent(id)}`),
   approve: (id: string) =>
     post<ApproveResponse>(`/api/tasks/${encodeURIComponent(id)}/approve`),
   reject: (

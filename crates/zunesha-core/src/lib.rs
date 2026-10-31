@@ -56,7 +56,7 @@ pub use attachments::{
 };
 pub use config::{normalize_agent_model, normalize_model, AgentConfig, AgentProvider, Config};
 pub use control::{RunControl, RunRegistry};
-pub use dag::{blocked_tasks, promote_ready, recover_stuck};
+pub use dag::{blocked_tasks, promote_ready, recover_stuck, remove_task, render_roadmap};
 pub use db::{Database, RunEvent, RunRecord, WorkspaceRecord};
 pub use error::{Error, Result};
 pub use eval::{EvalCommand, EvalOutcome};

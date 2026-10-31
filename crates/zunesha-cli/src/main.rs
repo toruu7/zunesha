@@ -120,6 +120,18 @@ enum Commands {
         #[arg(long, default_value = "http://127.0.0.1:57804")]
         url: String,
     },
+    /// Remove a task completely (deletes row, workspace, and unblocks DAG).
+    #[command(alias = "delete", alias = "rm")]
+    Remove {
+        /// Id of the task (see `zou status`).
+        task_id: String,
+        /// Daemon base URL.
+        #[arg(long, default_value = "http://127.0.0.1:57804")]
+        url: String,
+        /// Remove without asking for confirmation.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     /// Print a task's structured run/audit timeline.
     Events {
         /// Id of the task.
@@ -255,7 +267,8 @@ fn main() -> ExitCode {
         Commands::Run { jobs, follow } => cmd_run(&target, jobs, follow),
         Commands::Approve { task_id } => cmd_approve(&target, &task_id),
         Commands::Recover { task_id } => cmd_recover(&target, task_id.as_deref()),
-        Commands::Cancel { task_id, url } => cmd_cancel(&task_id, &url),
+        Commands::Cancel { task_id, url } => cmd_cancel(&target, &task_id, &url),
+        Commands::Remove { task_id, url, yes } => cmd_remove(&target, &task_id, &url, yes),
         Commands::Events { task_id, url } => cmd_events(&task_id, &url),
         Commands::Status => cmd_status(&target),
         Commands::Tui {
@@ -1343,6 +1356,7 @@ fn daemon_request(
         let mut request = match method {
             "POST" => client.post(url),
             "GET" => client.get(url),
+            "DELETE" => client.delete(url),
             other => return Err(Error::Config(format!("unsupported daemon method: {other}"))),
         };
         if let Some(body) = body {
@@ -1361,25 +1375,98 @@ fn daemon_request(
     })
 }
 
-fn cmd_cancel(task_id: &str, base_url: &str) -> zunesha_core::Result<()> {
+fn cmd_cancel(target: &Path, task_id: &str, base_url: &str) -> zunesha_core::Result<()> {
     let url = format!(
         "{}/api/tasks/{task_id}/cancel",
         base_url.trim_end_matches('/')
     );
-    let (status, body) = daemon_request("POST", &url, None)?;
-    if status != 200 {
-        let message = body
-            .get("error")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("cancel failed");
-        return Err(Error::Config(format!("{message} (HTTP {status})")));
+    match daemon_request("POST", &url, None) {
+        Ok((200, _)) => {
+            println!("✔ cancellation requested for task {task_id}");
+            println!(
+                "  next       : the worker kills the process tree and releases the task (TODO, or \
+                 needs-human for a conflict-resolution run)"
+            );
+            Ok(())
+        }
+        Ok((status, body)) => {
+            let message = body
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("cancel failed");
+            Err(Error::Config(format!("{message} (HTTP {status})")))
+        }
+        Err(e) => {
+            if let Ok(paths) = discover(target) {
+                if let Ok(db) = Database::open(&paths.state_db()) {
+                    if let Ok(Some(task)) = db.get_task(task_id) {
+                        if matches!(
+                            task.status,
+                            TaskStatus::InProgress | TaskStatus::Evaluating | TaskStatus::ResolvingConflicts
+                        ) {
+                            zunesha_core::dag::recover_stuck(&db, Some(task_id))?;
+                            println!("✔ released stuck task {task_id} -> TODO (daemon was offline)");
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            Err(e)
+        }
     }
-    println!("✔ cancellation requested for task {task_id}");
-    println!(
-        "  next       : the worker kills the process tree and releases the task (TODO, or \
-         needs-human for a conflict-resolution run)"
+}
+
+fn cmd_remove(
+    target: &Path,
+    task_id: &str,
+    base_url: &str,
+    yes: bool,
+) -> zunesha_core::Result<()> {
+    if !yes {
+        print!("Remove task {task_id} and its workspace? [y/N]: ");
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input).is_ok() {
+            let trimmed = input.trim().to_ascii_lowercase();
+            if trimmed != "y" && trimmed != "yes" {
+                println!("aborted");
+                return Ok(());
+            }
+        }
+    }
+
+    let url = format!(
+        "{}/api/tasks/{task_id}",
+        base_url.trim_end_matches('/')
     );
-    Ok(())
+    match daemon_request("DELETE", &url, None) {
+        Ok((200, _)) => {
+            println!("✔ removed task {task_id}");
+            Ok(())
+        }
+        Ok((status, body)) => {
+            let message = body
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("remove failed");
+            Err(Error::Config(format!("{message} (HTTP {status})")))
+        }
+        Err(_) => {
+            let paths = discover(target)?;
+            let db = Database::open(&paths.state_db())?;
+            if zunesha_core::remove_task(&paths, &db, task_id)? {
+                println!("✔ removed task {task_id}");
+                let promoted = zunesha_core::promote_ready(&db)?;
+                if !promoted.is_empty() {
+                    println!("— promoted {} newly-ready task(s)", promoted.len());
+                }
+                Ok(())
+            } else {
+                Err(Error::TaskNotFound(task_id.to_string()))
+            }
+        }
+    }
 }
 
 fn cmd_events(task_id: &str, base_url: &str) -> zunesha_core::Result<()> {
@@ -1471,5 +1558,21 @@ mod tests {
                 "gemini-3.8-flash-medium".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn cmd_remove_deletes_task_locally() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = zunesha_core::ZuneshaPaths::new(tmp.path());
+        std::fs::create_dir_all(paths.dir()).unwrap();
+        let db = zunesha_core::Database::open(&paths.state_db()).unwrap();
+        db.insert_task(&zunesha_core::Task::new("t1", "Title", "")).unwrap();
+        drop(db);
+
+        // Run cmd_remove with offline base_url (port 0) and yes = true
+        super::cmd_remove(tmp.path(), "t1", "http://127.0.0.1:0", true).unwrap();
+
+        let db = zunesha_core::Database::open(&paths.state_db()).unwrap();
+        assert!(db.get_task("t1").unwrap().is_none());
     }
 }

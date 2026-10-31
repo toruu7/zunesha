@@ -15,9 +15,9 @@ use serde_json::json;
 
 use base64::Engine as _;
 use zunesha_core::{
-    append_attachments, approve_task, plan_with_attachments, recover_stuck, save_attachments,
-    AttachmentUpload, Database, Error, MergeOutcome, Planner, RunEvent, RunRecord, Task,
-    TaskStatus,
+    append_attachments, approve_task, plan_with_attachments, recover_stuck, remove_task,
+    save_attachments, AttachmentUpload, Database, Error, MergeOutcome, Planner, RunEvent,
+    RunRecord, Task, TaskStatus,
 };
 
 use crate::events::{
@@ -211,6 +211,12 @@ pub struct CancelResponse {
     pub cancelled: bool,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct DeleteTaskResponse {
+    pub task_id: String,
+    pub deleted: bool,
+}
+
 /// A run event with its JSON payload decoded for the client.
 #[derive(Serialize)]
 pub struct ApiRunEvent {
@@ -362,24 +368,76 @@ pub async fn run_one(
 /// Cancellation is cooperative at the worker boundary: the worker selects on a
 /// one-shot signal, kills the whole process tree, writes a `## Run cancelled`
 /// note to the task description, and returns it to `TODO` (or
-/// `FAILED_NEEDS_HUMAN` for a conflict-resolution run). A task that is not
-/// running in *this* daemon yields `409`; use `zou recover` for a dead claim.
+/// `FAILED_NEEDS_HUMAN` for a conflict-resolution run). If the worker is not
+/// actively owned by this daemon pool but is claimed as stuck in the DB, it is
+/// recovered back to `TODO`. If not running, yields `409`.
 pub async fn cancel(
     State(state): State<AppState>,
     Path(task_id): Path<String>,
 ) -> ApiResult<Json<CancelResponse>> {
     let db = state.open_db()?;
-    db.require_task(&task_id)?;
+    let task = db.require_task(&task_id)?;
     if !state.pool.cancel(&task_id) {
+        if matches!(
+            task.status,
+            TaskStatus::InProgress | TaskStatus::Evaluating | TaskStatus::ResolvingConflicts
+        ) {
+            recover_stuck(&db, Some(&task_id))?;
+            state.emit_snapshot();
+            return Ok(Json(CancelResponse {
+                task_id,
+                cancelled: true,
+            }));
+        }
         return Err(ApiError::new(
             StatusCode::CONFLICT,
-            format!("task {task_id} is not running in this daemon"),
+            format!(
+                "task {task_id} is not running in this daemon (status: {}); use DELETE to remove it",
+                task.status
+            ),
         ));
     }
     state.emit_snapshot();
     Ok(Json(CancelResponse {
         task_id,
         cancelled: true,
+    }))
+}
+
+/// `DELETE /api/tasks/:id` – remove a task completely (workspace, db, DAG).
+pub async fn delete_task(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+) -> ApiResult<Json<DeleteTaskResponse>> {
+    let db = state.open_db()?;
+    if db.get_task(&task_id)?.is_none() {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            format!("task {task_id} not found"),
+        ));
+    }
+    // If the task is running in the worker pool, cancel it first.
+    if state.pool.cancel(&task_id) {
+        for _ in 0..6 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if !state.pool.active_tasks().contains(&task_id) {
+                break;
+            }
+        }
+    }
+
+    let paths = state.paths.clone();
+    let id_for_task = task_id.clone();
+    tokio::task::spawn_blocking(move || {
+        let db = Database::open(&paths.state_db())?;
+        remove_task(&paths, &db, &id_for_task)
+    })
+    .await??;
+
+    state.emit_snapshot();
+    Ok(Json(DeleteTaskResponse {
+        task_id,
+        deleted: true,
     }))
 }
 

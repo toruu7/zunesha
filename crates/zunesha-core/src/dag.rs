@@ -13,7 +13,9 @@
 
 use crate::db::Database;
 use crate::error::{Error, Result};
+use crate::paths::ZuneshaPaths;
 use crate::task::TaskStatus;
+use crate::workspace::WorkspaceManager;
 
 /// Scan every `BACKLOG` task and promote to `TODO` the ones whose
 /// prerequisites are all `DONE`.
@@ -124,6 +126,38 @@ pub fn recover_stuck(db: &Database, task_id: Option<&str>) -> Result<Vec<String>
     Ok(released)
 }
 
+/// Remove a task completely from the orchestrator.
+///
+/// This cleans up the task's workspace directory (if any), removes its row
+/// from the database (which cascades to dependency edges, runs, and workspace
+/// records), and promotes any downstream `BACKLOG` tasks that are now unblocked.
+///
+/// Returns `Ok(true)` if the task was found and removed, or `Ok(false)` if it
+/// did not exist.
+pub fn remove_task(paths: &ZuneshaPaths, db: &Database, task_id: &str) -> Result<bool> {
+    if db.get_task(task_id)?.is_none() {
+        return Ok(false);
+    }
+
+    // Clean up the task workspace directory and DB record if present.
+    let mgr = WorkspaceManager::new(paths.clone());
+    let _ = mgr.remove(db, task_id);
+
+    // Also remove the workspace directory directly in case no DB workspace record existed.
+    let ws_dir = paths.workspace(task_id);
+    if ws_dir.is_dir() {
+        let _ = std::fs::remove_dir_all(&ws_dir);
+    }
+
+    // Delete the task (cascades dependencies, runs, workspaces in SQLite).
+    let removed = db.delete_task(task_id)?;
+    if removed {
+        // Any tasks in BACKLOG that were blocked only by this task may now be ready.
+        let _ = promote_ready(db);
+    }
+    Ok(removed)
+}
+
 /// Prerequisites of `task_id` that are not yet `DONE`.
 fn unfinished_dependencies(db: &Database, task_id: &str) -> Result<Vec<String>> {
     let mut unfinished = Vec::new();
@@ -134,6 +168,81 @@ fn unfinished_dependencies(db: &Database, task_id: &str) -> Result<Vec<String>> 
         }
     }
     Ok(unfinished)
+}
+
+/// Render a read-only macro roadmap of the task DAG for the agent working on `current_task_id`.
+///
+/// Returns `None` if there are no other tasks in the project (single-task plan).
+/// If there are multiple tasks, formats a markdown summary showing completed work,
+/// the current task, its direct prerequisites, downstream tasks waiting on it,
+/// and remaining upcoming tasks.
+pub fn render_roadmap(db: &Database, current_task_id: &str) -> Result<Option<String>> {
+    let all_tasks = db.list_tasks()?;
+    if all_tasks.len() <= 1 {
+        return Ok(None);
+    }
+
+    let mut out = String::new();
+    out.push_str("## Feature Roadmap\n");
+    out.push_str(
+        "This project consists of multiple planned tasks. You are working on one part of this graph.\n\
+         Keep completed foundations and downstream dependents in mind:\n",
+    );
+
+    let current_deps: std::collections::HashSet<String> =
+        db.dependencies_of(current_task_id)?.into_iter().collect();
+    let current_dependents: std::collections::HashSet<String> =
+        db.dependents_of(current_task_id)?.into_iter().collect();
+
+    for task in &all_tasks {
+        if task.id == current_task_id {
+            out.push_str(&format!("- [>] **CURRENT**: {} (`{}`)\n", task.title, task.id));
+            if !current_deps.is_empty() {
+                let mut dep_names: Vec<String> = current_deps
+                    .iter()
+                    .filter_map(|id| {
+                        db.get_task(id)
+                            .ok()
+                            .flatten()
+                            .map(|t| format!("`{}` ({}, `{}`)", t.title, t.status, t.id))
+                    })
+                    .collect();
+                dep_names.sort();
+                out.push_str(&format!(
+                    "  * Direct prerequisites: {}\n",
+                    dep_names.join(", ")
+                ));
+            }
+            if !current_dependents.is_empty() {
+                let mut dep_names: Vec<String> = current_dependents
+                    .iter()
+                    .filter_map(|id| {
+                        db.get_task(id)
+                            .ok()
+                            .flatten()
+                            .map(|t| format!("`{}` ({}, `{}`)", t.title, t.status, t.id))
+                    })
+                    .collect();
+                dep_names.sort();
+                out.push_str(&format!(
+                    "  * Downstream tasks waiting on your work: {}\n",
+                    dep_names.join(", ")
+                ));
+            }
+        } else {
+            let marker = match task.status {
+                TaskStatus::Done => "[x]",
+                TaskStatus::InProgress | TaskStatus::Evaluating => "[*]",
+                _ => "[ ]",
+            };
+            out.push_str(&format!(
+                "- {} {}: {} (`{}`)\n",
+                marker, task.status, task.title, task.id
+            ));
+        }
+    }
+
+    Ok(Some(out))
 }
 
 #[cfg(test)]
@@ -401,5 +510,71 @@ mod tests {
         // Retry succeeds; the human approves; the DAG moves on.
         db.force_set_status("t1", TaskStatus::Done).unwrap();
         assert_eq!(promote_ready(&db).unwrap(), vec!["t2".to_string()]);
+    }
+
+    #[test]
+    fn remove_task_cleans_workspace_and_unblocks_dependents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = ZuneshaPaths::new(tmp.path());
+        std::fs::create_dir_all(paths.dir()).unwrap();
+        let db = Database::open(&paths.state_db()).unwrap();
+
+        // Build a 2-task chain: t1 -> t2
+        db.insert_task(&Task::new("t1", "First", "")).unwrap();
+        db.insert_task(&Task::new("t2", "Second", "")).unwrap();
+        db.add_dependency("t2", "t1").unwrap();
+
+        promote_ready(&db).unwrap();
+        assert_eq!(status_of(&db, "t1"), TaskStatus::Todo);
+        assert_eq!(status_of(&db, "t2"), TaskStatus::Backlog);
+
+        // Create a workspace for t1 on disk
+        let ws_dir = paths.workspace("t1");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+        std::fs::write(ws_dir.join("test.txt"), "hello").unwrap();
+        assert!(ws_dir.is_dir());
+
+        // Removing non-existent task returns false
+        assert!(!remove_task(&paths, &db, "nonexistent").unwrap());
+
+        // Remove t1
+        assert!(remove_task(&paths, &db, "t1").unwrap());
+
+        // t1 is gone from DB
+        assert!(db.get_task("t1").unwrap().is_none());
+        // Workspace directory is deleted
+        assert!(!ws_dir.exists());
+        // t2 was unblocked and promoted to TODO!
+        assert_eq!(status_of(&db, "t2"), TaskStatus::Todo);
+    }
+
+    #[test]
+    fn render_roadmap_returns_none_for_single_task() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_task(&Task::new("solo", "Solo Task", "")).unwrap();
+        assert!(render_roadmap(&db, "solo").unwrap().is_none());
+    }
+
+    #[test]
+    fn render_roadmap_formats_multi_task_dag_foresight() {
+        let db = chain_db();
+        promote_ready(&db).unwrap(); // t1 -> TODO
+        db.force_set_status("t1", TaskStatus::Done).unwrap();
+        promote_ready(&db).unwrap(); // t2 -> TODO
+        db.force_set_status("t2", TaskStatus::InProgress).unwrap();
+
+        let roadmap = render_roadmap(&db, "t2").unwrap().expect("roadmap rendered");
+        assert!(roadmap.contains("## Feature Roadmap"), "{roadmap}");
+        assert!(roadmap.contains("- [x] DONE: one (`t1`)"), "{roadmap}");
+        assert!(roadmap.contains("- [>] **CURRENT**: two (`t2`)"), "{roadmap}");
+        assert!(
+            roadmap.contains("Direct prerequisites: `one` (DONE, `t1`)"),
+            "{roadmap}"
+        );
+        assert!(
+            roadmap.contains("Downstream tasks waiting on your work: `three` (BACKLOG, `t3`)"),
+            "{roadmap}"
+        );
+        assert!(roadmap.contains("- [ ] BACKLOG: three (`t3`)"), "{roadmap}");
     }
 }

@@ -370,9 +370,13 @@ fn build_prompt(request: &str, repo_root: &Path) -> String {
          - Every task needs a short `key` (unique in this plan), a `title`, and a\n\
            self-contained `description` with enough context for an agent that has\n\
            not seen this message.\n\
-         - `depends_on` lists the keys of tasks that must be merged first. Tasks\n\
-           touching the same files must be sequenced; independent tasks may run in\n\
-           parallel.\n\
+         - Maximize parallelism: start independent tasks with `depends_on: []` so\n\
+           they can be worked on concurrently. Only declare dependencies where one\n\
+           task strictly requires code, types, or schemas produced by an earlier\n\
+           task, or when two tasks must touch the exact same files to avoid merge\n\
+           conflicts.\n\
+         - Do not serialize tasks unnecessarily; independent components, orthogonal\n\
+           tests, or documentation can proceed in parallel.\n\
          - Treat prior agent context as existing work. Do not plan tasks that\n\
            revert or duplicate it; plan only the remaining delta.\n\
          - Do not add review or merge tasks; humans do that.\n\
@@ -945,6 +949,10 @@ printf '%s' '{"tasks":[
         assert!(
             prompt.contains("hello.txt"),
             "repository map still present: {prompt}"
+        );
+        assert!(
+            prompt.contains("Maximize parallelism"),
+            "parallelism instructions missing: {prompt}"
         );
         assert!(
             prompt.rfind("Prior agent context").unwrap() < prompt.find("Repository map").unwrap(),

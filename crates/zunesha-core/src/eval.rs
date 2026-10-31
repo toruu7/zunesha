@@ -274,6 +274,9 @@ pub async fn run_evaluation_with_control(
             ));
         }
         terminate_tree(&mut child).await;
+        for reader in &readers {
+            reader.abort();
+        }
     }
     if let Some(error) = wait_error {
         return EvalOutcome {
@@ -330,13 +333,13 @@ async fn terminate_tree(child: &mut tokio::process::Child) {
     if let Some(pid) = child.id() {
         let group = format!("-{pid}");
         let _ = std::process::Command::new("kill")
-            .args(["-TERM", &group])
+            .args(["-TERM", "--", &group])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
         tokio::time::sleep(Duration::from_millis(100)).await;
         let _ = std::process::Command::new("kill")
-            .args(["-KILL", &group])
+            .args(["-KILL", "--", &group])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();

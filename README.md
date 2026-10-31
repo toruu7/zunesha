@@ -527,6 +527,7 @@ zou work    <TASK_ID> [--activate]      # spin up isolated workspace for a task
 zou diff    <TASK_ID>                   # show the task workspace's diff
 zou run     [--jobs N] [--follow]       # run the agent on ready tasks, in parallel
 zou cancel  <TASK_ID>                   # stop a running agent + its process tree; release the task
+zou remove  <TASK_ID> [--yes]           # remove a task and its workspace; unblock the DAG (alias: delete, rm)
 zou events  <TASK_ID>                   # print the structured run/audit timeline
 zou approve <TASK_ID>                   # merge reviewed work into the repo (auto-resolves conflicts, Phase 9)
 zou recover [TASK_ID]                   # release stuck IN_PROGRESS/EVALUATING/RESOLVING_CONFLICTS tasks (crash recovery)

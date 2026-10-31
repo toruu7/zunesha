@@ -316,6 +316,26 @@ impl ApiClient {
             .await
     }
 
+    async fn delete_task(&self, task_id: &str) -> Result<String, String> {
+        self.delete(&format!("/api/tasks/{task_id}")).await
+    }
+
+    async fn delete(&self, path: &str) -> Result<String, String> {
+        let response = self
+            .http
+            .delete(self.endpoint(path))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = response.status();
+        let text = response.text().await.map_err(|e| e.to_string())?;
+        if status.is_success() {
+            Ok(text)
+        } else {
+            Err(format!("HTTP {status}: {}", text.trim()))
+        }
+    }
+
     async fn recover(&self, task_id: Option<&str>) -> Result<String, String> {
         let body = match task_id {
             Some(task_id) => serde_json::json!({ "task_id": task_id }),
@@ -622,6 +642,7 @@ enum Action {
     Reject,
     Cancel,
     Recover,
+    Delete,
     Refresh,
     Logs,
     Output,
@@ -653,6 +674,7 @@ impl Action {
             "reject" => Self::Reject,
             "cancel" => Self::Cancel,
             "recover" => Self::Recover,
+            "delete" | "remove" => Self::Delete,
             "refresh" => Self::Refresh,
             "logs" => Self::Logs,
             "output" => Self::Output,
@@ -685,6 +707,7 @@ const DEFAULT_KEYS: &[(&str, &str)] = &[
     ("reject", "x"),
     ("cancel", "C"),
     ("recover", "c"),
+    ("delete", "D"),
     ("refresh", "g"),
     ("logs", "l"),
     ("output", "o"),
@@ -711,6 +734,7 @@ fn build_keymap(config: &TuiConfig) -> (HashMap<String, Action>, Vec<String>) {
             map.insert(key, action);
         }
     }
+    map.entry("delete".into()).or_insert(Action::Delete);
     for (name, spec) in &config.keys {
         let Some(action) = Action::from_name(name) else {
             errors.push(format!("unknown key action `{name}`"));
@@ -892,6 +916,7 @@ enum ConfirmAction {
     Approve(String),
     Cancel(String),
     Recover(Option<String>),
+    Delete(String),
 }
 
 #[derive(Clone, Debug)]
@@ -1248,11 +1273,16 @@ impl App {
                         self.confirm = Some(ConfirmAction::Cancel(task.id));
                     } else {
                         self.status = format!(
-                            "{} is {}; only running tasks can be cancelled",
+                            "{} is {}; only running tasks can be cancelled (press D or :delete to remove)",
                             task.id,
                             status_label(task.status)
                         );
                     }
+                }
+            }
+            Action::Delete => {
+                if let Some(task) = self.selected_task() {
+                    self.confirm = Some(ConfirmAction::Delete(task.id));
                 }
             }
             Action::Recover => {
@@ -1521,6 +1551,18 @@ impl App {
                     self.confirm = Some(ConfirmAction::Cancel(task.id));
                 }
             }
+            "delete" | "remove" | "rm" => {
+                let target_id = if argument.is_empty() {
+                    self.selected_task().map(|task| task.id)
+                } else {
+                    Some(argument.to_string())
+                };
+                if let Some(task_id) = target_id {
+                    self.confirm = Some(ConfirmAction::Delete(task_id));
+                } else {
+                    self.status = "no task selected to delete".into();
+                }
+            }
             "recover" => {
                 let task_id = self.selected_task().map(|task| task.id);
                 self.confirm = Some(ConfirmAction::Recover(task_id));
@@ -1582,6 +1624,11 @@ impl App {
                 spawn_action(tx, "recover", async move {
                     api.recover(task_id.as_deref()).await
                 });
+            }
+            ConfirmAction::Delete(task_id) => {
+                let api = self.api.clone();
+                self.status = format!("deleting {task_id}…");
+                spawn_action(tx, "delete", async move { api.delete_task(&task_id).await });
             }
         }
     }
@@ -2319,6 +2366,9 @@ fn draw_confirm(frame: &mut Frame, app: &App, area: Rect) {
         }
         ConfirmAction::Recover(Some(task_id)) => format!("release {task_id} back to TODO?"),
         ConfirmAction::Recover(None) => "release every stuck task back to TODO?".to_string(),
+        ConfirmAction::Delete(task_id) => {
+            format!("delete {task_id}? this permanently removes the task and its workspace")
+        }
     };
     let popup = centered_rect(60, 5, area);
     frame.render_widget(Clear, popup);
@@ -2433,13 +2483,13 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block, popup);
     let mut lines = vec![
         Line::from("navigation: j/k or ↑/↓ select   tab detail tab   enter logs"),
-        Line::from("actions:    p plan   A attach   r run all   R run selected   C cancel"),
+        Line::from("actions:    p plan   A attach   r run all   R run selected   C cancel   D delete"),
         Line::from("            a approve   x reject   c recover   g refresh"),
         Line::from("views:      l logs   o output   d diff   i task"),
         Line::from("config:     t theme   m model   f filter   : command palette"),
         Line::from("logs:       pageup/pagedown scroll   esc clear filter"),
         Line::from(""),
-        Line::from("commands:   :run  :approve  :reject <text>  :cancel  :recover"),
+        Line::from("commands:   :run  :approve  :reject <text>  :cancel  :delete  :recover"),
         Line::from("            :plan <prompt>  :attach <path>  :clear-attachments"),
         Line::from("            :filter <text>  :theme <name>"),
         Line::from(""),
@@ -2548,6 +2598,8 @@ mod tests {
         let (keys, errors) = build_keymap(&config);
         assert!(errors.is_empty());
         assert_eq!(keys.get("ctrl+q"), Some(&Action::Quit));
+        assert_eq!(keys.get("D"), Some(&Action::Delete));
+        assert_eq!(keys.get("delete"), Some(&Action::Delete));
     }
 
     #[test]

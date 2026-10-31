@@ -84,6 +84,7 @@ file; see [Configuration](#configuration).
 | `a` | Approve the selected `REVIEW` task. Asks for confirmation. |
 | `x` | Reject the selected `REVIEW` or `FAILED_NEEDS_HUMAN` task with feedback. |
 | `C` | Cancel the selected running task (`IN_PROGRESS`/`EVALUATING`/`RESOLVING_CONFLICTS`). Asks for confirmation. |
+| `D` / `Delete` | Remove/delete the selected task and its workspace. Asks for confirmation. |
 | `c` | Recover the selected stuck task, or all stuck tasks when nothing is selected. |
 | `g` | Refresh the task list from the daemon. |
 
@@ -103,7 +104,7 @@ file; see [Configuration](#configuration).
 
 ### Confirmation dialogs
 
-`r`, `R`, `a`, `C`, and `c` open a confirmation prompt. Press `y` to proceed
+`r`, `R`, `a`, `C`, `D`, and `c` open a confirmation prompt. Press `y` to proceed
 or `n` / `Esc` to cancel. The prompt shows the task and the action so a stray
 keypress cannot merge work or kill a process.
 
@@ -122,6 +123,7 @@ Press `:` and type one of:
 :approve
 :reject <feedback>
 :cancel
+:delete [task_id]
 :recover
 :refresh
 :filter <text>

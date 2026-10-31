@@ -1138,3 +1138,44 @@ async fn daemon_boot_can_be_told_not_to_resume() {
         "--no-resume must leave the claim untouched"
     );
 }
+
+#[tokio::test]
+async fn delete_task_removes_task_workspace_and_unblocks_dag() {
+    let (_tmp, paths) = scratch();
+    let app = app_for(&paths);
+    let db = Database::open(&paths.state_db()).unwrap();
+
+    // Create 2 tasks: t1 and t2 (t2 depends on t1)
+    db.insert_task(&zunesha_core::Task::new("t1", "First", ""))
+        .unwrap();
+    db.insert_task(&zunesha_core::Task::new("t2", "Second", ""))
+        .unwrap();
+    db.add_dependency("t2", "t1").unwrap();
+    zunesha_core::promote_ready(&db).unwrap();
+
+    // Create a workspace for t1
+    let ws_dir = paths.workspace("t1");
+    std::fs::create_dir_all(&ws_dir).unwrap();
+    assert!(ws_dir.is_dir());
+
+    // DELETE nonexistent task -> 404
+    let (status, err) = json_req(&app, Method::DELETE, "/api/tasks/nonexistent", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(err["error"].as_str().unwrap().contains("not found"));
+
+    // DELETE t1 -> 200
+    let (status, res) = json_req(&app, Method::DELETE, "/api/tasks/t1", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(res["task_id"], "t1");
+    assert_eq!(res["deleted"], true);
+
+    // Verify t1 is gone and workspace is deleted
+    assert!(db.get_task("t1").unwrap().is_none());
+    assert!(!ws_dir.exists());
+
+    // t2 was in BACKLOG, now unblocked and promoted to TODO!
+    assert_eq!(
+        db.get_task("t2").unwrap().unwrap().status,
+        TaskStatus::Todo
+    );
+}

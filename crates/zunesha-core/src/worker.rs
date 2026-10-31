@@ -837,8 +837,8 @@ impl AgentOutcome {
 /// prompt, and both failure exits become `FAILED_NEEDS_HUMAN` /
 /// `RESOLVING_CONFLICTS` instead of `TODO` / `IN_PROGRESS`.
 /// In both modes the workspace's Phase 10 `CODEBASE_MAP.md` is appended last
-/// to the prompt, and the Phase 12 `PRIOR_AGENT_CONTEXT.md` rides just before
-/// it; both are read once during setup.
+/// to the prompt, the Phase 12 `PRIOR_AGENT_CONTEXT.md` rides just before it,
+/// and the task DAG's feature roadmap precedes them; all are read once during setup.
 async fn run_one(
     pool: &Arc<WorkerHandle>,
     task: Task,
@@ -849,13 +849,14 @@ async fn run_one(
     let journal = RunJournal::start(pool, &task, mode)?;
 
     // Workspace setup does blocking filesystem + git work; keep it off the
-    // async runtime. The Phase 10 / 12 reference documents are read here too —
-    // once per run, identical for every prompt of that run.
+    // async runtime. The Phase 10 / 12 reference documents and the feature
+    // roadmap are read here too — once per run, identical for every prompt of
+    // that run.
     let setup = {
         let pool = pool.clone();
         let task_id = task_id.clone();
         tokio::task::spawn_blocking(
-            move || -> Result<(String, Option<String>, Option<String>)> {
+            move || -> Result<(String, Option<String>, Option<String>, Option<String>)> {
                 let db = pool.open_db()?;
                 let mgr = WorkspaceManager::new(pool.paths.clone());
                 let ws_dir = match mode {
@@ -879,13 +880,14 @@ async fn run_one(
                 };
                 let map = crate::codebase_map::read(Path::new(&ws_dir));
                 let prior = crate::prior_context::read(Path::new(&ws_dir));
-                Ok((ws_dir, map, prior))
+                let roadmap = crate::dag::render_roadmap(&db, &task_id)?;
+                Ok((ws_dir, map, prior, roadmap))
             },
         )
         .await
         .map_err(|e| Error::Workspace(format!("workspace setup panicked: {e}")))
     };
-    let (ws_dir, codebase_map, prior_context) = match setup {
+    let (ws_dir, codebase_map, prior_context, roadmap) = match setup {
         Ok(Ok(value)) => value,
         Ok(Err(error)) => {
             journal.finish("ERROR", Some("workspace_setup"), &error.to_string(), false);
@@ -925,6 +927,12 @@ async fn run_one(
                 RunMode::Normal => render_prompt(&task.title, &description),
                 RunMode::ResolveConflicts => render_conflict_prompt(&task.title, &description),
             };
+            // Macro feature roadmap: when part of a multi-task plan, give the
+            // agent visibility into completed prerequisites and downstream dependents.
+            if let Some(roadmap) = &roadmap {
+                prompt.push_str("\n\n");
+                prompt.push_str(roadmap);
+            }
             // Phase 12: prior work from the source checkout, then Phase 10's
             // static repository map last — reference material, identical for
             // every attempt of this run.
@@ -1342,13 +1350,13 @@ async fn terminate_child(child: &mut tokio::process::Child) {
     if let Some(pid) = child.id() {
         let group = format!("-{pid}");
         let _ = std::process::Command::new("kill")
-            .args(["-TERM", &group])
+            .args(["-TERM", "--", &group])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
         tokio::time::sleep(KILL_GRACE).await;
         let _ = std::process::Command::new("kill")
-            .args(["-KILL", &group])
+            .args(["-KILL", "--", &group])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
@@ -2322,6 +2330,40 @@ mod tests {
             "scaffolding never reaches the reviewed diff: {}",
             task.diff
         );
+    }
+
+    #[tokio::test]
+    async fn agent_prompts_carry_roadmap_in_multi_task_plan() {
+        let (_repo, paths) = scratch_install();
+        let db = Database::open(&paths.state_db()).unwrap();
+        // Insert a 2-task DAG: t0 -> t1
+        db.insert_task(&Task::new("t0", "First task", "do first")).unwrap();
+        db.insert_task(&Task::new("t1", "Second task", "do second")).unwrap();
+        db.add_dependency("t1", "t0").unwrap();
+        crate::dag::promote_ready(&db).unwrap(); // t0 -> TODO, t1 -> BACKLOG
+
+        let pool = WorkerPool::new(
+            paths.clone(),
+            1,
+            AgentCommand::shell(
+                "P=\"$0\"; \
+                 echo \"roadmap-in-prompt=$(printf '%s' \"$P\" | grep -c 'Feature Roadmap')\"; \
+                 echo \"current-in-prompt=$(printf '%s' \"$P\" | grep -c 'CURRENT.*First task')\"; \
+                 echo \"downstream-in-prompt=$(printf '%s' \"$P\" | grep -c 'Downstream tasks waiting on your work')\"; \
+                 printf 'fn first() {}\n' > first.rs",
+            ),
+        );
+
+        let handle = pool.spawn_task("t0".into()).await.unwrap();
+        assert!(handle.await.unwrap().unwrap(), "agent exit 0 => success");
+
+        let db = Database::open(&paths.state_db()).unwrap();
+        let task = db.get_task("t0").unwrap().unwrap();
+        let logs = &task.worker_logs;
+        assert!(logs.contains("roadmap-in-prompt=1"), "missing roadmap in prompt: {logs}");
+        assert!(logs.contains("current-in-prompt=1"), "missing current task marker in prompt: {logs}");
+        assert!(logs.contains("downstream-in-prompt=1"), "missing downstream note in prompt: {logs}");
+        assert_eq!(task.status, TaskStatus::Review);
     }
 
     #[tokio::test]

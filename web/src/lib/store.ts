@@ -49,6 +49,7 @@ export interface ZouState extends BoardState {
   runAll: () => Promise<void>;
   runOne: (id: string) => Promise<void>;
   cancel: (id: string) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
   approve: (id: string) => Promise<void>;
   reject: (
     id: string,
@@ -207,6 +208,22 @@ export const useZou = create<ZouState>((set, get) => {
         await api.cancel(id);
         await get().refresh();
         set({ error: null });
+      } catch (err) {
+        set({ error: errText(err) });
+      } finally {
+        set({ busy: false });
+      }
+    },
+
+    deleteTask: async (id) => {
+      set({ busy: true });
+      try {
+        await api.deleteTask(id);
+        await get().refresh();
+        set({
+          error: null,
+          selectedId: get().selectedId === id ? null : get().selectedId,
+        });
       } catch (err) {
         set({ error: errText(err) });
       } finally {

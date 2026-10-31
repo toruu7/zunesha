@@ -79,11 +79,13 @@ export default function ReviewModal({ task }: { task: Task }) {
   const reject = useZou((s) => s.reject);
   const runOne = useZou((s) => s.runOne);
   const cancel = useZou((s) => s.cancel);
+  const deleteTask = useZou((s) => s.deleteTask);
   const recover = useZou((s) => s.recover);
   const busy = useZou((s) => s.busy);
   const error = useZou((s) => s.error);
   const clearError = useZou((s) => s.clearError);
   const [feedback, setFeedback] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const { attachments, errors, add, remove, clear, payload } = useAttachments();
   // A live worker owns these (recover releases either).
   const isWorkerOwned = isActive(task.status);
@@ -348,6 +350,37 @@ export default function ReviewModal({ task }: { task: Task }) {
               </button>
             </>
           ) : null}
+          {confirmDelete ? (
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={async () => {
+                  await deleteTask(task.id);
+                  close();
+                }}
+                disabled={busy}
+                title="Confirm deleting this task and workspace permanently"
+                className={`${ACTION} bg-signal text-contrast`}
+              >
+                Confirm delete
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                disabled={busy}
+                className={`${ACTION} bg-contrast`}
+              >
+                Keep task
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              disabled={busy}
+              title="Delete this task and its workspace permanently"
+              className={`${ACTION} bg-ground text-ink/70 hover:bg-signal/20 hover:text-signal-ink`}
+            >
+              Delete task
+            </button>
+          )}
           <button
             onClick={close}
             className={`${ACTION} ml-auto bg-contrast`}

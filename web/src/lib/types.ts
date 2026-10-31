@@ -133,6 +133,11 @@ export interface CancelResponse {
   cancelled: boolean;
 }
 
+export interface DeleteResponse {
+  task_id: string;
+  deleted: boolean;
+}
+
 /** A parsed API error (`{ error: string }` + HTTP status). */
 export class ApiError extends Error {
   readonly status: number;
