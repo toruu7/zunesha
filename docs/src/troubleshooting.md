@@ -63,6 +63,61 @@ The workspace is kept across recovery, so the retry continues from whatever
 the agent already produced, and the persisted retry counter still counts
 towards the 3-failure cap.
 
+If the daemon is **alive** and the agent is actually working, use
+`zou cancel <TASK_ID>` (dashboard/TUI/playground: **Cancel agent**) instead.
+Cancel kills the process tree and releases the task to `TODO` (or
+`FAILED_NEEDS_HUMAN` for a conflict-resolution run); recovery only drops the
+database claim and would leave a live process running.
+
+## A run says `timed out` or `cancelled`
+
+Both are deliberate interruptions, not crashes. The task returns to `TODO`
+with a note in its logs and its workspace is kept (a conflict-resolution run
+parks in `FAILED_NEEDS_HUMAN`). Cancellation also stops a running
+validation/test process tree, not just the agent.
+
+- Timed out after 30 minutes? Raise `ZOU_AGENT_TIMEOUT_SECS` before
+  `zou start` if the work legitimately needs longer.
+- Cancelled? Re-run when ready, or reject with feedback if the task is in
+  `REVIEW`.
+- Inspect the structured timeline with `zou events <TASK_ID>` or
+  `GET /api/tasks/:id/events`. It includes `run_started`, `agent_started`,
+  `agent_finished`, validation events, and `run_interrupted`/`run_finished`.
+
+## An attachment is rejected
+
+The limits are 10 files, 8 MiB per file, and 24 MiB total. The API returns
+`400` with an `attachment error: …` message. Split the upload or compress the
+image. Files are stored under `.zou/attachments/`; the prompt and every task
+description carry absolute paths, so deleting that directory breaks existing
+task references.
+
+## Antigravity (`agy`) fails or shows no models
+
+Zunesha shells out to `agy`; it does not manage Google authentication. Check
+the CLI directly first:
+
+```sh
+agy --version
+agy models
+zou agent                 # confirm the active provider/command
+zou agent antigravity     # switch explicitly
+zou model                 # list agy models and save one
+```
+
+If `ZOU_AGENT_CMD` is exported, it overrides the saved provider — unset it
+before retrying. Antigravity runs with `--dangerously-skip-permissions`
+because the agent is unattended; containment comes from the isolated
+workspace, optional `bwrap` jail, timeout, and approval gate.
+
+## A task fails with `sandbox violation`
+
+The workspace contained a symlink that resolves outside it, or the workspace
+itself could not be canonicalized. Zunesha refuses to run the agent in that
+case. Remove/replace the escaping symlink (often a vendored or generated
+directory) and re-run. `ZOU_SANDBOX=off` disables only the `bwrap` OS jail;
+symlink validation still runs.
+
 ## Tasks return to `TODO` and the log says the model endpoint is unavailable
 
 The agent process exited non-zero before editing anything, so the task goes
@@ -70,8 +125,9 @@ back to `TODO` with no diff. This is usually a bad or temporarily unavailable
 model, not a Zunesha error. Pick a different one:
 
 ```sh
-zou model              # list `opencode models` and select one
+zou model              # list the active provider's models and select one
 zou model --show       # confirm the saved id
+zou agent              # confirm the active provider
 zou run                # retry the TODO tasks
 ```
 

@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { useZou } from "@/lib/store";
 import { isActive } from "@/lib/status";
 import type { Task } from "@/lib/types";
+import { useAttachments } from "@/lib/use-attachments";
+import AttachmentList from "./attachment-list";
 import LogViewer from "./log-viewer";
 import MarkdownView from "./markdown-view";
 import Spinner from "./spinner";
@@ -76,11 +78,13 @@ export default function ReviewModal({ task }: { task: Task }) {
   const approve = useZou((s) => s.approve);
   const reject = useZou((s) => s.reject);
   const runOne = useZou((s) => s.runOne);
+  const cancel = useZou((s) => s.cancel);
   const recover = useZou((s) => s.recover);
   const busy = useZou((s) => s.busy);
   const error = useZou((s) => s.error);
   const clearError = useZou((s) => s.clearError);
   const [feedback, setFeedback] = useState("");
+  const { attachments, errors, add, remove, clear, payload } = useAttachments();
   // A live worker owns these (recover releases either).
   const isWorkerOwned = isActive(task.status);
   const [tab, setTab] = useState<"output" | "diff" | "logs">(() => {
@@ -244,6 +248,14 @@ export default function ReviewModal({ task }: { task: Task }) {
                 }
                 className="w-full border-[3px] border-ink bg-contrast px-3 py-2 text-sm font-medium text-ink shadow-brutal-sm placeholder:text-ink/40 resize-y"
               />
+              <AttachmentList
+                attachments={attachments}
+                errors={errors}
+                disabled={busy}
+                onAdd={add}
+                onRemove={remove}
+                compact
+              />
             </section>
           )}
         </div>
@@ -280,7 +292,13 @@ export default function ReviewModal({ task }: { task: Task }) {
                 Approve
               </button>
               <button
-                onClick={() => void reject(task.id, feedback)}
+                onClick={async () => {
+                  await reject(task.id, feedback, payload());
+                  if (!useZou.getState().error) {
+                    setFeedback("");
+                    clear();
+                  }
+                }}
                 disabled={busy}
                 className={`${ACTION} bg-signal`}
               >
@@ -297,7 +315,13 @@ export default function ReviewModal({ task }: { task: Task }) {
             </button>
           ) : isFailed ? (
             <button
-              onClick={() => void reject(task.id, feedback)}
+              onClick={async () => {
+                await reject(task.id, feedback, payload());
+                if (!useZou.getState().error) {
+                  setFeedback("");
+                  clear();
+                }
+              }}
               disabled={busy}
               title="Send the parked task back to the queue with a fresh retry budget (workspace kept)."
               className={`${ACTION} bg-field`}
@@ -305,14 +329,24 @@ export default function ReviewModal({ task }: { task: Task }) {
               Send back to queue
             </button>
           ) : isWorkerOwned ? (
-            <button
-              onClick={() => void recover(task.id)}
-              disabled={busy}
-              title="Worker died or was interrupted? Free its claim so the task can run again (workspace kept)."
-              className={`${ACTION} bg-contrast`}
-            >
-              Release stuck task
-            </button>
+            <>
+              <button
+                onClick={() => void cancel(task.id)}
+                disabled={busy}
+                title="Stop the agent process tree and release the task back to ready. The workspace is kept."
+                className={`${ACTION} bg-signal`}
+              >
+                Cancel agent
+              </button>
+              <button
+                onClick={() => void recover(task.id)}
+                disabled={busy}
+                title="Worker died or was interrupted? Free its claim so the task can run again (workspace kept)."
+                className={`${ACTION} bg-contrast`}
+              >
+                Release stuck task
+              </button>
+            </>
           ) : null}
           <button
             onClick={close}

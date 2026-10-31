@@ -46,7 +46,7 @@ From a checkout:
 
 ```powershell
 .\install.ps1
-.\install.ps1 -Version v0.9.0
+.\install.ps1 -Version v0.10.0
 .\install.ps1 -Source -Repo https://github.com/you/zunesha
 ```
 
@@ -103,11 +103,38 @@ user-wide and applies to every project:
 zou model
 ```
 
-It lists the ids reported by `opencode models`, prompts for a selection, and
-stores the result in `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`.
-`zou model --list`, `--show`, and `--clear` manage it non-interactively. If
-you already have a `ZOU_AGENT_CMD` export, that continues to override the
-saved model.
+It lists the ids reported by `opencode models` (or `agy models` for
+Antigravity), prompts for a selection, and stores the result in
+`${XDG_CONFIG_HOME:-~/.config}/zou/config.json`. `zou model --list`, `--show`,
+and `--clear` manage it non-interactively. If you already have a
+`ZOU_AGENT_CMD` export, that continues to override the saved model.
+
+To use Google Antigravity instead:
+
+```sh
+zou agent antigravity     # keeps OpenCode's saved model for later
+zou model                 # list `agy models` and save one
+zou agent                 # show the active provider + resolved command
+zou agent opencode        # switch back without losing either model
+```
+
+The `agy` CLI must be installed and authenticated; Zunesha runs it headless
+with `--output-format stream-json` inside each isolated workspace.
+
+## Attach images or files
+
+Screenshots, mockups, specs, and logs can travel with a plan:
+
+```sh
+zou plan "match the attached mock" --attach mock.png --attach api-spec.pdf
+```
+
+In the dashboard and playground, use the attach button, drag files onto the
+prompt, or paste an image. The TUI uses `A` (or `:attach <path>`) before
+planning. Files are stored under `.zou/attachments/` and referenced by
+absolute path in the planner prompt and every task description; the agent
+reads them with its normal file tool. Limits: 10 files, 8 MiB each, 24 MiB
+total.
 
 ## Initialize your project
 
@@ -161,10 +188,14 @@ zou start               # http://127.0.0.1:57804
 - **DAG view** — an interactive graph of the plan: pan/zoom/drag, click a node
   to open the review modal. Edges are prerequisite → dependent, laid out by
   dependency depth.
-- **Plan bar** — type a feature request to plan from the UI, then **Run**.
+- **Plan bar** — type a feature request to plan from the UI, attach
+  images/files, then **Run**.
 - The review modal separates the final **Output** (styled Markdown) from the
   technical **Logs** (tool calls, stderr, and `[eval]` output), so analysis-only
-  tasks still show a result even when they change no files.
+  tasks still show a result even when they change no files. Live tasks expose
+  **Cancel agent**; stuck tasks expose **Release stuck task**.
+- On phones the board becomes a horizontally snapping column rail, and the
+  header/controls collapse into a compact, full-width layout.
 
 The CLI and the daemon share `.zou/state.db`, so they can run side by side. One
 caveat: on boot the daemon **resumes tasks a crash left claimed**, which would
@@ -180,11 +211,13 @@ zou tui --theme midnight
 ```
 
 The TUI is a client of the same REST + WebSocket API: task list, logs, agent
-output, diffs, plan/run/approve/reject/recover, a command palette, and a model
-picker. It is customizable through `~/.config/zou/tui.toml` or a project
-`.zou/tui.toml` — themes, keymaps, status-bar items, layout, mouse, and colors
-are re-read while it runs. See [Terminal UI](tui.md) for the complete command,
-key, and configuration reference.
+output, diffs, plan/attach/run/approve/reject/cancel/recover, a command
+palette, and a model picker. It is customizable through
+`~/.config/zou/tui.toml` or a project `.zou/tui.toml` — themes, keymaps,
+status-bar items, layout, mouse, and colors are re-read while it runs. On
+narrow terminals `layout = "auto"` stacks the task list above the detail pane.
+See [Terminal UI](tui.md) for the complete command, key, and configuration
+reference.
 
 ## The pixel office
 
@@ -193,15 +226,18 @@ is an agent working, waiting for review, idle, asleep in the backlog, done, or
 blocked on a human. Click a desk or task to open the inspector, where you can
 read the styled Markdown **Output**, the live **Logs**, the **Diff**, and the
 task metadata. The same inspector can plan a feature, run ready tasks, run one
-task, approve, reject with feedback, recover a stuck task, and refresh. The page
-uses the full task snapshot and `/ws` stream; the normal dashboard build also
-builds it.
+task, approve, reject with feedback, cancel a running agent, recover a stuck
+task, and refresh. Attachments work there too (picker, drag-and-drop, paste).
+The page uses the full task snapshot and `/ws` stream; the normal dashboard
+build also builds it. On phones the rail, office, and inspector stack, and the
+reject modal becomes a bottom sheet.
 
 ## What lands on disk
 
 ```text
 .zou/
-├── state.db        # tasks, dependencies, workspaces, logs (SQLite)
+├── state.db        # tasks, dependencies, workspaces, runs, logs (SQLite)
+├── attachments/    # prompt uploads, referenced by absolute path
 └── ws/<task_id>/   # one git clone + agent work per task, reaped on approval
 ```
 

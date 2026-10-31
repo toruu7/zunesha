@@ -46,15 +46,16 @@ export default function Board() {
   const counts = countsFrom(tasks);
 
   // Desktop is a fixed 4×2 sheet: four status columns per row, two rows.
-  // Each cell scrolls its own card list; below `lg` the board stacks.
+  // Phones get a horizontal snap rail (one readable column at a time), while
+  // tablets use two columns. The desktop sheet stays unchanged at `lg`.
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 lg:grid-rows-2 lg:auto-rows-fr gap-3 lg:flex-1 lg:min-h-0">
+    <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2 sm:grid sm:grid-cols-2 sm:overflow-visible sm:pb-0 lg:grid-cols-4 lg:grid-rows-2 lg:auto-rows-fr lg:flex-1 lg:min-h-0">
       {STATUSES.map((status) => {
         const column = tasks.filter((t) => t.status === status);
         return (
           <section
             key={status}
-            className="flex flex-col border-4 border-ink bg-contrast shadow-brutal-sm min-h-[12rem]"
+            className="flex w-[84vw] max-w-sm shrink-0 snap-start flex-col border-4 border-ink bg-contrast shadow-brutal-sm min-h-[12rem] sm:w-auto sm:max-w-none"
           >
             <header className="flex items-center gap-2 border-b-4 border-ink bg-ink px-2.5 py-2">
               <span

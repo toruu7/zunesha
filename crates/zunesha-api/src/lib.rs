@@ -24,6 +24,8 @@
 //! | POST   | `/api/plan`               | Decompose a prompt into a task DAG (built-in or `ZOU_PLANNER_CMD`). |
 //! | POST   | `/api/run`                | Start agents on all ready (`TODO`) tasks.|
 //! | POST   | `/api/tasks/:id/run`      | Start the agent on one ready task.       |
+//! | POST   | `/api/tasks/:id/cancel`   | Stop a running agent and release its claim. |
+//! | GET    | `/api/tasks/:id/events`   | Structured run/audit timeline for a task. |
 //! | POST   | `/api/tasks/:id/approve`  | Accept reviewed work; merge or auto-resolve a conflict. |
 //! | POST   | `/api/tasks/:id/reject`   | Send reviewed work back with feedback.   |
 //! | POST   | `/api/recover`            | Release stuck tasks (worker crashed; on `zou start` this happens automatically). |
@@ -136,11 +138,24 @@ pub fn router(state: AppState, dashboard_dir: Option<std::path::PathBuf>) -> Rou
         .route("/api/status", get(handlers::status))
         .route("/api/tasks", get(handlers::list_tasks))
         .route("/api/tasks/{id}", get(handlers::get_task))
-        .route("/api/plan", post(handlers::plan_feature))
+        // Attachments are base64 in the JSON body; the default 2 MiB limit
+        // would reject a normal screenshot before the handler can validate
+        // it. 24 MiB decoded is ~32 MiB encoded, so leave room for JSON and
+        // the prompt rather than rejecting a valid maximum-size batch.
+        .route(
+            "/api/plan",
+            post(handlers::plan_feature)
+                .layer(axum::extract::DefaultBodyLimit::max(40 * 1024 * 1024)),
+        )
         .route("/api/run", post(handlers::run_ready))
         .route("/api/tasks/{id}/run", post(handlers::run_one))
+        .route("/api/tasks/{id}/cancel", post(handlers::cancel))
+        .route("/api/tasks/{id}/events", get(handlers::events))
         .route("/api/tasks/{id}/approve", post(handlers::approve))
-        .route("/api/tasks/{id}/reject", post(handlers::reject))
+        .route(
+            "/api/tasks/{id}/reject",
+            post(handlers::reject).layer(axum::extract::DefaultBodyLimit::max(40 * 1024 * 1024)),
+        )
         .route("/api/recover", post(handlers::recover))
         .route("/api/playground", get(playground::snapshot))
         .route("/api/playground/ws", get(playground::ws_handler))

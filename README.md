@@ -66,7 +66,7 @@ Or from a checkout:
 
 ```powershell
 .\install.ps1
-.\install.ps1 -Version v0.9.0
+.\install.ps1 -Version v0.10.0
 .\install.ps1 -Source -Repo https://github.com/you/zunesha
 ```
 
@@ -180,9 +180,9 @@ workspace and dashboard. Every push that changes the project bumps
 ```sh
 sh scripts/bump-version.sh minor   # major|minor|patch, or an explicit X.Y.Z
 git add Cargo.toml Cargo.lock web/package.json web/package-lock.json
-git commit -m "release: v0.9.0"
-git tag v0.9.0
-git push origin master v0.9.0      # tag triggers the release workflow
+git commit -m "release: v0.10.0"
+git tag v0.10.0
+git push origin master v0.10.0     # tag triggers the release workflow
 ```
 
 The script keeps `Cargo.toml`, `Cargo.lock`, `web/package.json`, and
@@ -224,9 +224,11 @@ cd web && npm install && npm run build && cd ..
 
 ```sh
 zou model                     # one-time: pick the OpenCode model (saved user-wide)
+# or switch providers: zou agent antigravity && zou model
 cd /path/to/your-repo
 zou init                      # creates .zou/ (+ .gitignore entry)
 zou plan "add rate limiting"  # 3-task chain (built-in) or a real DAG via ZOU_PLANNER_CMD
+zou plan "match this mock" --attach mock.png  # images/specs are copied into .zou/attachments/
 zou status                    # per-status counts + task ids
 
 # --- drive it from the terminal ---
@@ -275,6 +277,32 @@ daemon after changing it. `ZOU_AGENT_CMD` is an explicit per-shell override
 and wins over the saved model; without either, the built-in command is
 `opencode run --format json "<prompt>"`.
 
+#### Google Antigravity
+
+Zunesha can drive Google Antigravity's `agy` CLI instead of OpenCode. The
+provider and its model are stored independently, so switching back does not
+lose the other provider's saved choice:
+
+```sh
+zou agent                    # show the active provider + resolved command
+zou agent antigravity        # switch provider (keeps OpenCode's model saved)
+zou agent antigravity --model gemini-3-pro
+zou model                    # lists `agy models` for the active provider
+zou agent opencode           # switch back; its previous model is still there
+```
+
+Antigravity runs headless in the task workspace:
+
+```text
+agy -p {prompt} --output-format stream-json --dangerously-skip-permissions --print-timeout 30m
+```
+
+`--dangerously-skip-permissions` is required for unattended work; Zunesha's
+own workspace isolation, symlink guard, timeout, and human approval gate are
+the safety boundary. `stream-json` events are split into the technical **Logs**
+transcript (tool calls) and the final Markdown **Output**, exactly like
+OpenCode's JSON stream. `ZOU_AGENT_CMD` still overrides both providers.
+
 Use `ZOU_AGENT_CMD` when you want a different agent CLI or extra flags.
 `{prompt}` and `{workspace}` are substituted after parsing (if the template
 never mentions `{prompt}`, it is appended as the final argument):
@@ -291,6 +319,28 @@ separate Markdown Output tab, it must emit OpenCode-compatible `text` events
 
 The spec is parsed with full POSIX quoting (single/double quotes, backslash
 escapes). The daemon reads it **at launch**, so set it before `zou start`.
+
+### Prompt attachments (images and files)
+
+Prompts can carry screenshots, mockups, specs, logs, or any other file. The
+dashboard and playground support the file picker, drag-and-drop, and pasted
+images; the CLI and TUI use paths:
+
+```sh
+zou plan "match the attached mock" --attach mock.png --attach api-spec.pdf
+zou tui                       # A (or :attach <path>) before planning
+```
+
+Uploads are validated and written under `.zou/attachments/<id>/`. The planner
+prompt and every resulting task description get an `## Attachments` section
+with absolute paths, so the agent can read them with its normal file tool
+(images should be inspected directly). The task workspace remains a clean git
+clone; attachments are not copied into it.
+
+Limits are enforced in both the browser and daemon: at most **10** files,
+**8 MiB** each, **24 MiB** total. Rejected uploads return HTTP `400` without
+starting a planner run. Under the strong Linux sandbox the host is read-only,
+so attachments stay readable but cannot be modified by the agent.
 
 ### Configure the planner (LLM-backed)
 
@@ -400,7 +450,9 @@ switched off.
 
 | Variable              | Read by          | Purpose                                        |
 |-----------------------|------------------|------------------------------------------------|
-| `ZOU_AGENT_CMD`      | CLI / daemon     | Agent command template; overrides the model saved by `zou model` (see above). |
+| `ZOU_AGENT_CMD`      | CLI / daemon     | Agent command template; overrides the saved provider/model (see above). |
+| `ZOU_AGENT_TIMEOUT_SECS` | CLI / daemon | Wall-clock limit for one agent attempt (default `1800`). |
+| `ZOU_SANDBOX`        | CLI / daemon     | `guard` (default: validate + use `bwrap` when available) or `off`. |
 | `ZOU_CONFIG_FILE`    | CLI / daemon     | Override the user-wide config path (default `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`). |
 | `ZOU_UPDATE_REPO`    | `zou update`     | Source checkout or Git URL to check instead of the install record. |
 | `ZOU_PLANNER_CMD`    | CLI / daemon     | Planning command: prompt on stdin, JSON plan on stdout; unset = built-in planner (see above). |
@@ -461,7 +513,8 @@ zunesha/
 ```
 <your-repo>/
 └── .zou/
-    ├── state.db      # SQLite: tasks + dependencies
+    ├── state.db      # SQLite: tasks, dependencies, workspaces, run journal
+    ├── attachments/  # prompt uploads (bounded; readable by agents)
     └── ws/           # one isolated workspace per task
 ```
 
@@ -469,13 +522,16 @@ zunesha/
 
 ```
 zou init    [--path <PATH>] [--force]   # bootstrap .zou/ + SQLite
-zou plan    "<prompt>" [--path <PATH>]  # plan a feature into a task DAG (built-in, or ZOU_PLANNER_CMD)
+zou plan    "<prompt>" [--attach FILE] [--path <PATH>]  # plan a feature into a task DAG (built-in, or ZOU_PLANNER_CMD)
 zou work    <TASK_ID> [--activate]      # spin up isolated workspace for a task
 zou diff    <TASK_ID>                   # show the task workspace's diff
 zou run     [--jobs N] [--follow]       # run the agent on ready tasks, in parallel
+zou cancel  <TASK_ID>                   # stop a running agent + its process tree; release the task
+zou events  <TASK_ID>                   # print the structured run/audit timeline
 zou approve <TASK_ID>                   # merge reviewed work into the repo (auto-resolves conflicts, Phase 9)
 zou recover [TASK_ID]                   # release stuck IN_PROGRESS/EVALUATING/RESOLVING_CONFLICTS tasks (crash recovery)
-zou model   [MODEL] [--list|--show|--clear]  # choose/save the OpenCode model used by the agent
+zou agent   [opencode|antigravity] [--model ID]  # show/switch the agent provider
+zou model   [MODEL] [--list|--show|--clear]  # choose/save the active provider's model
 zou update  [--check] [--yes] [--repo URL|PATH] [--prefix DIR] [--no-dashboard]
                                         # check release tags; prompt before updating
 zou status  [--path <PATH>]             # per-status counts + task list
@@ -621,10 +677,32 @@ every ready (`TODO`) task:
 - **Agent command** — defaults to `opencode run --format json "<prompt>"`.
   `zou model` saves
   `opencode run --auto --format json --model <id> {prompt}` user-wide;
-  `ZOU_AGENT_CMD` overrides both (parsed with full POSIX-style quoting —
-  single/double quotes, backslash escapes — and `{prompt}` / `{workspace}`
+  `zou agent antigravity` switches to the `agy` headless command;
+  `ZOU_AGENT_CMD` overrides all of them (parsed with full POSIX-style quoting
+  — single/double quotes, backslash escapes — and `{prompt}` / `{workspace}`
   placeholders). A custom command that does not emit OpenCode's JSON events
-  still works; its full output remains in Logs.
+  still works; its full output remains in Logs. Antigravity's `stream-json`
+  events are parsed into the same separate Logs/Output split.
+- **Containment** — before every attempt the worker canonicalizes the
+  workspace and rejects symlinks that resolve outside it. On Linux, when
+  `bwrap` is usable, the agent runs with the host filesystem read-only and
+  only the workspace writable (plus a private `/tmp` and narrow agent cache
+  dirs). This is a policy layer, not a claim that a hostile local process is
+  fully contained; `ZOU_SANDBOX=off` disables the OS jail but keeps symlink
+  validation. Logs and final output pass through secret redaction before they
+  are streamed or persisted.
+- **Timeout & cancellation** — each attempt has a wall-clock limit
+  (`ZOU_AGENT_TIMEOUT_SECS`, default 30 minutes). `zou cancel <id>` (or the
+  dashboard/TUI/playground cancel action) wakes the worker immediately and
+  kills the whole process tree (`kill -TERM`/`-KILL` on the process group on
+  Unix, `taskkill /T /F` on Windows). The task returns to `TODO` with a note
+  explaining the timeout or cancellation; its workspace is kept.
+- **Run journal** — every attempt writes a `runs` row plus append-only
+  `run_events` (`run_started`, `agent_started`, `agent_finished`,
+  `validation_*`, `status_changed`, `run_interrupted`, `run_finished`).
+  `zou events <id>` and `GET /api/tasks/:id/events` replay the latest run for
+  debugging, including runs that failed during workspace setup. Journal
+  writes are best-effort and never take down the agent.
 - **Prompt shape** — task title + description (including any
   `## Validation failure` tail from Phase 8), the conflict instruction when
   running in Phase 9's resolution mode, prior-agent context when the source
@@ -806,11 +884,13 @@ changes and no instruction files simply produces no document.
 | GET    | `/api/status`            | Per-status counts + concurrency cap.       |
 | GET    | `/api/tasks`             | Every task, the dependency DAG (`dependencies`), and per-status counts. |
 | GET    | `/api/tasks/:id`         | One task (transcript, agent output, and diff included). |
-| POST   | `/api/plan`              | `{"prompt": "..."}` → DAG of tasks (built-in or `ZOU_PLANNER_CMD`; `400` when the model's plan is invalid). |
+| POST   | `/api/plan`              | `{"prompt": "...", "attachments": [{"name","media_type","data"}]}` → DAG of tasks (built-in or `ZOU_PLANNER_CMD`; `400` when the plan or an upload is invalid). `data` is raw base64 or a `data:` URL; body limit 40 MiB (the 24 MiB decoded attachment cap plus base64/JSON overhead). |
 | POST   | `/api/run`               | Start agents on all ready (`TODO`) tasks.  |
 | POST   | `/api/tasks/:id/run`     | Start the agent on one ready task.         |
+| POST   | `/api/tasks/:id/cancel`  | Stop a live agent + process tree and release the task → `TODO`; `409` when this daemon does not own it. |
+| GET    | `/api/tasks/:id/events`  | Latest run row + up to 500 decoded audit events. |
 | POST   | `/api/tasks/:id/approve` | Merge approved diff → repo; `REVIEW→DONE` (a conflict queues auto-resolution, `REVIEW→RESOLVING_CONFLICTS`). |
-| POST   | `/api/tasks/:id/reject`  | `{"feedback": "..."}` → back to `TODO` (from `REVIEW` or `FAILED_NEEDS_HUMAN`; resets the retry budget). |
+| POST   | `/api/tasks/:id/reject`  | `{"feedback": "...", "attachments": [...]}` → back to `TODO` (from `REVIEW` or `FAILED_NEEDS_HUMAN`; resets the retry budget). |
 | POST   | `/api/recover`           | Release stuck `IN_PROGRESS`/`EVALUATING`/`RESOLVING_CONFLICTS` tasks → `TODO`; `{"task_id": "..."}` for one, `{}` for all. |
 | WS     | `/ws`                    | Live snapshots + streaming agent logs.     |
 
@@ -834,7 +914,16 @@ Key behaviors:
 - **Reject** appends the reviewer's feedback under a `## Reviewer feedback`
   heading on the task description (the next agent attempt sees why) and sends
   it `REVIEW → TODO`, leaving the workspace intact so the retry builds on the
-  previous diff.
+  previous diff. Optional attachments are stored and referenced the same way
+  as plan uploads.
+- **Cancel** is deliberately in-memory: it only stops a worker owned by the
+  current daemon. A task claimed by a dead process is released by
+  `/api/recover` or boot resume instead.
+- **Audit** — `/api/tasks/:id/events` returns the latest run and its decoded
+  timeline. Events survive restarts; the endpoint is read-only.
+- **Validation errors** — `SandboxViolation`, `Attachment`, invalid plans, and
+  invalid transitions map to `400`/`409` with a JSON `error` message, never an
+  HTML page.
 - **WebSocket protocol** — every message is an `ApiEvent`, tagged by `type`:
   `snapshot` (full board — tasks, the `dependencies` edge list the DAG view
   renders, and counts; sent on connect and after every human mutation),
@@ -873,7 +962,17 @@ The Axum server auto-discovers `web/out` (override with `ZOU_DASHBOARD_DIR` or
   FAILED_NEEDS_HUMAN` on the second), driven by WebSocket
   `snapshot`/`task_updated` events. Click a card to open the review modal.
   `FAILED_NEEDS_HUMAN` cards open with a **Send back to queue** action (with
-  optional feedback, resetting the retry budget).
+  optional feedback, resetting the retry budget). On phones the board becomes
+  a horizontally snapping column rail; controls and the modal go full-width,
+  and the header collapses to a compact form. Tablet/desktop layouts are
+  unchanged.
+- **Attachments** — the plan bar accepts files, drag-and-drop, and pasted
+  images, shows bounded chips with previews, and sends base64 in
+  `POST /api/plan`. The review modal accepts attachments with rejection
+  feedback. Limits are enforced client-side for instant feedback and again in
+  the daemon.
+- **Cancel** — live tasks expose **Cancel agent** (process-tree kill) beside
+  the existing **Release stuck task** recovery path.
 - **DAG view** (Phase 11) — a `board | dag` toggle in the header switches to an
   interactive [@xyflow/react](https://reactflow.dev) graph of the plan: nodes are
   tasks with the same status accents, edges are the dependency list drawn
@@ -933,14 +1032,16 @@ the live log/tool transcript. All actions go through the public API:
 | `tab` | cycle detail tabs |
 | `l` / `o` / `d` / `i` | logs / output / diff / task |
 | `p` | plan a feature |
+| `A` | attach a file to the next plan (repeatable) |
 | `r` / `R` | run all ready tasks / run selected task |
 | `a` / `x` | approve / reject with feedback |
+| `C` | cancel the selected running task (confirmation) |
 | `c` | recover a stuck task |
 | `g` | refresh from REST |
-| `m` | model picker (saves the choice user-wide) |
+| `m` | model picker for the active provider (saves user-wide) |
 | `f` | filter tasks |
 | `t` | cycle theme |
-| `:` | command palette (`:run`, `:approve`, `:theme solarized`, …) |
+| `:` | command palette (`:run`, `:attach <path>`, `:clear-attachments`, `:theme solarized`, …) |
 | `?` | help |
 | `q` / `Ctrl-C` | quit |
 
@@ -957,10 +1058,12 @@ statusbar = ["project", "connection", "running", "review", "theme"]
 [keys]
 quit = "q"
 plan = "p"
+attach = "A"
 run = "r"
 run_one = "R"
 approve = "a"
 reject = "x"
+cancel = "C"
 recover = "c"
 command = ":"
 
@@ -972,10 +1075,12 @@ danger = "#ff5a5a"
 
 The config is re-read every two seconds while the TUI is open, so theme,
 keymap, status-bar, layout, and colour edits apply without restarting. `--theme`
-still wins for that session. The model picker (`m`) lists `opencode models` and
-writes `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`; restart a running daemon
-after changing it. See [Terminal UI](docs/src/tui.md) for every key, palette
-command, key-spec syntax, status-bar item, and theme.
+still wins for that session. `layout = "auto"` stacks the panes below 100
+columns, so narrow terminals and phone SSH sessions stay usable. The model
+picker (`m`) lists `opencode models` or `agy models` for the active provider
+and writes `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`; restart a running
+daemon after changing it. See [Terminal UI](docs/src/tui.md) for every key,
+palette command, key-spec syntax, status-bar item, and theme.
 
 ## Playground (pixel office control room)
 
@@ -995,9 +1100,15 @@ office animates the lifecycle at a glance:
 It is a real control room, not a read-only monitor. Select a desk or task to
 inspect its **Output** (styled Markdown), **Logs** (live stream), **Diff**, and
 **Task** metadata. The inspector has the same lifecycle controls as the
-dashboard and TUI: plan a feature, run all ready tasks, run one task, approve,
-reject with feedback, recover a stuck task, and refresh. Plan/run/reject
+dashboard and TUI: plan a feature, attach images/files, run all ready tasks,
+run one task, approve, reject with feedback (plus attachments), cancel a
+running agent, recover a stuck task, and refresh. Plan/run/reject/cancel
 actions are confirmed, and errors stay visible in a dismissible banner.
+Attachments support the picker, drag-and-drop, and pasted images.
+
+On narrow screens the rail, office, and inspector stack; the topbar stays
+compact, controls become full-width tap targets, and the reject modal becomes
+a bottom sheet with safe-area padding.
 
 The page consumes the full `GET /api/tasks` snapshot and the `/ws` stream, so
 logs and output arrive live. The office renderer is adapted from
@@ -1083,6 +1194,28 @@ workspaces (                              -- added in Phase 3
     branch TEXT,         -- zou/<task_id>
     base_commit TEXT     -- baseline for diffs
 )
+
+runs (                                    -- added in v0.10.0
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL,           -- normal | resolve_conflicts
+    state TEXT NOT NULL,          -- RUNNING | final task status | ERROR
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    error_class TEXT,
+    detail TEXT
+)
+
+run_events (                              -- added in v0.10.0
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    kind TEXT NOT NULL,           -- run_started | agent_started | …
+    payload TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    UNIQUE (run_id, seq)
+)
 ```
 
 Databases created before Phase 8 are migrated transparently on first open
@@ -1163,9 +1296,15 @@ connection pool.
 | 12    | Prior-agent context from uncommitted work          | ✅ done |
 | 13    | Customizable terminal UI (ratatui, themes, keymaps) | ✅ done |
 | 14    | Interactive pixel-office control room              | ✅ done |
+| 15    | **v0.10.0 Safe by Default**: containment, timeout/cancel, run journal, Antigravity provider, prompt attachments, mobile layouts | ✅ done |
+| 16    | v0.11.0 Recoverable: persistent sessions, requeue with feedback, stronger restart semantics | next |
+| 17    | v0.12.0 Measurable: evals, cost/token accounting, policy checks | planned |
+| 18    | v0.13.0 Coordinated: multi-agent handoffs, live steering protocol | planned |
+| 19    | v1.0.0 Everywhere: stable interfaces, desktop/mobile parity, remote workers | planned |
 
 Beyond the blueprint: a real **external planner** (`ZOU_PLANNER_CMD` — any LLM
 CLI that reads a prompt on stdin and prints a JSON plan; see
-[Configure the planner](#configure-the-planner-llm-backed)) and a
+[Configure the planner](#configure-the-planner-llm-backed)), a
 **docs site** (mdBook: guides + this README as the reference — see
-[Documentation](#documentation)).
+[Documentation](#documentation)), and an optional **Google Antigravity**
+provider (`zou agent antigravity`).

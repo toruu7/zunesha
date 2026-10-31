@@ -55,17 +55,19 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{broadcast, mpsc, Semaphore};
 
-use crate::config::Config;
-use crate::db::Database;
+use crate::config::{AgentProvider, Config};
+use crate::control::{RunControl, RunRegistry};
+use crate::db::{Database, RunRecord};
 use crate::error::{Error, Result};
 use crate::eval::{self, EvalCommand};
 use crate::paths::ZuneshaPaths;
+use crate::sandbox::{redact_secrets, SandboxMode, SandboxPolicy};
 use crate::task::{Task, TaskStatus, MAX_EVAL_RETRIES};
 use crate::workspace::WorkspaceManager;
 
@@ -75,6 +77,12 @@ const LOG_FLUSH_INTERVAL: Duration = Duration::from_millis(400);
 
 /// Default cap on simultaneously running agents.
 pub const DEFAULT_MAX_CONCURRENCY: usize = 3;
+
+/// Default wall-clock limit for one agent attempt (30 minutes).
+pub const DEFAULT_AGENT_TIMEOUT_SECS: u64 = 30 * 60;
+
+/// Grace period between SIGTERM and SIGKILL when cancelling a process tree.
+const KILL_GRACE: Duration = Duration::from_millis(200);
 
 /// Which stream a log line came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -125,8 +133,9 @@ impl Default for AgentCommand {
     ///
     /// 1. `ZOU_AGENT_CMD`, parsed as a command line honoring shell-style
     ///    quoting (e.g. `ZOU_AGENT_CMD="opencode run --auto '{prompt}'"`).
-    /// 2. The model saved by `zou model` in the user-wide config, invoked as
-    ///    `opencode run --auto --format json --model <id> {prompt}`.
+    /// 2. The provider/model saved by `zou agent` / `zou model`:
+    ///    * OpenCode → `opencode run --auto --format json --model <id> {prompt}`
+    ///    * Antigravity → `agy -p {prompt} --output-format stream-json …`
     /// 3. The installed `opencode` CLI as
     ///    `opencode run --format json {prompt}`.
     ///
@@ -181,26 +190,62 @@ impl AgentCommand {
         }
     }
 
-    /// Build the default OpenCode agent for a saved model.
+    /// Build the configured agent invocation.
     ///
-    /// `--auto` is intentional: Zunesha runs headlessly with stdin closed, so
-    /// an interactive permission prompt would hang the task. The JSON format is
-    /// what lets the worker separate the final Markdown response from tool
+    /// OpenCode uses `--auto` because Zunesha runs headlessly with stdin
+    /// closed; an interactive permission prompt would hang the task. Its JSON
+    /// format lets the worker separate the final Markdown response from tool
     /// activity.
+    ///
+    /// Antigravity's headless mode needs `--dangerously-skip-permissions` for
+    /// the same reason: without it, shell commands are soft-denied. Zunesha
+    /// still runs the agent in an isolated workspace and keeps the human merge
+    /// gate; use `ZOU_AGENT_CMD` if you need a narrower permission policy.
     pub fn from_config(config: &Config) -> Option<Self> {
-        let model = config.model()?;
-        Some(AgentCommand {
-            program: "opencode".to_string(),
-            args: vec![
-                "run".to_string(),
-                "--auto".to_string(),
-                "--format".to_string(),
-                "json".to_string(),
-                "--model".to_string(),
-                model.to_string(),
-                "{prompt}".to_string(),
-            ],
-        })
+        match config.provider() {
+            AgentProvider::Opencode => {
+                let model = config.model()?;
+                Some(AgentCommand {
+                    program: "opencode".to_string(),
+                    args: vec![
+                        "run".to_string(),
+                        "--auto".to_string(),
+                        "--format".to_string(),
+                        "json".to_string(),
+                        "--model".to_string(),
+                        model.to_string(),
+                        "{prompt}".to_string(),
+                    ],
+                })
+            }
+            AgentProvider::Antigravity => Some(Self::antigravity(config.model())),
+        }
+    }
+
+    /// The built-in Antigravity headless invocation.
+    ///
+    /// `stream-json` is the only format that exposes both tool activity and
+    /// the final response, so the Output and Logs tabs stay separate. The
+    /// print timeout mirrors the worker's default 30-minute agent budget; the
+    /// worker's own timeout is the backstop if `agy` ignores it.
+    fn antigravity(model: Option<&str>) -> Self {
+        let mut args = vec![
+            "-p".to_string(),
+            "{prompt}".to_string(),
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+            "--dangerously-skip-permissions".to_string(),
+            "--print-timeout".to_string(),
+            "30m".to_string(),
+        ];
+        if let Some(model) = model {
+            args.push("--model".to_string());
+            args.push(model.to_string());
+        }
+        AgentCommand {
+            program: "agy".to_string(),
+            args,
+        }
     }
 
     /// Parse a full command line (program + args) from a string.
@@ -347,6 +392,42 @@ pub(crate) enum RunMode {
     ResolveConflicts,
 }
 
+impl RunMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::ResolveConflicts => "resolve_conflicts",
+        }
+    }
+}
+
+/// How one agent attempt ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentOutcome {
+    /// The process exited; the bool is whether the exit status was success.
+    Exited(bool),
+    /// The per-attempt wall-clock limit elapsed and the tree was killed.
+    TimedOut,
+    /// A human requested cancellation and the tree was killed.
+    Cancelled,
+}
+
+enum WaitOutcome {
+    Exited(std::process::ExitStatus),
+    Cancelled,
+    TimedOut,
+}
+
+/// Read `ZOU_AGENT_TIMEOUT_SECS`, defaulting to 30 minutes.
+fn agent_timeout_from_env() -> Duration {
+    let secs = std::env::var("ZOU_AGENT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(DEFAULT_AGENT_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
+
 /// A bounded pool of concurrently running coding agents.
 pub struct WorkerPool {
     max_concurrency: usize,
@@ -356,6 +437,9 @@ pub struct WorkerPool {
     agent: AgentCommand,
     eval: EvalCommand,
     eval_timeout: Duration,
+    agent_timeout: Duration,
+    sandbox_mode: SandboxMode,
+    controls: RunRegistry,
     events: broadcast::Sender<WorkerEvent>,
 }
 
@@ -382,6 +466,9 @@ impl WorkerPool {
             agent,
             eval: EvalCommand::from_env(),
             eval_timeout: eval::timeout_from_env(),
+            agent_timeout: agent_timeout_from_env(),
+            sandbox_mode: SandboxMode::from_env(),
+            controls: RunRegistry::default(),
             events,
         }
     }
@@ -398,9 +485,40 @@ impl WorkerPool {
         self
     }
 
+    /// Override the per-agent-attempt wall-clock limit.
+    pub fn with_agent_timeout(mut self, timeout: Duration) -> Self {
+        self.agent_timeout = timeout;
+        self
+    }
+
+    /// Override the containment mode (tests, programmatic config).
+    pub fn with_sandbox_mode(mut self, mode: SandboxMode) -> Self {
+        self.sandbox_mode = mode;
+        self
+    }
+
     /// The cap on simultaneous agents.
     pub fn max_concurrency(&self) -> usize {
         self.max_concurrency
+    }
+
+    /// The configured per-agent-attempt timeout.
+    pub fn agent_timeout(&self) -> Duration {
+        self.agent_timeout
+    }
+
+    /// Cancel a task owned by a live worker in this process.
+    ///
+    /// Returns `false` when the task is not running here. A task owned by a
+    /// different process (for example a separate `zou run`) cannot be
+    /// cancelled through this pool; use `zou recover` for a dead claim.
+    pub fn cancel(&self, task_id: &str) -> bool {
+        self.controls.cancel(task_id)
+    }
+
+    /// Ids currently owned by live workers in this process.
+    pub fn active_tasks(&self) -> Vec<String> {
+        self.controls.active()
     }
 
     /// Subscribe to this pool's events (logs, status changes, completions).
@@ -498,9 +616,11 @@ impl WorkerPool {
             to: TaskStatus::InProgress,
         });
 
+        let control = self.controls.register(&task_id);
+
         // Semaphore permit is acquired *inside* the worker so this method
         // returns immediately; the task simply waits its turn.
-        Ok(self.launch(task, RunMode::Normal))
+        Ok(self.launch(task, RunMode::Normal, control))
     }
 
     /// Resolve a merge conflict for an already-prepared task (Phase 9).
@@ -537,28 +657,43 @@ impl WorkerPool {
             db.set_diff(&task_id, "")?;
             task
         };
-        Ok(self.launch(task, RunMode::ResolveConflicts))
+        let control = self.controls.register(&task_id);
+        Ok(self.launch(task, RunMode::ResolveConflicts, control))
     }
 
     /// Wrap a claimed task in the per-worker state and spawn it under the
     /// concurrency cap.
-    fn launch(&self, task: Task, mode: RunMode) -> tokio::task::JoinHandle<Result<bool>> {
+    fn launch(
+        &self,
+        task: Task,
+        mode: RunMode,
+        control: RunControl,
+    ) -> tokio::task::JoinHandle<Result<bool>> {
         let pool = Arc::new(WorkerHandle {
             db_path: self.db_path.clone(),
             paths: self.paths.clone(),
             agent: self.agent.clone(),
             eval: self.eval.clone(),
             eval_timeout: self.eval_timeout,
+            agent_timeout: self.agent_timeout,
+            sandbox_mode: self.sandbox_mode,
             events: self.events.clone(),
         });
         let semaphore = self.semaphore.clone();
+        let controls = self.controls.clone();
+        let task_id = task.id.clone();
 
         tokio::spawn(async move {
-            let _permit = semaphore
-                .acquire_owned()
-                .await
-                .map_err(|_| Error::Workspace("worker pool closed".into()))?;
-            run_one(&pool, task, mode).await
+            let result = async {
+                let _permit = semaphore
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| Error::Workspace("worker pool closed".into()))?;
+                run_one(&pool, task, mode, control).await
+            }
+            .await;
+            controls.remove(&task_id);
+            result
         })
     }
 
@@ -575,6 +710,8 @@ struct WorkerHandle {
     agent: AgentCommand,
     eval: EvalCommand,
     eval_timeout: Duration,
+    agent_timeout: Duration,
+    sandbox_mode: SandboxMode,
     events: broadcast::Sender<WorkerEvent>,
 }
 
@@ -585,6 +722,99 @@ impl WorkerHandle {
 
     fn emit(&self, event: WorkerEvent) {
         let _ = self.events.send(event);
+    }
+}
+
+/// A durable, append-only record of one worker run.
+///
+/// The journal is best-effort: a failure to write an audit event must never
+/// take down the agent. The run row itself is created before work starts so
+/// even a workspace setup failure leaves a visible record.
+struct RunJournal {
+    db_path: PathBuf,
+    run_id: String,
+    task_id: String,
+}
+
+impl RunJournal {
+    fn start(pool: &WorkerHandle, task: &Task, mode: RunMode) -> Result<Self> {
+        let run_id = new_run_id(&task.id);
+        let db = pool.open_db()?;
+        db.start_run(&RunRecord {
+            id: run_id.clone(),
+            task_id: task.id.clone(),
+            mode: mode.as_str().to_string(),
+            state: "RUNNING".to_string(),
+            started_at: String::new(),
+            ended_at: None,
+            error_class: None,
+            detail: String::new(),
+        })?;
+        let journal = Self {
+            db_path: pool.db_path.clone(),
+            run_id,
+            task_id: task.id.clone(),
+        };
+        journal.event(
+            "run_started",
+            serde_json::json!({
+                "mode": mode.as_str(),
+                "retry_count": task.retry_count,
+                "agent_timeout_secs": pool.agent_timeout.as_secs(),
+                "sandbox": pool.sandbox_mode.as_str(),
+            }),
+        );
+        Ok(journal)
+    }
+
+    fn event(&self, kind: &str, payload: serde_json::Value) {
+        if let Ok(db) = Database::open(&self.db_path) {
+            let _ = db.append_run_event(&self.run_id, &self.task_id, kind, &payload.to_string());
+        }
+    }
+
+    fn finish(&self, state: &str, error_class: Option<&str>, detail: &str, success: bool) {
+        if let Ok(db) = Database::open(&self.db_path) {
+            let _ = db.finish_run(&self.run_id, state, error_class, detail);
+        }
+        self.event(
+            "run_finished",
+            serde_json::json!({ "state": state, "success": success }),
+        );
+    }
+}
+
+fn new_run_id(task_id: &str) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{task_id}-{nanos}")
+}
+
+/// Append a human-readable note to a task description without losing the
+/// existing text. Used for cancellation and timeout explanations so the next
+/// attempt (and the reviewer) sees why the run stopped.
+fn append_run_note(description: &str, heading: &str, detail: &str) -> String {
+    let mut updated = description.trim_end().to_string();
+    if !updated.is_empty() {
+        updated.push_str("\n\n");
+    }
+    updated.push_str("## ");
+    updated.push_str(heading);
+    updated.push('\n');
+    updated.push_str(detail.trim());
+    updated
+}
+
+impl AgentOutcome {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Exited(true) => "success",
+            Self::Exited(false) => "failed",
+            Self::TimedOut => "timed_out",
+            Self::Cancelled => "cancelled",
+        }
     }
 }
 
@@ -609,13 +839,19 @@ impl WorkerHandle {
 /// In both modes the workspace's Phase 10 `CODEBASE_MAP.md` is appended last
 /// to the prompt, and the Phase 12 `PRIOR_AGENT_CONTEXT.md` rides just before
 /// it; both are read once during setup.
-async fn run_one(pool: &Arc<WorkerHandle>, task: Task, mode: RunMode) -> Result<bool> {
+async fn run_one(
+    pool: &Arc<WorkerHandle>,
+    task: Task,
+    mode: RunMode,
+    control: RunControl,
+) -> Result<bool> {
     let task_id = task.id.clone();
+    let journal = RunJournal::start(pool, &task, mode)?;
 
     // Workspace setup does blocking filesystem + git work; keep it off the
     // async runtime. The Phase 10 / 12 reference documents are read here too —
     // once per run, identical for every prompt of that run.
-    let (ws_dir, codebase_map, prior_context) = {
+    let setup = {
         let pool = pool.clone();
         let task_id = task_id.clone();
         tokio::task::spawn_blocking(
@@ -647,7 +883,20 @@ async fn run_one(pool: &Arc<WorkerHandle>, task: Task, mode: RunMode) -> Result<
             },
         )
         .await
-        .map_err(|e| Error::Workspace(format!("workspace setup panicked: {e}")))??
+        .map_err(|e| Error::Workspace(format!("workspace setup panicked: {e}")))
+    };
+    let (ws_dir, codebase_map, prior_context) = match setup {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => {
+            journal.finish("ERROR", Some("workspace_setup"), &error.to_string(), false);
+            release_after_setup_error(pool, &task_id, mode).await;
+            return Err(error);
+        }
+        Err(error) => {
+            journal.finish("ERROR", Some("workspace_setup"), &error.to_string(), false);
+            release_after_setup_error(pool, &task_id, mode).await;
+            return Err(error);
+        }
     };
 
     // One log collector for the entire run: the agent attempts and every
@@ -687,25 +936,142 @@ async fn run_one(pool: &Arc<WorkerHandle>, task: Task, mode: RunMode) -> Result<
                 prompt.push_str("\n\n");
                 prompt.push_str(map);
             }
-            if !run_agent_once(pool, &ws_dir, &prompt, &line_tx).await? {
-                // Normal run: the agent failed; a human decides the next
-                // attempt. Conflict run: the overlap could not be reconciled,
-                // and there is no from-scratch re-plan — park for a human.
-                return Ok::<(TaskStatus, bool), Error>(match mode {
-                    RunMode::Normal => (TaskStatus::Todo, false),
-                    RunMode::ResolveConflicts => (TaskStatus::FailedNeedsHuman, false),
-                });
+            journal.event(
+                "agent_started",
+                serde_json::json!({
+                    "attempt": retry_count + 1,
+                    "timeout_secs": pool.agent_timeout.as_secs(),
+                }),
+            );
+            let outcome = run_agent_once(pool, &ws_dir, &prompt, &line_tx, &control).await?;
+            journal.event(
+                "agent_finished",
+                serde_json::json!({ "outcome": outcome.label() }),
+            );
+            match outcome {
+                AgentOutcome::Exited(true) => {}
+                AgentOutcome::Exited(false) => {
+                    // Normal run: the agent failed; a human decides the next
+                    // attempt. Conflict run: the overlap could not be
+                    // reconciled, and there is no from-scratch re-plan — park
+                    // for a human.
+                    return Ok::<(TaskStatus, bool), Error>(match mode {
+                        RunMode::Normal => (TaskStatus::Todo, false),
+                        RunMode::ResolveConflicts => (TaskStatus::FailedNeedsHuman, false),
+                    });
+                }
+                AgentOutcome::TimedOut | AgentOutcome::Cancelled => {
+                    let (heading, detail, to) = match (outcome, mode) {
+                        (AgentOutcome::TimedOut, RunMode::Normal) => (
+                            "Agent timeout",
+                            format!(
+                                "The agent exceeded the {}s wall-clock limit and was stopped. \
+                                 Retry when you are ready.",
+                                pool.agent_timeout.as_secs()
+                            ),
+                            TaskStatus::Todo,
+                        ),
+                        (AgentOutcome::TimedOut, RunMode::ResolveConflicts) => (
+                            "Agent timeout",
+                            format!(
+                                "Conflict resolution exceeded the {}s wall-clock limit and was \
+                                 stopped. Inspect the workspace and retry.",
+                                pool.agent_timeout.as_secs()
+                            ),
+                            TaskStatus::FailedNeedsHuman,
+                        ),
+                        (AgentOutcome::Cancelled, RunMode::Normal) => (
+                            "Run cancelled",
+                            "The run was cancelled by a human. Retry when you are ready."
+                                .to_string(),
+                            TaskStatus::Todo,
+                        ),
+                        (AgentOutcome::Cancelled, RunMode::ResolveConflicts) => (
+                            "Run cancelled",
+                            "Conflict resolution was cancelled by a human. Inspect the workspace \
+                             and retry."
+                                .to_string(),
+                            TaskStatus::FailedNeedsHuman,
+                        ),
+                        (AgentOutcome::Exited(_), _) => unreachable!("handled above"),
+                    };
+                    description = append_run_note(&description, heading, &detail);
+                    {
+                        let db = pool.open_db()?;
+                        db.update_task(&task_id, None, Some(&description))?;
+                    }
+                    journal.event(
+                        "run_interrupted",
+                        serde_json::json!({
+                            "reason": outcome.label(),
+                            "status": to.as_str(),
+                        }),
+                    );
+                    return Ok((to, false));
+                }
             }
 
             // --- Validation (Phase 8 self-healing loop) -------------------
+            let from = status;
             transition(pool, &task_id, &mut status, TaskStatus::Evaluating).await?;
+            journal.event(
+                "status_changed",
+                serde_json::json!({ "from": from.as_str(), "to": status.as_str() }),
+            );
             let Some(argv) = pool.eval.resolve(Path::new(&ws_dir)) else {
                 // Nothing to validate in this project: exit-0 is as good as
                 // a green test run, so go straight to human review.
+                journal.event("validation_skipped", serde_json::json!({}));
                 return Ok((TaskStatus::Review, true));
             };
-            let outcome =
-                eval::run_evaluation(&argv, Path::new(&ws_dir), pool.eval_timeout, &line_tx).await;
+            journal.event("validation_started", serde_json::json!({ "command": argv }));
+            let outcome = eval::run_evaluation_with_control(
+                &argv,
+                Path::new(&ws_dir),
+                pool.eval_timeout,
+                &line_tx,
+                Some(&control),
+            )
+            .await;
+            journal.event(
+                "validation_finished",
+                serde_json::json!({
+                    "success": outcome.success,
+                    "cancelled": outcome.cancelled,
+                }),
+            );
+            if outcome.cancelled {
+                let (heading, detail, to) = match mode {
+                    RunMode::Normal => (
+                        "Run cancelled",
+                        "The run was cancelled by a human during validation. Retry when you are \
+                         ready."
+                            .to_string(),
+                        TaskStatus::Todo,
+                    ),
+                    RunMode::ResolveConflicts => (
+                        "Run cancelled",
+                        "Conflict resolution was cancelled by a human during validation. \
+                         Inspect the workspace and retry."
+                            .to_string(),
+                        TaskStatus::FailedNeedsHuman,
+                    ),
+                };
+                description = append_run_note(&description, heading, &detail);
+                {
+                    let db = pool.open_db()?;
+                    db.update_task(&task_id, None, Some(&description))?;
+                }
+                journal.event(
+                    "run_interrupted",
+                    serde_json::json!({
+                        "reason": "cancelled",
+                        "phase": "validation",
+                        "status": to.as_str(),
+                    }),
+                );
+                return Ok((to, false));
+            }
             if outcome.success {
                 // Clean the failure section (if any) so the reviewer sees
                 // the task as originally written.
@@ -736,7 +1102,12 @@ async fn run_one(pool: &Arc<WorkerHandle>, task: Task, mode: RunMode) -> Result<
                 RunMode::Normal => TaskStatus::InProgress,
                 RunMode::ResolveConflicts => TaskStatus::ResolvingConflicts,
             };
+            let from = status;
             transition(pool, &task_id, &mut status, retry_to).await?;
+            journal.event(
+                "status_changed",
+                serde_json::json!({ "from": from.as_str(), "to": status.as_str() }),
+            );
             // Loop: the agent re-runs in the same workspace with the errors.
         }
     }
@@ -746,6 +1117,10 @@ async fn run_one(pool: &Arc<WorkerHandle>, task: Task, mode: RunMode) -> Result<
     drop(line_tx);
     let _ = collector.await;
 
+    match &drive {
+        Ok((to, success)) => journal.finish(to.as_str(), None, "", *success),
+        Err(error) => journal.finish("ERROR", Some("internal"), &error.to_string(), false),
+    }
     let (to, success) = drive?;
 
     if success {
@@ -770,10 +1145,42 @@ async fn run_one(pool: &Arc<WorkerHandle>, task: Task, mode: RunMode) -> Result<
         .await;
     }
 
+    let from = status;
     transition(pool, &task_id, &mut status, to).await?;
+    journal.event(
+        "status_changed",
+        serde_json::json!({ "from": from.as_str(), "to": status.as_str() }),
+    );
     pool.emit(WorkerEvent::TaskFinished { task_id, success });
 
     Ok(success)
+}
+
+/// Release a task whose workspace setup failed after it was claimed.
+///
+/// Leaving it `IN_PROGRESS` would strand the task until a manual recovery, so
+/// release a normal run to `TODO` and park a conflict-resolution run for a
+/// human (its workspace state needs inspection). Best-effort: the journal row
+/// already records the setup error even if this transition fails.
+async fn release_after_setup_error(pool: &WorkerHandle, task_id: &str, mode: RunMode) {
+    let to = match mode {
+        RunMode::Normal => TaskStatus::Todo,
+        RunMode::ResolveConflicts => TaskStatus::FailedNeedsHuman,
+    };
+    let Ok(db) = pool.open_db() else {
+        return;
+    };
+    let Ok(Some(task)) = db.get_task(task_id) else {
+        return;
+    };
+    if task.status == to || db.set_status(task_id, to).is_err() {
+        return;
+    }
+    pool.emit(WorkerEvent::StatusChanged {
+        task_id: task_id.to_string(),
+        from: task.status,
+        to,
+    });
 }
 
 /// Move a task to `to`, persisting and broadcasting the transition.
@@ -804,15 +1211,29 @@ async fn transition(
 }
 
 /// One agent attempt: spawn the agent in the workspace, stream its output
-/// into the run's shared log channel, and wait for it to exit.
-/// Returns whether the agent exited 0.
+/// into the run's shared log channel, and wait for it to exit, time out, or
+/// be cancelled.
 async fn run_agent_once(
     pool: &WorkerHandle,
     ws_dir: &str,
     prompt: &str,
     line_tx: &mpsc::UnboundedSender<(StreamKind, String)>,
-) -> Result<bool> {
+    control: &RunControl,
+) -> Result<AgentOutcome> {
+    // A cancel can arrive while this task was waiting for a concurrency slot
+    // or during workspace setup. Do not spawn an agent just to kill it.
+    if control.is_cancelled() {
+        let _ = line_tx.send((
+            StreamKind::Stderr,
+            "[zou] run cancelled by user before the agent started".to_string(),
+        ));
+        return Ok(AgentOutcome::Cancelled);
+    }
+    let policy = SandboxPolicy::new(ws_dir, pool.sandbox_mode)?;
+    policy.validate()?;
+
     let (program, args) = pool.agent.render(prompt, ws_dir);
+    let (program, args) = policy.wrap(&program, &args)?;
 
     // Spawn the agent with piped output, running inside the workspace. The
     // environment is pinned too: inheriting a parent OpenCode/Claude session
@@ -825,6 +1246,16 @@ async fn run_agent_once(
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
     crate::child_env::prepare(&mut command, Path::new(ws_dir));
+
+    // Put the agent in its own process group so cancellation kills its
+    // children too, not just the direct process. Windows uses `taskkill /T`
+    // in `terminate_child` instead.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.as_std_mut().process_group(0);
+    }
+
     let mut child = command
         .spawn()
         .map_err(|e| Error::Workspace(format!("failed to spawn agent `{program}`: {e}")))?;
@@ -846,16 +1277,94 @@ async fn run_agent_once(
     let out_task = tokio::spawn(read_lines(stdout, StreamKind::Stdout, line_tx.clone()));
     let err_task = tokio::spawn(read_lines(stderr, StreamKind::Stderr, line_tx.clone()));
 
-    let status = child
-        .wait()
+    let wait = {
+        let wait = child.wait();
+        tokio::pin!(wait);
+        tokio::select! {
+            _ = control.cancelled() => WaitOutcome::Cancelled,
+            _ = tokio::time::sleep(pool.agent_timeout) => WaitOutcome::TimedOut,
+            status = &mut wait => WaitOutcome::Exited(
+                status.map_err(|e| Error::Workspace(format!("failed to wait on agent: {e}")))?,
+            ),
+        }
+    };
+
+    let outcome = match wait {
+        WaitOutcome::Exited(status) => AgentOutcome::Exited(status.success()),
+        WaitOutcome::Cancelled => {
+            terminate_child(&mut child).await;
+            let _ = line_tx.send((
+                StreamKind::Stderr,
+                "[zou] run cancelled by user; stopping the agent process tree".to_string(),
+            ));
+            AgentOutcome::Cancelled
+        }
+        WaitOutcome::TimedOut => {
+            terminate_child(&mut child).await;
+            let _ = line_tx.send((
+                StreamKind::Stderr,
+                format!(
+                    "[zou] agent timed out after {}s; stopping the process tree",
+                    pool.agent_timeout.as_secs()
+                ),
+            ));
+            AgentOutcome::TimedOut
+        }
+    };
+
+    // Drain the streams fully before reporting the exit. A killed process can
+    // leave a grandchild holding a pipe open, so cap the drain and abort the
+    // readers rather than letting one orphan wedge the worker forever.
+    let mut out_task = out_task;
+    let mut err_task = err_task;
+    let drain = async {
+        let _ = (&mut out_task).await;
+        let _ = (&mut err_task).await;
+    };
+    if tokio::time::timeout(Duration::from_secs(2), drain)
         .await
-        .map_err(|e| Error::Workspace(format!("failed to wait on agent: {e}")))?;
+        .is_err()
+    {
+        out_task.abort();
+        err_task.abort();
+    }
 
-    // Drain the streams fully before reporting the exit.
-    let _ = out_task.await;
-    let _ = err_task.await;
+    Ok(outcome)
+}
 
-    Ok(status.success())
+/// Kill an agent and its descendants.
+///
+/// On Unix the child was started in its own process group (`process_group(0)`),
+/// so signalling `-pid` reaches every process it spawned. On Windows,
+/// `taskkill /T /F` walks the process tree.
+async fn terminate_child(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        let group = format!("-{pid}");
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &group])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        tokio::time::sleep(KILL_GRACE).await;
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &group])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    #[cfg(windows)]
+    if let Some(pid) = child.id() {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    let _ = child.kill().await;
+    let _ = child.wait().await;
 }
 
 /// The prompt handed to the agent: title, then description.
@@ -917,15 +1426,21 @@ async fn read_lines<R>(
 /// Anything that is not a recognized OpenCode event — including every stderr
 /// line, plain-text agents, and CLI warnings — passes through unchanged.
 #[derive(Debug, Default)]
-struct OpenCodeStream {
+struct AgentStream {
     output: String,
     output_message: Option<String>,
+    /// Antigravity streams response text in deltas; keep a fallback for runs
+    /// that never emit a terminal `result` event.
+    streamed: String,
 }
 
-impl OpenCodeStream {
+impl AgentStream {
     fn observe(&mut self, stream: StreamKind, line: &str) -> Vec<String> {
         if stream == StreamKind::Stderr {
             return vec![line.to_string()];
+        }
+        if let Some(event) = parse_antigravity_event(line) {
+            return self.observe_antigravity(&event);
         }
         let Some(event) = parse_opencode_event(line) else {
             return vec![line.to_string()];
@@ -962,6 +1477,117 @@ impl OpenCodeStream {
         }
     }
 
+    /// Translate Antigravity's `--output-format stream-json` events.
+    ///
+    /// `agent_response` deltas become transcript lines; `tool` steps become
+    /// `[tool]` lines with their parameters/output; the terminal `result`
+    /// event supplies the clean Markdown response for the Output tab.
+    fn observe_antigravity(&mut self, event: &serde_json::Value) -> Vec<String> {
+        match event.get("event").and_then(serde_json::Value::as_str) {
+            Some("init") => {
+                let init = &event["init"];
+                let mode = init
+                    .get("permission_mode")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown");
+                let model = init
+                    .get("model")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|model| format!(" model={model}"))
+                    .unwrap_or_default();
+                vec![format!("[agent] antigravity permission={mode}{model}")]
+            }
+            Some("step_update") => self.observe_antigravity_step(&event["step_update"]),
+            Some("result") => {
+                let result = &event["result"];
+                let status = result
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("UNKNOWN");
+                let mut lines = Vec::new();
+                if status != "SUCCESS" {
+                    let error = result
+                        .get("error")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("no error detail");
+                    lines.push(format!("[error] antigravity {status}: {error}"));
+                }
+                if let Some(response) = result
+                    .get("response")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|response| !response.trim().is_empty())
+                {
+                    self.output = response.trim().to_string();
+                } else if self.output.trim().is_empty() {
+                    self.output = self.streamed.trim().to_string();
+                }
+                lines
+            }
+            // Unknown event types are forward-compatible noise.
+            _ => Vec::new(),
+        }
+    }
+
+    fn observe_antigravity_step(&mut self, step: &serde_json::Value) -> Vec<String> {
+        let step_type = step
+            .get("step_type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        match step_type {
+            "agent_response" => {
+                let Some(delta) = step
+                    .get("text_delta")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|delta| !delta.is_empty())
+                else {
+                    return Vec::new();
+                };
+                self.streamed.push_str(delta);
+                delta.lines().map(str::to_string).collect()
+            }
+            "tool" => {
+                let tool = step
+                    .get("tool_name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("tool");
+                let mut header = format!("[tool] {tool}");
+                if let Some(parameters) = step.pointer("/tool_info/parameters") {
+                    if let Some(map) = parameters.as_object() {
+                        for (key, value) in map {
+                            header.push_str(&format!(" {key}={value}"));
+                        }
+                    } else if !parameters.is_null() {
+                        header.push_str(&format!(" {parameters}"));
+                    }
+                }
+                let mut lines = vec![header];
+                if let Some(output) = step
+                    .pointer("/tool_info/output")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    lines.extend(output.lines().map(|line| format!("  {line}")));
+                }
+                if let Some(error) = step
+                    .pointer("/tool_info/error/message")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    lines.push(format!("  error: {error}"));
+                }
+                lines
+            }
+            "subagent" => {
+                let name = step
+                    .pointer("/subagent_info/type_name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("subagent");
+                vec![format!("[subagent] {name}")]
+            }
+            // `user_input`, `checkpoint`, and future step types are not
+            // useful in the technical transcript.
+            _ => Vec::new(),
+        }
+    }
+
     /// Keep the text of the most recent assistant message.
     ///
     /// OpenCode starts a new message for the final answer after any tool
@@ -980,8 +1606,18 @@ impl OpenCodeStream {
     }
 
     fn output(&self) -> &str {
-        self.output.trim()
+        if self.output.trim().is_empty() {
+            self.streamed.trim()
+        } else {
+            self.output.trim()
+        }
     }
+}
+
+fn parse_antigravity_event(line: &str) -> Option<serde_json::Value> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let kind = value.get("event")?.as_str()?;
+    matches!(kind, "init" | "step_update" | "result").then_some(value)
 }
 
 fn parse_opencode_event(line: &str) -> Option<serde_json::Value> {
@@ -1044,7 +1680,7 @@ async fn collect_logs(
     mut rx: mpsc::UnboundedReceiver<(StreamKind, String)>,
 ) {
     let mut buffer = String::new();
-    let mut stream = OpenCodeStream::default();
+    let mut stream = AgentStream::default();
     let mut ticker = tokio::time::interval(LOG_FLUSH_INTERVAL);
     // Skip the immediate first tick so we only flush when there is something
     // new.
@@ -1061,6 +1697,7 @@ async fn collect_logs(
                 match line {
                     Some((kind, line)) => {
                         for line in stream.observe(kind, &line) {
+                            let line = redact_secrets(&line);
                             pool.emit(WorkerEvent::Log {
                                 task_id: task_id.clone(),
                                 stream: kind,
@@ -1093,7 +1730,7 @@ async fn flush_logs(pool: &WorkerHandle, task_id: &str, buffer: &str, output: &s
     let db_path = pool.db_path.clone();
     let task_id = task_id.to_string();
     let logs = buffer.to_string();
-    let output = output.to_string();
+    let output = redact_secrets(output);
     let _ = tokio::task::spawn_blocking(move || {
         if let Ok(db) = Database::open(&db_path) {
             let _ = db.set_worker_logs(&task_id, &logs);
@@ -1225,7 +1862,7 @@ mod tests {
 
     #[test]
     fn opencode_events_split_markdown_output_from_tool_transcript() {
-        let mut stream = OpenCodeStream::default();
+        let mut stream = AgentStream::default();
 
         // A tool step: no final output yet, but the transcript records it.
         let tool = serde_json::json!({
@@ -1265,8 +1902,93 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_events_split_response_from_tool_transcript() {
+        let mut stream = AgentStream::default();
+
+        let init = serde_json::json!({
+            "event": "init",
+            "init": {
+                "permission_mode": "request-review",
+                "model": "gemini-3.8-flash-medium"
+            }
+        })
+        .to_string();
+        assert_eq!(
+            stream.observe(StreamKind::Stdout, &init),
+            vec!["[agent] antigravity permission=request-review model=gemini-3.8-flash-medium"]
+        );
+
+        let tool = serde_json::json!({
+            "event": "step_update",
+            "step_update": {
+                "step_type": "tool",
+                "state": "DONE",
+                "tool_name": "run_command",
+                "tool_info": {
+                    "parameters": {"CommandLine": "echo hi"},
+                    "output": "hi\n"
+                }
+            }
+        })
+        .to_string();
+        assert_eq!(
+            stream.observe(StreamKind::Stdout, &tool),
+            vec!["[tool] run_command CommandLine=\"echo hi\"", "  hi"]
+        );
+
+        // Deltas are visible live; the terminal result is the clean output.
+        let active = serde_json::json!({
+            "event": "step_update",
+            "step_update": {
+                "step_type": "agent_response",
+                "state": "ACTIVE",
+                "text_delta": "Hello "
+            }
+        })
+        .to_string();
+        assert_eq!(stream.observe(StreamKind::Stdout, &active), vec!["Hello "]);
+        let done = serde_json::json!({
+            "event": "step_update",
+            "step_update": {
+                "step_type": "agent_response",
+                "state": "DONE",
+                "text_delta": "world\n"
+            }
+        })
+        .to_string();
+        stream.observe(StreamKind::Stdout, &done);
+        assert_eq!(stream.output(), "Hello world");
+
+        let result = serde_json::json!({
+            "event": "result",
+            "result": {
+                "status": "SUCCESS",
+                "response": "Hello world\n"
+            }
+        })
+        .to_string();
+        assert!(stream.observe(StreamKind::Stdout, &result).is_empty());
+        assert_eq!(stream.output(), "Hello world");
+    }
+
+    #[test]
+    fn antigravity_error_result_is_reported_in_the_transcript() {
+        let mut stream = AgentStream::default();
+        let result = serde_json::json!({
+            "event": "result",
+            "result": {"status": "ERROR", "response": "", "error": "authentication required"}
+        })
+        .to_string();
+        assert_eq!(
+            stream.observe(StreamKind::Stdout, &result),
+            vec!["[error] antigravity ERROR: authentication required"]
+        );
+        assert_eq!(stream.output(), "");
+    }
+
+    #[test]
     fn only_the_last_opencode_text_message_is_the_output() {
-        let mut stream = OpenCodeStream::default();
+        let mut stream = AgentStream::default();
         for (message, text) in [("msg-1", "intermediate"), ("msg-2", "final answer")] {
             let event = serde_json::json!({
                 "type": "text",
@@ -1280,7 +2002,7 @@ mod tests {
 
     #[test]
     fn plain_output_and_stderr_pass_through_unchanged() {
-        let mut stream = OpenCodeStream::default();
+        let mut stream = AgentStream::default();
         assert_eq!(
             stream.observe(StreamKind::Stdout, "plain agent line"),
             vec!["plain agent line"]
@@ -1296,7 +2018,9 @@ mod tests {
     fn saved_model_builds_an_auto_opencode_command() {
         let config = Config {
             agent: crate::config::AgentConfig {
+                provider: AgentProvider::Opencode,
                 model: Some("opencode/deepseek-v4.1-flash-free".into()),
+                models: Default::default(),
             },
         };
         let cmd = AgentCommand::from_config(&config).expect("saved model");
@@ -1318,6 +2042,36 @@ mod tests {
             None,
             "no saved model leaves the built-in command in charge"
         );
+    }
+
+    #[test]
+    fn saved_antigravity_provider_builds_a_headless_agy_command() {
+        let config = Config {
+            agent: crate::config::AgentConfig {
+                provider: AgentProvider::Antigravity,
+                model: Some("gemini-3.8-flash-medium".into()),
+                models: Default::default(),
+            },
+        };
+        let cmd = AgentCommand::from_config(&config).expect("antigravity provider");
+        assert_eq!(cmd.program, "agy");
+        assert!(cmd.args.contains(&"-p".to_string()));
+        assert!(cmd.args.contains(&"stream-json".to_string()));
+        assert!(cmd
+            .args
+            .contains(&"--dangerously-skip-permissions".to_string()));
+        assert!(cmd.args.contains(&"gemini-3.8-flash-medium".to_string()));
+
+        let config = Config {
+            agent: crate::config::AgentConfig {
+                provider: AgentProvider::Antigravity,
+                model: None,
+                models: Default::default(),
+            },
+        };
+        let cmd = AgentCommand::from_config(&config).expect("provider default");
+        assert_eq!(cmd.program, "agy");
+        assert!(!cmd.args.contains(&"--model".to_string()));
     }
 
     #[test]
@@ -2448,6 +3202,174 @@ mod tests {
             ],
             "conflict retries loop RESOLVING_CONFLICTS <-> EVALUATING"
         );
+    }
+
+    #[tokio::test]
+    async fn agent_timeout_stops_the_run_and_returns_to_todo() {
+        let (_repo, paths) = scratch_install();
+        let db = Database::open(&paths.state_db()).unwrap();
+        ready_tasks(&db, 1);
+
+        let pool = WorkerPool::new(paths.clone(), 1, AgentCommand::shell("sleep 10"))
+            .with_agent_timeout(Duration::from_millis(200))
+            .with_sandbox_mode(SandboxMode::Off);
+        let started = std::time::Instant::now();
+        let success = pool
+            .spawn_task("t0".into())
+            .await
+            .unwrap()
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(!success, "a timed-out attempt is not a successful run");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the timeout must not wait for the sleeping agent"
+        );
+
+        let db = Database::open(&paths.state_db()).unwrap();
+        let task = db.require_task("t0").unwrap();
+        assert_eq!(task.status, TaskStatus::Todo);
+        assert!(
+            task.description.contains("## Agent timeout"),
+            "the retry sees why the run stopped: {}",
+            task.description
+        );
+        assert!(
+            task.worker_logs.contains("timed out"),
+            "the live log explains the timeout: {}",
+            task.worker_logs
+        );
+
+        let run = db.latest_run("t0").unwrap().expect("run row");
+        assert_eq!(run.state, "TODO");
+        let kinds: Vec<String> = db
+            .list_run_events("t0", 100)
+            .unwrap()
+            .into_iter()
+            .map(|event| event.kind)
+            .collect();
+        for expected in [
+            "run_started",
+            "agent_started",
+            "agent_finished",
+            "run_interrupted",
+            "run_finished",
+        ] {
+            assert!(
+                kinds.iter().any(|kind| kind == expected),
+                "missing {expected} in {kinds:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_stops_the_run_and_releases_the_claim() {
+        let (_repo, paths) = scratch_install();
+        let db = Database::open(&paths.state_db()).unwrap();
+        ready_tasks(&db, 1);
+
+        let pool = WorkerPool::new(paths.clone(), 1, AgentCommand::shell("sleep 10"))
+            .with_agent_timeout(Duration::from_secs(60))
+            .with_sandbox_mode(SandboxMode::Off);
+        let handle = pool.spawn_task("t0".into()).await.unwrap();
+        // Give the worker a moment to reach the agent wait, then cancel.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(pool.cancel("t0"), "the live worker should be registered");
+
+        let success = handle.await.unwrap().unwrap();
+        assert!(!success, "cancelled is not success");
+
+        let db = Database::open(&paths.state_db()).unwrap();
+        let task = db.require_task("t0").unwrap();
+        assert_eq!(task.status, TaskStatus::Todo);
+        assert!(
+            task.description.contains("## Run cancelled"),
+            "the retry sees the cancellation: {}",
+            task.description
+        );
+        assert!(
+            task.worker_logs.contains("cancelled by user"),
+            "the live log explains the cancellation: {}",
+            task.worker_logs
+        );
+        assert!(
+            pool.active_tasks().is_empty(),
+            "the control is removed when the worker finishes"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_during_validation_stops_eval_and_releases_the_claim() {
+        let (_repo, paths) = scratch_install();
+        let db = Database::open(&paths.state_db()).unwrap();
+        ready_tasks(&db, 1);
+
+        let pool = WorkerPool::new(paths.clone(), 1, AgentCommand::shell("true"))
+            .with_eval(EvalCommand::fixed("sh -c 'echo eval-started; sleep 30'"))
+            .with_eval_timeout(Duration::from_secs(60))
+            .with_sandbox_mode(SandboxMode::Off);
+        let handle = pool.spawn_task("t0".into()).await.unwrap();
+
+        // Wait until the evaluation command is actually running, then cancel.
+        let mut saw_eval = false;
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let db = Database::open(&paths.state_db()).unwrap();
+            if db
+                .require_task("t0")
+                .unwrap()
+                .worker_logs
+                .contains("eval-started")
+            {
+                saw_eval = true;
+                break;
+            }
+        }
+        assert!(saw_eval, "the evaluation should have started");
+        assert!(pool.cancel("t0"), "the live worker should be registered");
+
+        let success = handle.await.unwrap().unwrap();
+        assert!(!success, "cancelled validation is not success");
+
+        let db = Database::open(&paths.state_db()).unwrap();
+        let task = db.require_task("t0").unwrap();
+        assert_eq!(task.status, TaskStatus::Todo);
+        assert!(
+            task.description.contains("## Run cancelled"),
+            "the retry sees the cancellation: {}",
+            task.description
+        );
+        assert!(
+            task.worker_logs.contains("cancelled by user"),
+            "the live log explains the cancellation: {}",
+            task.worker_logs
+        );
+        let run = db.latest_run("t0").unwrap().expect("run row");
+        assert_eq!(run.state, "TODO");
+        let events = db.list_run_events("t0", 100).unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|event| event.kind == "validation_started"),
+            "missing validation_started"
+        );
+        assert!(
+            events.iter().any(|event| {
+                event.kind == "validation_finished" && event.payload.contains("\"cancelled\":true")
+            }),
+            "missing cancelled validation_finished: {:?}",
+            events
+                .iter()
+                .map(|event| &event.payload)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            events.iter().any(|event| event.kind == "run_interrupted"),
+            "missing run_interrupted"
+        );
+        assert!(pool.active_tasks().is_empty());
     }
 
     #[tokio::test]

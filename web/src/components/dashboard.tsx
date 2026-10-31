@@ -33,13 +33,13 @@ function ConnectionDot() {
         : "disconnected — retrying";
   return (
     <span
-      className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.06em]"
+      className="flex items-center justify-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.06em] sm:justify-start"
       title={`daemon ${label}`}
     >
       <span
         className={`size-3 shrink-0 border-2 border-ink ${STATUS_FILL[connection]}`}
       />
-      {label}
+      <span className="hidden sm:inline">{label}</span>
     </span>
   );
 }
@@ -134,7 +134,7 @@ function ViewToggle() {
   const setView = useZou((s) => s.setView);
   return (
     <div
-      className="flex items-center gap-1 border-4 border-ink bg-contrast p-1 shadow-brutal-sm"
+      className="flex w-full items-center gap-1 border-4 border-ink bg-contrast p-1 shadow-brutal-sm sm:w-auto"
       role="tablist"
       aria-label="board view"
     >
@@ -144,7 +144,7 @@ function ViewToggle() {
           role="tab"
           aria-selected={view === v}
           onClick={() => setView(v)}
-          className={`border-2 border-ink px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.1em] ${
+          className={`flex-1 border-2 border-ink px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] sm:flex-none sm:px-2.5 ${
             view === v
               ? "bg-ink text-emphasis"
               : "bg-contrast text-ink hover:bg-emphasis"
@@ -256,10 +256,10 @@ export default function Dashboard() {
         {/* Red poster: the large statement strip. */}
         <div className="bg-signal">
           <div className="max-w-[1600px] mx-auto flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3 sm:px-4">
-            <h1 className="text-5xl font-black uppercase leading-[0.78] tracking-[-0.065em]">
+            <h1 className="text-4xl font-black uppercase leading-[0.78] tracking-[-0.065em] sm:text-5xl">
               zou
             </h1>
-            <span className="-rotate-2 border-2 border-ink bg-ink px-2 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-emphasis">
+            <span className="hidden -rotate-2 border-2 border-ink bg-ink px-2 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-emphasis sm:inline">
               zunesha
             </span>
             {/* Decorative directional tile: the sheet reads top to bottom. */}
@@ -276,11 +276,11 @@ export default function Dashboard() {
                 />
               </svg>
             </span>
-            <div className="ml-auto flex flex-wrap items-center gap-2 sm:gap-3">
+            <div className="grid w-full grid-cols-4 items-center gap-2 sm:ml-auto sm:flex sm:w-auto sm:justify-start sm:gap-3">
               <a
                 href="/playground/"
                 title="Open the interactive pixel office"
-                className="flex h-10 items-center gap-2 border-4 border-ink bg-contrast px-2.5 text-[10px] font-black uppercase tracking-[0.1em] shadow-brutal-sm hover:bg-emphasis focus-visible:outline-4"
+                className="flex h-10 w-full items-center justify-center gap-2 border-4 border-ink bg-contrast px-2 text-[10px] font-black uppercase tracking-[0.1em] shadow-brutal-sm hover:bg-emphasis focus-visible:outline-4 sm:w-auto sm:px-2.5"
               >
                 <span>office</span>
               </a>
@@ -293,7 +293,7 @@ export default function Dashboard() {
                     ? `${logsOpen ? "Hide" : "Show"} logs for ${logTask.id}`
                     : "No task selected or running"
                 }
-                className={`flex h-10 items-center gap-2 border-4 border-ink px-2.5 text-[10px] font-black uppercase tracking-[0.1em] shadow-brutal-sm disabled:border-ink/40 disabled:text-ink/40 disabled:shadow-none ${
+                className={`flex h-10 w-full items-center justify-center gap-2 border-4 border-ink px-2 text-[10px] font-black uppercase tracking-[0.1em] shadow-brutal-sm disabled:border-ink/40 disabled:text-ink/40 disabled:shadow-none sm:w-auto sm:px-2.5 ${
                   logsOpen
                     ? "bg-ink text-emphasis"
                     : "bg-contrast text-ink hover:bg-emphasis"

@@ -13,8 +13,11 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use base64::Engine as _;
 use zunesha_core::{
-    approve_task, plan, recover_stuck, Database, Error, MergeOutcome, Task, TaskStatus,
+    append_attachments, approve_task, plan_with_attachments, recover_stuck, save_attachments,
+    AttachmentUpload, Database, Error, MergeOutcome, Planner, RunEvent, RunRecord, Task,
+    TaskStatus,
 };
 
 use crate::events::{
@@ -73,6 +76,8 @@ impl From<Error> for ApiError {
             | E::Planner(_)
             | E::UnknownTaskStatus(_)
             | E::Workspace(_)
+            | E::SandboxViolation(_)
+            | E::Attachment(_)
             | E::Git(_)
             | E::PathNotFound { .. } => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -138,6 +143,19 @@ pub struct TasksResponse {
 #[derive(Deserialize)]
 pub struct PlanBody {
     pub prompt: String,
+    /// Base64-encoded files/images to store under `.zou/attachments/` and
+    /// reference from the planner and every resulting task.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentBody>,
+}
+
+#[derive(Deserialize)]
+pub struct AttachmentBody {
+    pub name: String,
+    #[serde(default)]
+    pub media_type: String,
+    /// Raw base64, or a `data:<type>;base64,<data>` URL.
+    pub data: String,
 }
 
 #[derive(Serialize)]
@@ -156,6 +174,9 @@ pub struct RejectBody {
     /// next agent attempt sees why the work was rejected.
     #[serde(default)]
     pub feedback: String,
+    /// Optional screenshots/specs attached to the feedback.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentBody>,
 }
 
 #[derive(Serialize)]
@@ -181,6 +202,33 @@ pub struct RecoverResponse {
     /// Tasks moved from `IN_PROGRESS`/`EVALUATING`/`RESOLVING_CONFLICTS`
     /// back to `TODO` (workspace kept).
     pub released: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct CancelResponse {
+    pub task_id: String,
+    /// Always `true` on success; a non-running task is a `409`.
+    pub cancelled: bool,
+}
+
+/// A run event with its JSON payload decoded for the client.
+#[derive(Serialize)]
+pub struct ApiRunEvent {
+    pub id: i64,
+    pub run_id: String,
+    pub task_id: String,
+    pub seq: i64,
+    pub kind: String,
+    pub payload: serde_json::Value,
+    pub created_at: String,
+}
+
+#[derive(Serialize)]
+pub struct EventsResponse {
+    pub task_id: String,
+    /// The most recent run, if this task has ever started.
+    pub run: Option<RunRecord>,
+    pub events: Vec<ApiRunEvent>,
 }
 
 // ---------------------------------------------------------------------------
@@ -243,14 +291,50 @@ pub async fn plan_feature(
     Json(body): Json<PlanBody>,
 ) -> ApiResult<Json<PlanResponse>> {
     let paths = state.paths.clone();
+    let prompt = body.prompt;
+    let uploads = decode_attachments(body.attachments)?;
     let task_ids = tokio::task::spawn_blocking(move || {
         let db = Database::open(&paths.state_db())?;
-        plan(&db, &body.prompt, paths.root())
+        plan_with_attachments(&db, &prompt, &Planner::from_env(), paths.root(), &uploads)
     })
     .await??;
 
     state.emit_snapshot();
     Ok(Json(PlanResponse { task_ids }))
+}
+
+/// Decode base64 uploads before the blocking planner task starts.
+fn decode_attachments(items: Vec<AttachmentBody>) -> ApiResult<Vec<AttachmentUpload>> {
+    if items.len() > zunesha_core::MAX_ATTACHMENTS {
+        return Err(ApiError::from(Error::Attachment(format!(
+            "too many attachments: {} (maximum {})",
+            items.len(),
+            zunesha_core::MAX_ATTACHMENTS
+        ))));
+    }
+    items
+        .into_iter()
+        .map(|item| {
+            let data = item
+                .data
+                .split_once(";base64,")
+                .map(|(_, data)| data)
+                .unwrap_or(&item.data);
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(data.trim())
+                .map_err(|error| {
+                    ApiError::from(Error::Attachment(format!(
+                        "`{}` is not valid base64: {error}",
+                        item.name
+                    )))
+                })?;
+            Ok(AttachmentUpload {
+                name: item.name,
+                media_type: item.media_type,
+                bytes,
+            })
+        })
+        .collect()
 }
 
 /// `POST /api/run` – start the agent on every ready (`TODO`) task.
@@ -271,6 +355,71 @@ pub async fn run_one(
     state.pool.spawn_task(task_id).await?;
     state.emit_snapshot();
     Ok(Json(RunResponse { started: 1 }))
+}
+
+/// `POST /api/tasks/:id/cancel` – stop a running agent and release its claim.
+///
+/// Cancellation is cooperative at the worker boundary: the worker selects on a
+/// one-shot signal, kills the whole process tree, writes a `## Run cancelled`
+/// note to the task description, and returns it to `TODO` (or
+/// `FAILED_NEEDS_HUMAN` for a conflict-resolution run). A task that is not
+/// running in *this* daemon yields `409`; use `zou recover` for a dead claim.
+pub async fn cancel(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+) -> ApiResult<Json<CancelResponse>> {
+    let db = state.open_db()?;
+    db.require_task(&task_id)?;
+    if !state.pool.cancel(&task_id) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            format!("task {task_id} is not running in this daemon"),
+        ));
+    }
+    state.emit_snapshot();
+    Ok(Json(CancelResponse {
+        task_id,
+        cancelled: true,
+    }))
+}
+
+/// `GET /api/tasks/:id/events` – structured audit trail for a task.
+///
+/// Events are append-only and survive restarts. The response includes the
+/// latest run row plus its phase timeline (`run_started`, `agent_started`,
+/// `agent_finished`, `validation_*`, `status_changed`, `run_finished`).
+pub async fn events(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+) -> ApiResult<Json<EventsResponse>> {
+    let db = state.open_db()?;
+    db.require_task(&task_id)?;
+    let run = db.latest_run(&task_id)?;
+    let events = match &run {
+        Some(run) => db.list_run_events_for_run(&run.id, 500)?,
+        None => Vec::new(),
+    }
+    .into_iter()
+    .map(api_run_event)
+    .collect();
+    Ok(Json(EventsResponse {
+        task_id,
+        run,
+        events,
+    }))
+}
+
+fn api_run_event(event: RunEvent) -> ApiRunEvent {
+    ApiRunEvent {
+        id: event.id,
+        run_id: event.run_id,
+        task_id: event.task_id,
+        seq: event.seq,
+        kind: event.kind,
+        payload: serde_json::from_str(&event.payload)
+            .unwrap_or_else(|_| serde_json::json!({ "raw": event.payload })),
+        created_at: event.created_at,
+    }
 }
 
 /// `POST /api/tasks/:id/approve` – accept reviewed work: merge, finish, unlock.
@@ -329,6 +478,7 @@ pub async fn reject(
 ) -> ApiResult<Json<Task>> {
     let paths = state.paths.clone();
     let feedback = body.feedback;
+    let uploads = decode_attachments(body.attachments)?;
     let task = tokio::task::spawn_blocking(move || {
         let db = Database::open(&paths.state_db())?;
         let task = db.require_task(&task_id)?;
@@ -342,6 +492,8 @@ pub async fn reject(
                 to: TaskStatus::Todo,
             });
         }
+        let saved = save_attachments(paths.root(), &uploads)?;
+        let feedback = append_attachments(&feedback, &saved);
 
         let description = if feedback.trim().is_empty() {
             None

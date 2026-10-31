@@ -51,6 +51,13 @@ export interface TasksResponse {
   counts: StatusCount[];
 }
 
+export interface AttachmentPayload {
+  name: string;
+  media_type: string;
+  /** Raw base64, without a data: prefix. */
+  data: string;
+}
+
 export interface LogEvent {
   task_id: string;
   stream: 'stdout' | 'stderr';
@@ -99,15 +106,20 @@ function post<T>(path: string, body?: unknown): Promise<T> {
 
 export const api = {
   tasks: () => request<TasksResponse>('/api/tasks'),
-  plan: (prompt: string) => post<{ task_ids: string[] }>('/api/plan', { prompt }),
+  plan: (prompt: string, attachments: AttachmentPayload[] = []) =>
+    post<{ task_ids: string[] }>('/api/plan', { prompt, attachments }),
   runAll: () => post<{ started: number }>('/api/run'),
   runOne: (id: string) => post<{ started: number }>(`/api/tasks/${encodeURIComponent(id)}/run`),
+  cancel: (id: string) =>
+    post<{ task_id: string; cancelled: boolean }>(
+      `/api/tasks/${encodeURIComponent(id)}/cancel`,
+    ),
   approve: (id: string) =>
     post<{ task: Task; promoted: string[]; integration: { status: string; files?: string[] } }>(
       `/api/tasks/${encodeURIComponent(id)}/approve`,
     ),
-  reject: (id: string, feedback: string) =>
-    post<Task>(`/api/tasks/${encodeURIComponent(id)}/reject`, { feedback }),
+  reject: (id: string, feedback: string, attachments: AttachmentPayload[] = []) =>
+    post<Task>(`/api/tasks/${encodeURIComponent(id)}/reject`, { feedback, attachments }),
   recover: (id: string) => post<{ released: string[] }>('/api/recover', { task_id: id }),
 };
 

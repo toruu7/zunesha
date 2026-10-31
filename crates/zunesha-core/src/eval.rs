@@ -22,6 +22,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
+use crate::control::RunControl;
 use crate::worker::{split_command_line, StreamKind};
 
 /// Default wall-clock limit for one evaluation run.
@@ -157,6 +158,10 @@ pub struct EvalOutcome {
     pub success: bool,
     /// Combined stdout+stderr, tail-capped; empty on a clean pass.
     pub output: String,
+    /// True when a human cancelled the run while validation was executing.
+    /// The worker treats this as an interruption, not a failed validation, so
+    /// it does not consume the self-healing retry budget.
+    pub cancelled: bool,
 }
 
 /// Run the validation command inside the workspace.
@@ -171,10 +176,24 @@ pub async fn run_evaluation(
     timeout: Duration,
     tx: &mpsc::UnboundedSender<(StreamKind, String)>,
 ) -> EvalOutcome {
+    run_evaluation_with_control(argv, workspace, timeout, tx, None).await
+}
+
+/// Like [`run_evaluation`], but also stops the validation process tree when
+/// `control` is cancelled. The worker uses this so cancelling a task while its
+/// tests are running does not wait for the eval timeout.
+pub async fn run_evaluation_with_control(
+    argv: &[String],
+    workspace: &Path,
+    timeout: Duration,
+    tx: &mpsc::UnboundedSender<(StreamKind, String)>,
+    control: Option<&RunControl>,
+) -> EvalOutcome {
     let Some((program, args)) = argv.split_first() else {
         return EvalOutcome {
             success: false,
             output: "evaluation command is empty".to_string(),
+            cancelled: false,
         };
     };
 
@@ -188,12 +207,21 @@ pub async fn run_evaluation(
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
     crate::child_env::prepare(&mut command, workspace);
+    // The test command often spawns its own children (a shell, a test runner,
+    // a watcher). Put it in its own process group so a timeout can kill the
+    // whole tree instead of leaving a grandchild holding the pipe open.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.as_std_mut().process_group(0);
+    }
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
             return EvalOutcome {
                 success: false,
                 output: format!("failed to run test command `{program}`: {e}"),
+                cancelled: false,
             }
         }
     };
@@ -215,26 +243,50 @@ pub async fn run_evaluation(
     }
 
     let mut timed_out = false;
-    let status = match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(Ok(status)) => Some(status),
-        Ok(Err(e)) => {
-            let _ = child.kill().await;
-            return EvalOutcome {
-                success: false,
-                output: format!("failed to wait on test command: {e}"),
-            };
-        }
-        Err(_) => {
-            timed_out = true;
-            let _ = child.kill().await;
+    let mut cancelled = false;
+    let mut wait_error = None;
+    // Box the future so it can be dropped before `terminate_tree` needs the
+    // mutable borrow of `child` again.
+    let mut wait = Box::pin(child.wait());
+    let status = tokio::select! {
+        _ = wait_for_cancel(control) => {
+            cancelled = true;
             None
         }
+        result = tokio::time::timeout(timeout, &mut wait) => match result {
+            Ok(Ok(status)) => Some(status),
+            Ok(Err(error)) => {
+                wait_error = Some(error);
+                None
+            }
+            Err(_) => {
+                timed_out = true;
+                None
+            }
+        },
     };
+    drop(wait);
+    if cancelled || timed_out || wait_error.is_some() {
+        if cancelled {
+            let _ = tx.send((
+                StreamKind::Stderr,
+                "[zou] run cancelled by user; stopping the validation process tree".to_string(),
+            ));
+        }
+        terminate_tree(&mut child).await;
+    }
+    if let Some(error) = wait_error {
+        return EvalOutcome {
+            success: false,
+            output: format!("failed to wait on test command: {error}"),
+            cancelled: false,
+        };
+    }
     for reader in readers {
         let _ = reader.await;
     }
 
-    let passed = !timed_out && status.is_some_and(|s| s.success());
+    let passed = !timed_out && !cancelled && status.is_some_and(|s| s.success());
     let output = if passed {
         // Nothing to report on a clean run: the fix prompt only ever sees
         // failures.
@@ -242,7 +294,13 @@ pub async fn run_evaluation(
     } else {
         let mut guard = captured.lock().expect("eval capture poisoned");
         let mut text = std::mem::take(&mut *guard);
-        if timed_out {
+        if cancelled {
+            let tail = tail_of(&text, MAX_PROMPT_OUTPUT);
+            text = format!(
+                "evaluation was cancelled by a human and its process tree was stopped. \
+                 Output so far:\n{tail}"
+            );
+        } else if timed_out {
             let tail = tail_of(&text, MAX_PROMPT_OUTPUT);
             text = format!(
                 "evaluation timed out after {}s and was killed. Output so far:\n{tail}",
@@ -255,7 +313,44 @@ pub async fn run_evaluation(
     EvalOutcome {
         success: passed,
         output,
+        cancelled,
     }
+}
+
+async fn wait_for_cancel(control: Option<&RunControl>) {
+    match control {
+        Some(control) => control.cancelled().await,
+        None => std::future::pending::<()>().await,
+    }
+}
+
+/// Kill an evaluation command and its descendants.
+async fn terminate_tree(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        let group = format!("-{pid}");
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &group])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &group])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(windows)]
+    if let Some(pid) = child.id() {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    let _ = child.kill().await;
+    let _ = child.wait().await;
 }
 
 /// Read one eval stream: forward `[eval]`-prefixed lines to the UI channel,
@@ -456,6 +551,37 @@ mod tests {
         .await;
         assert!(!outcome.success);
         assert!(outcome.output.contains("timed out"), "{}", outcome.output);
+        assert!(outcome.output.contains("starting"), "partial output kept");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the sleep must be killed, not waited out"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_evaluation_can_be_cancelled_and_kills_the_tree() {
+        let tmp = scratch(&[]);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let control = RunControl::new();
+        let canceller = control.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            canceller.cancel();
+        });
+
+        let started = std::time::Instant::now();
+        let outcome = run_evaluation_with_control(
+            &["sh".into(), "-c".into(), "echo starting; sleep 30".into()],
+            tmp.path(),
+            Duration::from_secs(30),
+            &tx,
+            Some(&control),
+        )
+        .await;
+
+        assert!(!outcome.success);
+        assert!(outcome.cancelled);
+        assert!(outcome.output.contains("cancelled"), "{}", outcome.output);
         assert!(outcome.output.contains("starting"), "partial output kept");
         assert!(
             started.elapsed() < Duration::from_secs(5),

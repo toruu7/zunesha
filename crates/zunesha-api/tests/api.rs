@@ -28,12 +28,16 @@ fn scratch() -> (tempfile::TempDir, ZuneshaPaths) {
 
 /// Build the app for a scratch install with a small concurrency cap.
 fn app_for(paths: &ZuneshaPaths) -> Router {
+    app_with_agent(paths, zunesha_core::AgentCommand::shell("true"))
+}
+
+fn app_with_agent(paths: &ZuneshaPaths, agent: zunesha_core::AgentCommand) -> Router {
     let config = ServeConfig {
         paths: paths.clone(),
         host: "127.0.0.1".into(),
         port: 0,
         max_concurrency: 2,
-        agent: zunesha_core::AgentCommand::shell("true"),
+        agent,
         // Pin an explicitly-broken dashboard path: `None` would trigger
         // discovery, which can find a real `web/out` in the checkout and make
         // placeholder expectations depend on whether the dashboard has been
@@ -165,6 +169,73 @@ async fn plan_creates_tasks_and_lists_them() {
         .find(|c| c["status"] == json!("TODO"))
         .unwrap();
     assert_eq!(todo["count"], json!(1));
+}
+
+#[tokio::test]
+async fn plan_stores_attachments_and_puts_their_paths_in_every_task() {
+    let (_tmp, paths) = scratch();
+    let app = app_for(&paths);
+
+    let (status, body) = json_req(
+        &app,
+        Method::POST,
+        "/api/plan",
+        Some(json!({
+            "prompt": "match the attached screenshot",
+            "attachments": [{
+                "name": "screenshot.png",
+                "media_type": "image/png",
+                "data": "aGVsbG8="
+            }]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let ids = body["task_ids"].as_array().unwrap();
+    assert_eq!(ids.len(), 3);
+
+    let (status, tasks) = json_req(&app, Method::GET, "/api/tasks", None).await;
+    assert_eq!(status, StatusCode::OK);
+    for task in tasks["tasks"].as_array().unwrap() {
+        let description = task["description"].as_str().unwrap();
+        assert!(description.contains("## Attachments"), "{description}");
+        assert!(description.contains("screenshot.png"), "{description}");
+        assert!(description.contains(".zou/attachments"), "{description}");
+    }
+
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(paths.root().join(".zou/attachments")).unwrap() {
+        let entry = entry.unwrap();
+        for file in std::fs::read_dir(entry.path()).unwrap() {
+            let file = file.unwrap();
+            if file.file_name() == "screenshot.png" {
+                found.push(std::fs::read(file.path()).unwrap());
+            }
+        }
+    }
+    assert_eq!(found, vec![b"hello".to_vec()]);
+}
+
+#[tokio::test]
+async fn plan_rejects_malformed_attachment_base64() {
+    let (_tmp, paths) = scratch();
+    let app = app_for(&paths);
+    let (status, body) = json_req(
+        &app,
+        Method::POST,
+        "/api/plan",
+        Some(json!({
+            "prompt": "bad upload",
+            "attachments": [{
+                "name": "bad.bin",
+                "media_type": "application/octet-stream",
+                "data": "not base64!!"
+            }]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].as_str().unwrap().contains("base64"));
 }
 
 #[tokio::test]
@@ -500,6 +571,84 @@ async fn run_ready_starts_the_head_task() {
             .status;
     }
     assert_eq!(seen, TaskStatus::Review, "agent success lands in REVIEW");
+}
+
+#[tokio::test]
+async fn cancel_stops_a_running_task_and_events_replay_the_run() {
+    let (_tmp, paths) = scratch();
+    let app = app_with_agent(&paths, zunesha_core::AgentCommand::shell("sleep 10"));
+    let head = plan_head(&app).await;
+
+    let (status, _) = json_req(&app, Method::POST, &format!("/api/tasks/{head}/run"), None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The task is claimed before the worker reaches the agent, so cancel is
+    // valid immediately.
+    let (status, body) = json_req(
+        &app,
+        Method::POST,
+        &format!("/api/tasks/{head}/cancel"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    assert_eq!(body["cancelled"], json!(true));
+
+    let db = Database::open(&paths.state_db()).unwrap();
+    let mut task = db.require_task(&head).unwrap();
+    for _ in 0..100 {
+        if task.status == TaskStatus::Todo {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        task = Database::open(&paths.state_db())
+            .unwrap()
+            .require_task(&head)
+            .unwrap();
+    }
+    assert_eq!(task.status, TaskStatus::Todo, "cancelled work is re-queued");
+    assert!(
+        task.description.contains("## Run cancelled"),
+        "cancellation is explained on the task: {}",
+        task.description
+    );
+
+    let (status, body) = json_req(
+        &app,
+        Method::GET,
+        &format!("/api/tasks/{head}/events"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    assert_eq!(body["run"]["state"], json!("TODO"));
+    let kinds: Vec<&str> = body["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["kind"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"run_started"), "{kinds:?}");
+    assert!(kinds.contains(&"agent_started"), "{kinds:?}");
+    assert!(kinds.contains(&"run_interrupted"), "{kinds:?}");
+    assert!(kinds.contains(&"run_finished"), "{kinds:?}");
+}
+
+#[tokio::test]
+async fn cancelling_a_task_that_is_not_running_is_409() {
+    let (_tmp, paths) = scratch();
+    let app = app_for(&paths);
+    let head = plan_head(&app).await;
+
+    let (status, body) = json_req(
+        &app,
+        Method::POST,
+        &format!("/api/tasks/{head}/cancel"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "body: {body}");
+    assert!(body["error"].as_str().unwrap().contains("not running"));
 }
 
 #[tokio::test]

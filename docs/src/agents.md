@@ -8,7 +8,9 @@ environment variables read **at launch** (so set them before `zou run` /
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `ZOU_AGENT_CMD` | Coding agent command (overrides the saved model) | `opencode run --format json {prompt}` |
+| `ZOU_AGENT_CMD` | Coding agent command (overrides the saved provider/model) | `opencode run --format json {prompt}` |
+| `ZOU_AGENT_TIMEOUT_SECS` | Wall-clock limit for one agent attempt | `1800` |
+| `ZOU_SANDBOX` | `guard` (validate + use `bwrap` when available) or `off` | `guard` |
 | `ZOU_CONFIG_FILE` | User-wide config file path | `${XDG_CONFIG_HOME:-~/.config}/zou/config.json` |
 | `ZOU_PLANNER_CMD` | Planning command (prompt on stdin, JSON on stdout) | built-in three-step chain |
 | `ZOU_EVAL_CMD` | Test/lint command run in each workspace | auto-detect |
@@ -45,6 +47,33 @@ opencode run --auto --format json --model <model> {prompt}
 `zou start` reads the setting at launch, so restart the daemon after changing
 it.
 
+### Switching to Google Antigravity
+
+The provider and model are stored separately, so switching does not erase the
+other provider's saved model:
+
+```sh
+zou agent                    # show active provider + resolved command
+zou agent antigravity        # switch (keeps the OpenCode model saved)
+zou agent antigravity --model gemini-3-pro
+zou model                    # list `agy models`, save a choice
+zou agent opencode           # switch back; the old model is still there
+```
+
+The built-in Antigravity command is:
+
+```text
+agy -p {prompt} --output-format stream-json --dangerously-skip-permissions --print-timeout 30m
+```
+
+`--dangerously-skip-permissions` is required for unattended work. The safety
+boundary is Zunesha's isolated workspace, symlink validation, optional
+`bwrap` jail, per-attempt timeout, cancellation, and human approval gate.
+`agy` must be installed and authenticated; Zunesha does not manage its auth.
+Its `stream-json` events are parsed into the technical **Logs** transcript
+(tool calls) and the final Markdown **Output**, like OpenCode's JSON stream.
+`ZOU_AGENT_CMD` overrides both providers.
+
 The `--format json` flag is what lets Zunesha show the agent's final Markdown
 response in the dashboard's **Output** tab instead of only the raw transcript.
 The built-in command includes it automatically.
@@ -78,8 +107,30 @@ to commit: Zunesha captures the workspace diff itself.
 The dashboard shows two views of an agent run: **Logs** is the technical
 transcript (tool calls, stderr, `[eval]` output), and **Output** is the final
 assistant response rendered as Markdown. Agents that emit OpenCode-compatible
-JSON `text` events populate Output; a custom plain-text command still works,
-with its output visible in Logs.
+JSON `text` events (or Antigravity `stream-json` results) populate Output; a
+custom plain-text command still works, with its output visible in Logs.
+
+## Prompt attachments
+
+Prompts can carry images and arbitrary files. The web UI and playground accept
+the picker, drag-and-drop, and pasted images; the CLI and TUI take paths:
+
+```sh
+zou plan "match the attached mock" --attach mock.png --attach spec.pdf
+zou tui                 # A, or :attach <path>, before planning
+```
+
+Uploads are validated and written under `.zou/attachments/<id>/`, then an
+`## Attachments` section with absolute paths is appended to the planner prompt
+and to every resulting task description. The agent reads the files with its
+normal file tool; images should be inspected directly. The workspace stays a
+clean git clone (attachments are not copied into it). Under `bwrap` the host
+is read-only, so attachments are readable but not modifiable.
+
+Limits are enforced by both client and daemon: **10** files, **8 MiB** each,
+**24 MiB** total. Invalid or oversized uploads fail with HTTP `400` before the
+planner runs. Rejecting a task accepts attachments too, so a screenshot can
+explain the requested fix.
 
 ## Validation (`ZOU_EVAL_CMD`)
 

@@ -10,6 +10,9 @@
 //!   conflict, run the Phase 9 auto-resolution agent in its place.
 //! * `recover` – release stuck tasks (mid-run/mid-validation/mid-merge) after
 //!   a crash.
+//! * `cancel`  – stop a running agent and release its claim.
+//! * `events`  – print a task's structured run/audit timeline.
+//! * `agent`   – choose OpenCode or Google Antigravity as the agent provider.
 //! * `status`  – print task counts and installation info.
 //! * `update`  – check release tags and optionally reinstall.
 //! * `start`   – serve the local API, WebSockets, and dashboard.
@@ -26,9 +29,9 @@ use std::sync::{Arc, Mutex};
 use clap::{Parser, Subcommand};
 
 use zunesha_core::{
-    approve_task, init_project, normalize_model, recover_stuck, AgentCommand, Config, Database,
-    Error, MergeOutcome, StreamKind, TaskStatus, WorkerEvent, WorkerPool, WorkspaceManager,
-    ZuneshaPaths,
+    approve_task, init_project, normalize_agent_model, recover_stuck, AgentCommand, AgentProvider,
+    Config, Database, Error, MergeOutcome, StreamKind, TaskStatus, WorkerEvent, WorkerPool,
+    WorkspaceManager, ZuneshaPaths,
 };
 
 #[derive(Parser, Debug)]
@@ -59,6 +62,9 @@ enum Commands {
     Plan {
         /// Feature request to plan.
         prompt: String,
+        /// Attach a file or image to the prompt (repeatable).
+        #[arg(long = "attach", value_name = "FILE")]
+        attachments: Vec<PathBuf>,
     },
     /// Spin up an isolated workspace for a task and mark it IN_PROGRESS.
     Work {
@@ -101,6 +107,27 @@ enum Commands {
         /// Release only this task; omit to release every stuck task.
         task_id: Option<String>,
     },
+    /// Cancel a running agent in the local daemon.
+    ///
+    /// The worker kills the whole agent process tree, writes a
+    /// `## Run cancelled` note to the task, and releases it back to TODO.
+    /// Cancellation only reaches workers owned by the daemon; use `zou recover`
+    /// for a claim left by a dead process.
+    Cancel {
+        /// Id of the running task.
+        task_id: String,
+        /// Daemon base URL.
+        #[arg(long, default_value = "http://127.0.0.1:57804")]
+        url: String,
+    },
+    /// Print a task's structured run/audit timeline.
+    Events {
+        /// Id of the task.
+        task_id: String,
+        /// Daemon base URL.
+        #[arg(long, default_value = "http://127.0.0.1:57804")]
+        url: String,
+    },
     /// Show orchestrator status and task counts.
     Status,
     /// Open the interactive terminal UI.
@@ -127,10 +154,24 @@ enum Commands {
         #[arg(long)]
         no_mouse: bool,
     },
-    /// Choose the OpenCode model used by the agent (saved user-wide).
+    /// Choose the coding-agent provider (OpenCode or Google Antigravity).
     ///
-    /// With no arguments, lists the models reported by `opencode models` and
-    /// prompts for one. The choice is written to
+    /// With no arguments, shows the active provider and how it is invoked.
+    /// `zou agent antigravity` switches to the `agy` CLI; `zou model` then
+    /// lists Antigravity models instead of OpenCode models. Both providers
+    /// remain installed and available; this only selects the default used by
+    /// new `zou run` / `zou start` processes.
+    Agent {
+        /// Provider to select: `opencode` or `antigravity`. Omit to show it.
+        provider: Option<String>,
+        /// Also save a model id for the selected provider.
+        #[arg(long)]
+        model: Option<String>,
+    },
+    /// Choose the model used by the active agent provider (saved user-wide).
+    ///
+    /// With no arguments, lists the models reported by `opencode models` or
+    /// `agy models` and prompts for one. The choice is written to
     /// `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`, so it applies to every
     /// project. `ZOU_AGENT_CMD` remains an explicit per-shell override.
     Model {
@@ -205,12 +246,17 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Commands::Init { force } => cmd_init(&target, force),
-        Commands::Plan { prompt } => cmd_plan(&target, &prompt),
+        Commands::Plan {
+            prompt,
+            attachments,
+        } => cmd_plan(&target, &prompt, &attachments),
         Commands::Work { task_id, activate } => cmd_work(&target, &task_id, activate),
         Commands::Diff { task_id } => cmd_diff(&target, &task_id),
         Commands::Run { jobs, follow } => cmd_run(&target, jobs, follow),
         Commands::Approve { task_id } => cmd_approve(&target, &task_id),
         Commands::Recover { task_id } => cmd_recover(&target, task_id.as_deref()),
+        Commands::Cancel { task_id, url } => cmd_cancel(&task_id, &url),
+        Commands::Events { task_id, url } => cmd_events(&task_id, &url),
         Commands::Status => cmd_status(&target),
         Commands::Tui {
             url,
@@ -218,6 +264,7 @@ fn main() -> ExitCode {
             theme,
             no_mouse,
         } => tui::run(&target, &url, start, theme.as_deref(), no_mouse),
+        Commands::Agent { provider, model } => cmd_agent(provider.as_deref(), model.as_deref()),
         Commands::Model {
             model,
             list,
@@ -283,12 +330,13 @@ fn cmd_init(target: &Path, force: bool) -> zunesha_core::Result<()> {
 
 /// `zou plan` – run the planner (built-in; `ZOU_PLANNER_CMD` overrides) over a
 /// feature prompt.
-fn cmd_plan(target: &Path, prompt: &str) -> zunesha_core::Result<()> {
+fn cmd_plan(target: &Path, prompt: &str, attachments: &[PathBuf]) -> zunesha_core::Result<()> {
     let paths = discover(target)?;
     let db = Database::open(&paths.state_db())?;
 
     let planner = zunesha_core::Planner::from_env();
-    let ids = zunesha_core::plan_with(&db, prompt, &planner, paths.root())?;
+    let uploads = read_attachments(attachments)?;
+    let ids = zunesha_core::plan_with_attachments(&db, prompt, &planner, paths.root(), &uploads)?;
     if ids.is_empty() {
         println!("nothing to plan: prompt was empty");
         return Ok(());
@@ -308,6 +356,79 @@ fn cmd_plan(target: &Path, prompt: &str) -> zunesha_core::Result<()> {
     Ok(())
 }
 
+/// Read `--attach` paths into the core upload shape.
+fn read_attachments(
+    paths: &[PathBuf],
+) -> zunesha_core::Result<Vec<zunesha_core::AttachmentUpload>> {
+    if paths.len() > zunesha_core::MAX_ATTACHMENTS {
+        return Err(Error::Attachment(format!(
+            "too many attachments: {} (maximum {})",
+            paths.len(),
+            zunesha_core::MAX_ATTACHMENTS
+        )));
+    }
+    let mut total = 0u64;
+    let mut uploads = Vec::with_capacity(paths.len());
+    for path in paths {
+        let size = std::fs::metadata(path)
+            .map_err(|error| {
+                Error::Attachment(format!("could not stat `{}`: {error}", path.display()))
+            })?
+            .len();
+        if size > zunesha_core::MAX_ATTACHMENT_BYTES as u64 {
+            return Err(Error::Attachment(format!(
+                "`{}` is too large ({} bytes; maximum {})",
+                path.display(),
+                size,
+                zunesha_core::MAX_ATTACHMENT_BYTES
+            )));
+        }
+        total = total.saturating_add(size);
+        if total > zunesha_core::MAX_TOTAL_ATTACHMENT_BYTES as u64 {
+            return Err(Error::Attachment(format!(
+                "attachments are too large in total ({total} bytes; maximum {})",
+                zunesha_core::MAX_TOTAL_ATTACHMENT_BYTES
+            )));
+        }
+        let bytes = std::fs::read(path).map_err(|error| {
+            Error::Attachment(format!("could not read `{}`: {error}", path.display()))
+        })?;
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("attachment")
+            .to_string();
+        uploads.push(zunesha_core::AttachmentUpload {
+            name,
+            media_type: media_type_for(path).to_string(),
+            bytes,
+        });
+    }
+    Ok(uploads)
+}
+
+fn media_type_for(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "json" => "application/json",
+        "md" | "markdown" => "text/markdown",
+        "txt" | "log" => "text/plain",
+        "csv" => "text/csv",
+        _ => "application/octet-stream",
+    }
+}
+
 /// `zou status` – show installation info, task counts, and the task list.
 fn cmd_status(target: &Path) -> zunesha_core::Result<()> {
     let paths = discover(target)?;
@@ -317,10 +438,16 @@ fn cmd_status(target: &Path) -> zunesha_core::Result<()> {
     let total = db.task_count()?;
     let deps = db.dependency_count()?;
 
+    let agent_config = Config::load().unwrap_or_default();
     println!("orchestrator status");
     println!("  repo root   : {}", paths.root().display());
     println!("  database    : {}", paths.state_db().display());
     println!("  workspaces  : {}", paths.workspaces_dir().display());
+    println!(
+        "  agent       : {} ({})",
+        agent_config.provider().display_name(),
+        agent_command_label(agent_config.provider(), agent_config.model())
+    );
     println!();
     println!("tasks: {total} total, {deps} dependency edges");
     for status in TaskStatus::ALL {
@@ -344,13 +471,80 @@ fn cmd_status(target: &Path) -> zunesha_core::Result<()> {
     Ok(())
 }
 
-/// `zou model` – list OpenCode models, save the chosen one user-wide.
+/// `zou agent` – show or select the coding-agent provider.
+fn cmd_agent(provider: Option<&str>, model: Option<&str>) -> zunesha_core::Result<()> {
+    if let Some(provider) = provider {
+        let provider = AgentProvider::parse(provider)?;
+        let path = Config::set_provider(provider)?;
+        let config = Config::load_from(&path).unwrap_or_default();
+        println!(
+            "✔ agent provider: {} ({})",
+            provider.display_name(),
+            provider.as_str()
+        );
+        println!("  config : {}", path.display());
+        if let Some(model) = model {
+            save_model(model)?;
+            return Ok(());
+        }
+        if config.model().is_none() {
+            println!("  note   : no model saved for this provider; run `zou model` to choose one");
+        }
+        println!(
+            "  command: {}",
+            agent_command_label(provider, config.model())
+        );
+        println!("  apply  : new `zou run` / `zou start` processes; restart a running daemon");
+        return Ok(());
+    }
+
+    let path = Config::path()?;
+    let config = Config::load()?;
+    let provider = config.provider();
+    println!(
+        "agent provider : {} ({})",
+        provider.display_name(),
+        provider.as_str()
+    );
+    println!("config         : {}", path.display());
+    println!(
+        "command        : {}",
+        agent_command_label(provider, config.model())
+    );
+    if config.model().is_none() {
+        println!("model          : (none; provider default)");
+    }
+    println!();
+    println!("switch: `zou agent opencode` or `zou agent antigravity`");
+    println!("models: `zou model` (uses the active provider)");
+    Ok(())
+}
+
+fn agent_command_label(provider: AgentProvider, model: Option<&str>) -> String {
+    match provider {
+        AgentProvider::Opencode => match model {
+            Some(model) => {
+                format!("opencode run --auto --format json --model {model} {{prompt}}")
+            }
+            None => "opencode run --format json {prompt}".to_string(),
+        },
+        AgentProvider::Antigravity => {
+            let mut command = "agy -p {prompt} --output-format stream-json \
+                               --dangerously-skip-permissions --print-timeout 30m"
+                .to_string();
+            if let Some(model) = model {
+                command.push_str(&format!(" --model {model}"));
+            }
+            command
+        }
+    }
+}
+
+/// `zou model` – list models for the active provider, save the chosen one user-wide.
 ///
-/// The saved model feeds the default agent command:
-///
-/// ```text
-/// opencode run --auto --model <model> {prompt}
-/// ```
+/// The saved model feeds the active provider's default agent command. Run
+/// `zou agent antigravity` first to list `agy models` instead of
+/// `opencode models`.
 ///
 /// `ZOU_AGENT_CMD`, when set, still wins over the saved value.
 fn cmd_model(model: Option<&str>, list: bool, show: bool, clear: bool) -> zunesha_core::Result<()> {
@@ -366,9 +560,13 @@ fn cmd_model(model: Option<&str>, list: bool, show: bool, clear: bool) -> zunesh
 
     if clear {
         let path = Config::clear_model()?;
+        let config = Config::load_from(&path).unwrap_or_default();
         println!("✔ cleared the saved model");
         println!("  config : {}", path.display());
-        println!("  agent  : opencode run {{prompt}} (built-in default)");
+        println!(
+            "  agent  : {} (provider default)",
+            agent_command_label(config.provider(), None)
+        );
         println!("  apply  : restart `zou start` if it is running");
         return Ok(());
     }
@@ -376,15 +574,19 @@ fn cmd_model(model: Option<&str>, list: bool, show: bool, clear: bool) -> zunesh
     if show {
         let path = Config::path()?;
         let config = Config::load()?;
+        let provider = config.provider();
         match config.model() {
             Some(model) => {
                 println!("{model}");
+                println!("  provider: {}", provider.as_str());
                 println!("  config : {}", path.display());
-                println!("  agent  : opencode run --auto --model {model} {{prompt}}");
+                println!("  agent  : {}", agent_command_label(provider, Some(model)));
             }
             None => {
-                println!("no saved model (using `opencode run {{prompt}}`)");
+                println!("no saved model (using provider default)");
+                println!("  provider: {}", provider.as_str());
                 println!("  config : {}", path.display());
+                println!("  agent  : {}", agent_command_label(provider, None));
             }
         }
         return Ok(());
@@ -396,28 +598,28 @@ fn cmd_model(model: Option<&str>, list: bool, show: bool, clear: bool) -> zunesh
         return save_model(model);
     }
 
-    let current = match Config::load() {
-        Ok(config) => config.model().map(str::to_string),
+    let (provider, current) = match Config::load() {
+        Ok(config) => (config.provider(), config.model().map(str::to_string)),
         Err(e) => {
             eprintln!("warning: {e}; choosing a model will replace the config");
-            None
+            (AgentProvider::Opencode, None)
         }
     };
 
-    let models = available_models()?;
+    let models = available_models(provider)?;
     if models.is_empty() {
-        return Err(Error::Config(
-            "`opencode models` returned no models; check `opencode auth` / your provider setup"
-                .into(),
-        ));
+        let binary = provider.binary();
+        return Err(Error::Config(format!(
+            "`{binary} models` returned no models; check your provider setup"
+        )));
     }
 
-    print_models(&models, current.as_deref());
+    print_models(provider, &models, current.as_deref());
     if list {
         return Ok(());
     }
 
-    let Some(choice) = choose_model(&models)? else {
+    let Some(choice) = choose_model(provider, &models)? else {
         println!("cancelled; no change");
         return Ok(());
     };
@@ -426,12 +628,15 @@ fn cmd_model(model: Option<&str>, list: bool, show: bool, clear: bool) -> zunesh
 
 /// Persist a model and explain when it takes effect.
 fn save_model(model: &str) -> zunesha_core::Result<()> {
-    let model = normalize_model(model)?;
+    let config = Config::load().unwrap_or_default();
+    let provider = config.provider();
+    let model = normalize_agent_model(provider, model)?;
     let path = Config::set_model(&model)?;
 
     println!("✔ saved model {model}");
+    println!("  provider: {}", provider.as_str());
     println!("  config : {}", path.display());
-    println!("  agent  : opencode run --auto --model {model} {{prompt}}");
+    println!("  agent  : {}", agent_command_label(provider, Some(&model)));
     if std::env::var("ZOU_AGENT_CMD").is_ok_and(|value| !value.trim().is_empty()) {
         println!(
             "  note   : ZOU_AGENT_CMD is set and overrides this saved model; unset it to use the selection"
@@ -441,14 +646,15 @@ fn save_model(model: &str) -> zunesha_core::Result<()> {
     Ok(())
 }
 
-/// Ask `opencode models` for the installed/provider model list.
-fn available_models() -> zunesha_core::Result<Vec<String>> {
-    let output = std::process::Command::new("opencode")
+/// Ask the active provider's CLI for its model list.
+fn available_models(provider: AgentProvider) -> zunesha_core::Result<Vec<String>> {
+    let binary = provider.binary();
+    let output = std::process::Command::new(binary)
         .arg("models")
         .output()
         .map_err(|e| {
             Error::Config(format!(
-                "could not run `opencode models`: {e}. Install OpenCode or use ZOU_AGENT_CMD."
+                "could not run `{binary} models`: {e}. Install {binary} or use ZOU_AGENT_CMD."
             ))
         })?;
 
@@ -460,32 +666,43 @@ fn available_models() -> zunesha_core::Result<Vec<String>> {
         } else {
             detail.lines().next().unwrap_or(detail).to_string()
         };
-        return Err(Error::Config(format!("`opencode models` failed: {detail}")));
+        return Err(Error::Config(format!("`{binary} models` failed: {detail}")));
     }
 
-    Ok(parse_models(&String::from_utf8_lossy(&output.stdout)))
+    Ok(parse_models(
+        provider,
+        &String::from_utf8_lossy(&output.stdout),
+    ))
 }
 
-/// Parse the newline-separated ids printed by `opencode models`.
+/// Parse the newline-separated ids printed by `opencode models` / `agy models`.
 ///
-/// The real CLI prints one `provider/model` id per line. Keep only
-/// single-token lines containing `/`, and de-duplicate without reordering.
-fn parse_models(output: &str) -> Vec<String> {
+/// OpenCode prints one `provider/model` id per line. Antigravity prints
+/// `slug   Human-readable name`, so the slug is the first whitespace-delimited
+/// token. Both are de-duplicated without reordering.
+fn parse_models(provider: AgentProvider, output: &str) -> Vec<String> {
     let mut seen = HashSet::new();
     output
         .lines()
         .map(str::trim)
-        .filter(|line| {
-            !line.is_empty() && line.contains('/') && !line.chars().any(char::is_whitespace)
+        .filter_map(|line| match provider {
+            AgentProvider::Opencode => {
+                (!line.is_empty() && line.contains('/') && !line.chars().any(char::is_whitespace))
+                    .then_some(line.to_string())
+            }
+            AgentProvider::Antigravity => line
+                .split_whitespace()
+                .next()
+                .filter(|slug| !slug.is_empty())
+                .map(str::to_string),
         })
-        .filter(|line| seen.insert((*line).to_string()))
-        .map(str::to_string)
+        .filter(|model| seen.insert(model.clone()))
         .collect()
 }
 
 /// Print the numbered model list, marking the saved selection.
-fn print_models(models: &[String], current: Option<&str>) {
-    println!("Available models (`opencode models`):");
+fn print_models(provider: AgentProvider, models: &[String], current: Option<&str>) {
+    println!("Available models (`{} models`):", provider.binary());
     for (index, model) in models.iter().enumerate() {
         let marker = if current == Some(model.as_str()) {
             "*"
@@ -505,7 +722,10 @@ fn print_models(models: &[String], current: Option<&str>) {
 }
 
 /// Prompt for a list number or a model id. `None` means the user cancelled.
-fn choose_model(models: &[String]) -> zunesha_core::Result<Option<String>> {
+fn choose_model(
+    provider: AgentProvider,
+    models: &[String],
+) -> zunesha_core::Result<Option<String>> {
     loop {
         print!("Select a model by number or id (empty to cancel): ");
         io::stdout().flush()?;
@@ -530,7 +750,7 @@ fn choose_model(models: &[String]) -> zunesha_core::Result<Option<String>> {
             continue;
         }
 
-        match normalize_model(choice) {
+        match normalize_agent_model(provider, choice) {
             Ok(model) => return Ok(Some(model)),
             Err(e) => eprintln!("  {e}"),
         }
@@ -1109,6 +1329,110 @@ fn cmd_recover(target: &Path, task_id: Option<&str>) -> zunesha_core::Result<()>
     Ok(())
 }
 
+/// Call a daemon endpoint and return `(http_status, json_body)`.
+fn daemon_request(
+    method: &str,
+    url: &str,
+    body: Option<serde_json::Value>,
+) -> zunesha_core::Result<(u16, serde_json::Value)> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async move {
+        let client = reqwest::Client::new();
+        let mut request = match method {
+            "POST" => client.post(url),
+            "GET" => client.get(url),
+            other => return Err(Error::Config(format!("unsupported daemon method: {other}"))),
+        };
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| Error::Config(format!("cannot reach daemon at {url}: {e}")))?;
+        let status = response.status().as_u16();
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .unwrap_or_else(|_| serde_json::Value::String("<non-JSON response>".to_string()));
+        Ok((status, body))
+    })
+}
+
+fn cmd_cancel(task_id: &str, base_url: &str) -> zunesha_core::Result<()> {
+    let url = format!(
+        "{}/api/tasks/{task_id}/cancel",
+        base_url.trim_end_matches('/')
+    );
+    let (status, body) = daemon_request("POST", &url, None)?;
+    if status != 200 {
+        let message = body
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("cancel failed");
+        return Err(Error::Config(format!("{message} (HTTP {status})")));
+    }
+    println!("✔ cancellation requested for task {task_id}");
+    println!(
+        "  next       : the worker kills the process tree and releases the task (TODO, or \
+         needs-human for a conflict-resolution run)"
+    );
+    Ok(())
+}
+
+fn cmd_events(task_id: &str, base_url: &str) -> zunesha_core::Result<()> {
+    let url = format!(
+        "{}/api/tasks/{task_id}/events",
+        base_url.trim_end_matches('/')
+    );
+    let (status, body) = daemon_request("GET", &url, None)?;
+    if status != 200 {
+        let message = body
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("events request failed");
+        return Err(Error::Config(format!("{message} (HTTP {status})")));
+    }
+    if let Some(run) = body.get("run") {
+        if !run.is_null() {
+            println!(
+                "run {}  state={}  mode={}",
+                run.get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?"),
+                run.get("state")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?"),
+                run.get("mode")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?")
+            );
+        }
+    }
+    if let Some(events) = body.get("events").and_then(serde_json::Value::as_array) {
+        for event in events {
+            println!(
+                "{:>4}  {:<18} {}",
+                event
+                    .get("seq")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0),
+                event
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?"),
+                event
+                    .get("payload")
+                    .map(|payload| payload.to_string())
+                    .unwrap_or_default()
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Locate an existing orchestrator installation, or error helpfully.
 fn discover(target: &Path) -> zunesha_core::Result<ZuneshaPaths> {
     ZuneshaPaths::discover(target).ok_or(Error::NotInitialized {
@@ -1119,17 +1443,32 @@ fn discover(target: &Path) -> zunesha_core::Result<ZuneshaPaths> {
 #[cfg(test)]
 mod tests {
     use super::parse_models;
+    use zunesha_core::AgentProvider;
 
     #[test]
-    fn parse_models_keeps_ids_and_discards_noise() {
+    fn parse_models_keeps_opencode_ids_and_discards_noise() {
         let output = "\nopencode/beam-free\nopencode/big-pickle\n\
                       not a model\nprovider/model#variant\nopencode/beam-free\n";
         assert_eq!(
-            parse_models(output),
+            parse_models(AgentProvider::Opencode, output),
             vec![
                 "opencode/beam-free".to_string(),
                 "opencode/big-pickle".to_string(),
                 "provider/model#variant".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_models_keeps_antigravity_slugs() {
+        let output = "\ngemini-4-argon-high       Gemini 4 Argon (High)\n\
+                      gemini-3.8-flash-medium  Gemini 3.8 Flash (Medium)\n\
+                      gemini-4-argon-high       duplicate\n";
+        assert_eq!(
+            parse_models(AgentProvider::Antigravity, output),
+            vec![
+                "gemini-4-argon-high".to_string(),
+                "gemini-3.8-flash-medium".to_string(),
             ]
         );
     }

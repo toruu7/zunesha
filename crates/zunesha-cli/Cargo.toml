@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 zunesha-core = { path = "../zunesha-core" }
+base64 = "0.22"
 zunesha-api = { path = "../zunesha-api" }
 clap = { version = "4.5", features = ["derive", "env"] }
 crossterm = { version = "0.28", features = ["event-stream"] }

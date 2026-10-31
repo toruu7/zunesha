@@ -7,6 +7,7 @@
 import { create } from "zustand";
 
 import { api, connectEvents } from "./api";
+import type { AttachmentPayload } from "./attachments";
 import { applyEvent, countsFor, EMPTY_STATE, type BoardState } from "./reducer";
 import type { ApiEvent, Task } from "./types";
 
@@ -44,11 +45,16 @@ export interface ZouState extends BoardState {
   refresh: () => Promise<void>;
 
   // --- actions ---
-  plan: (prompt: string) => Promise<void>;
+  plan: (prompt: string, attachments?: AttachmentPayload[]) => Promise<void>;
   runAll: () => Promise<void>;
   runOne: (id: string) => Promise<void>;
+  cancel: (id: string) => Promise<void>;
   approve: (id: string) => Promise<void>;
-  reject: (id: string, feedback: string) => Promise<void>;
+  reject: (
+    id: string,
+    feedback: string,
+    attachments?: AttachmentPayload[],
+  ) => Promise<void>;
   /** Release a stuck IN_PROGRESS task back to TODO (crash recovery). */
   recover: (id: string) => Promise<void>;
 
@@ -156,10 +162,10 @@ export const useZou = create<ZouState>((set, get) => {
       }
     },
 
-    plan: async (prompt) => {
+    plan: async (prompt, attachments = []) => {
       set({ busy: true });
       try {
-        await api.plan(prompt);
+        await api.plan(prompt, attachments);
         await get().refresh();
         set({ error: null });
       } catch (err) {
@@ -195,6 +201,19 @@ export const useZou = create<ZouState>((set, get) => {
       }
     },
 
+    cancel: async (id) => {
+      set({ busy: true });
+      try {
+        await api.cancel(id);
+        await get().refresh();
+        set({ error: null });
+      } catch (err) {
+        set({ error: errText(err) });
+      } finally {
+        set({ busy: false });
+      }
+    },
+
     approve: async (id) => {
       set({ busy: true });
       try {
@@ -212,10 +231,10 @@ export const useZou = create<ZouState>((set, get) => {
       }
     },
 
-    reject: async (id, feedback) => {
+    reject: async (id, feedback, attachments = []) => {
       set({ busy: true });
       try {
-        await api.reject(id, feedback);
+        await api.reject(id, feedback, attachments);
         await get().refresh();
         set({ error: null, selectedId: null });
       } catch (err) {

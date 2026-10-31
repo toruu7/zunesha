@@ -136,6 +136,36 @@ pub fn plan(db: &Database, prompt: &str, repo_root: &Path) -> Result<Vec<String>
     plan_with(db, prompt, &Planner::from_env(), repo_root)
 }
 
+/// Plan a feature with attachments, storing the files under `.zou/attachments/`.
+///
+/// The planner sees the attachment section, and every resulting task gets the
+/// same section appended (unless the planner already copied it) so the agent
+/// can read screenshots/specs from their absolute paths.
+pub fn plan_with_attachments(
+    db: &Database,
+    prompt: &str,
+    planner: &Planner,
+    repo_root: &Path,
+    uploads: &[crate::attachments::AttachmentUpload],
+) -> Result<Vec<String>> {
+    if prompt.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let saved = crate::attachments::save_attachments(repo_root, uploads)?;
+    let planner_prompt = crate::attachments::append_attachments(prompt, &saved);
+    let ids = plan_with(db, &planner_prompt, planner, repo_root)?;
+    if !saved.is_empty() {
+        for id in &ids {
+            let task = db.require_task(id)?;
+            if !task.description.contains("## Attachments") {
+                let description = crate::attachments::append_attachments(&task.description, &saved);
+                db.update_task(id, None, Some(&description))?;
+            }
+        }
+    }
+    Ok(ids)
+}
+
 /// Plan with an explicit [`Planner`] (tests, embedding, daemon reuse).
 ///
 /// The draft is fully validated before the first row is written: a rejected

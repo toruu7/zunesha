@@ -34,7 +34,7 @@ use ratatui::{Frame, Terminal};
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use zunesha_api::events::{ApiEvent, ProjectInfo};
-use zunesha_core::{Config, Error, StreamKind, Task, TaskStatus};
+use zunesha_core::{AgentProvider, Config, Error, StreamKind, Task, TaskStatus};
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const CONFIG_RELOAD_INTERVAL: Duration = Duration::from_secs(2);
@@ -281,9 +281,13 @@ impl ApiClient {
         }
     }
 
-    async fn plan(&self, prompt: &str) -> Result<String, String> {
-        self.post("/api/plan", Some(serde_json::json!({ "prompt": prompt })))
-            .await
+    async fn plan(&self, prompt: &str, attachments: &[PathBuf]) -> Result<String, String> {
+        let uploads = attachment_payload(attachments)?;
+        self.post(
+            "/api/plan",
+            Some(serde_json::json!({ "prompt": prompt, "attachments": uploads })),
+        )
+        .await
     }
 
     async fn run_ready(&self) -> Result<String, String> {
@@ -305,6 +309,11 @@ impl ApiClient {
             Some(serde_json::json!({ "feedback": feedback })),
         )
         .await
+    }
+
+    async fn cancel(&self, task_id: &str) -> Result<String, String> {
+        self.post(&format!("/api/tasks/{task_id}/cancel"), None)
+            .await
     }
 
     async fn recover(&self, task_id: Option<&str>) -> Result<String, String> {
@@ -606,10 +615,12 @@ enum Action {
     Quit,
     Help,
     Plan,
+    Attach,
     RunAll,
     RunOne,
     Approve,
     Reject,
+    Cancel,
     Recover,
     Refresh,
     Logs,
@@ -635,10 +646,12 @@ impl Action {
             "quit" => Self::Quit,
             "help" => Self::Help,
             "plan" => Self::Plan,
+            "attach" => Self::Attach,
             "run" => Self::RunAll,
             "run_one" => Self::RunOne,
             "approve" => Self::Approve,
             "reject" => Self::Reject,
+            "cancel" => Self::Cancel,
             "recover" => Self::Recover,
             "refresh" => Self::Refresh,
             "logs" => Self::Logs,
@@ -665,10 +678,12 @@ const DEFAULT_KEYS: &[(&str, &str)] = &[
     ("quit", "q"),
     ("help", "?"),
     ("plan", "p"),
+    ("attach", "A"),
     ("run", "r"),
     ("run_one", "R"),
     ("approve", "a"),
     ("reject", "x"),
+    ("cancel", "C"),
     ("recover", "c"),
     ("refresh", "g"),
     ("logs", "l"),
@@ -822,6 +837,7 @@ impl DetailTab {
 #[derive(Clone, Debug)]
 enum InputMode {
     Plan(String),
+    Attach(String),
     Reject(String),
     Filter(String),
     Command(String),
@@ -831,6 +847,7 @@ impl InputMode {
     fn title(&self) -> &'static str {
         match self {
             Self::Plan(_) => "plan a feature",
+            Self::Attach(_) => "attach a file",
             Self::Reject(_) => "reject with feedback",
             Self::Filter(_) => "filter tasks",
             Self::Command(_) => "command",
@@ -840,6 +857,7 @@ impl InputMode {
     fn prompt(&self) -> &'static str {
         match self {
             Self::Plan(_) => "prompt",
+            Self::Attach(_) => "path",
             Self::Reject(_) => "feedback",
             Self::Filter(_) => "text",
             Self::Command(_) => ":",
@@ -848,17 +866,21 @@ impl InputMode {
 
     fn text_mut(&mut self) -> &mut String {
         match self {
-            Self::Plan(text) | Self::Reject(text) | Self::Filter(text) | Self::Command(text) => {
-                text
-            }
+            Self::Plan(text)
+            | Self::Attach(text)
+            | Self::Reject(text)
+            | Self::Filter(text)
+            | Self::Command(text) => text,
         }
     }
 
     fn text(&self) -> &str {
         match self {
-            Self::Plan(text) | Self::Reject(text) | Self::Filter(text) | Self::Command(text) => {
-                text
-            }
+            Self::Plan(text)
+            | Self::Attach(text)
+            | Self::Reject(text)
+            | Self::Filter(text)
+            | Self::Command(text) => text,
         }
     }
 }
@@ -868,6 +890,7 @@ enum ConfirmAction {
     RunAll,
     RunOne(String),
     Approve(String),
+    Cancel(String),
     Recover(Option<String>),
 }
 
@@ -895,6 +918,7 @@ struct App {
     detail_tab: DetailTab,
     connection: Connection,
     status: String,
+    attachments: Vec<PathBuf>,
     input: Option<InputMode>,
     confirm: Option<ConfirmAction>,
     model_picker: Option<ModelPicker>,
@@ -937,6 +961,7 @@ impl App {
             detail_tab: DetailTab::Logs,
             connection: Connection::Connecting,
             status,
+            attachments: Vec::new(),
             input: None,
             confirm: None,
             model_picker: None,
@@ -1169,6 +1194,9 @@ impl App {
             Action::Plan => {
                 self.input = Some(InputMode::Plan(String::new()));
             }
+            Action::Attach => {
+                self.input = Some(InputMode::Attach(String::new()));
+            }
             Action::RunAll => {
                 self.confirm = Some(ConfirmAction::RunAll);
             }
@@ -1208,6 +1236,19 @@ impl App {
                     } else {
                         self.status = format!(
                             "{} is {}; only REVIEW/FAILED tasks can be rejected",
+                            task.id,
+                            status_label(task.status)
+                        );
+                    }
+                }
+            }
+            Action::Cancel => {
+                if let Some(task) = self.selected_task() {
+                    if is_active(task.status) {
+                        self.confirm = Some(ConfirmAction::Cancel(task.id));
+                    } else {
+                        self.status = format!(
+                            "{} is {}; only running tasks can be cancelled",
                             task.id,
                             status_label(task.status)
                         );
@@ -1356,9 +1397,19 @@ impl App {
                     return;
                 }
                 let api = self.api.clone();
-                self.status = "planning…".into();
-                spawn_action(tx, "plan", async move { api.plan(&text).await });
+                let attachments = self.attachments.clone();
+                self.status = if attachments.is_empty() {
+                    "planning…".into()
+                } else {
+                    format!("planning with {} attachment(s)…", attachments.len())
+                };
+                spawn_action(
+                    tx,
+                    "plan",
+                    async move { api.plan(&text, &attachments).await },
+                );
             }
+            InputMode::Attach(text) => self.attach_path(&text),
             InputMode::Reject(feedback) => {
                 let Some(task) = self.selected_task() else {
                     self.status = "no task selected".into();
@@ -1384,6 +1435,35 @@ impl App {
         }
     }
 
+    fn attach_path(&mut self, text: &str) {
+        let path = PathBuf::from(text.trim());
+        if text.trim().is_empty() {
+            self.status = "attach cancelled: empty path".into();
+        } else if !path.is_file() {
+            self.status = format!("not a file: {}", path.display());
+        } else if self.attachments.len() >= zunesha_core::MAX_ATTACHMENTS {
+            self.status = format!(
+                "attachment limit reached (maximum {})",
+                zunesha_core::MAX_ATTACHMENTS
+            );
+        } else if std::fs::metadata(&path)
+            .is_ok_and(|meta| meta.len() > zunesha_core::MAX_ATTACHMENT_BYTES as u64)
+        {
+            self.status = format!(
+                "attachment too large: {} (maximum {} bytes)",
+                path.display(),
+                zunesha_core::MAX_ATTACHMENT_BYTES
+            );
+        } else {
+            self.attachments.push(path.clone());
+            self.status = format!(
+                "attached {} ({} total)",
+                path.display(),
+                self.attachments.len()
+            );
+        }
+    }
+
     fn run_command(&mut self, command: &str, tx: &mpsc::UnboundedSender<AppMsg>) {
         let command = command.trim();
         if command.is_empty() {
@@ -1397,6 +1477,31 @@ impl App {
             "q" | "quit" => self.should_quit = true,
             "help" | "?" => self.help = true,
             "plan" => self.input = Some(InputMode::Plan(argument.to_string())),
+            "attach" => {
+                if argument.is_empty() {
+                    self.input = Some(InputMode::Attach(String::new()));
+                } else {
+                    self.attach_path(argument);
+                }
+            }
+            "attachments" => {
+                self.status = if self.attachments.is_empty() {
+                    "no attachments".into()
+                } else {
+                    format!(
+                        "attachments: {}",
+                        self.attachments
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+            }
+            "clear-attachments" | "clear_attachments" => {
+                self.attachments.clear();
+                self.status = "attachments cleared".into();
+            }
             "run" => self.confirm = Some(ConfirmAction::RunAll),
             "run-one" | "run_one" => {
                 if let Some(task) = self.selected_task() {
@@ -1410,6 +1515,11 @@ impl App {
             }
             "reject" => {
                 self.input = Some(InputMode::Reject(argument.to_string()));
+            }
+            "cancel" => {
+                if let Some(task) = self.selected_task() {
+                    self.confirm = Some(ConfirmAction::Cancel(task.id));
+                }
             }
             "recover" => {
                 let task_id = self.selected_task().map(|task| task.id);
@@ -1457,6 +1567,11 @@ impl App {
                 let api = self.api.clone();
                 self.status = format!("approving {task_id}…");
                 spawn_action(tx, "approve", async move { api.approve(&task_id).await });
+            }
+            ConfirmAction::Cancel(task_id) => {
+                let api = self.api.clone();
+                self.status = format!("cancelling {task_id}…");
+                spawn_action(tx, "cancel", async move { api.cancel(&task_id).await });
             }
             ConfirmAction::Recover(task_id) => {
                 let api = self.api.clone();
@@ -1513,6 +1628,9 @@ impl App {
             }
             AppMsg::Action { label, result } => match result {
                 Ok(_) => {
+                    if label == "plan" {
+                        self.attachments.clear();
+                    }
                     self.status = format!("{label}: ok");
                     self.spawn_refresh(tx);
                 }
@@ -1523,7 +1641,7 @@ impl App {
             AppMsg::Models(result) => match result {
                 Ok(models) if models.is_empty() => {
                     self.status =
-                        "`opencode models` returned no models; check `opencode auth`".into();
+                        "model discovery returned no models; check the active agent's auth".into();
                     self.model_picker = None;
                 }
                 Ok(models) => {
@@ -1565,16 +1683,38 @@ where
     });
 }
 
+/// Read TUI attachments and base64-encode them for the REST plan request.
+fn attachment_payload(paths: &[PathBuf]) -> Result<Vec<serde_json::Value>, String> {
+    use base64::Engine as _;
+    // Reuse the CLI reader so the TUI enforces the same count/size limits
+    // before reading a huge file into memory.
+    let uploads = crate::read_attachments(paths).map_err(|error| error.to_string())?;
+    Ok(uploads
+        .into_iter()
+        .map(|upload| {
+            serde_json::json!({
+                "name": upload.name,
+                "media_type": upload.media_type,
+                "data": base64::engine::general_purpose::STANDARD.encode(upload.bytes),
+            })
+        })
+        .collect())
+}
+
 fn spawn_models(tx: &mpsc::UnboundedSender<AppMsg>) {
     let tx = tx.clone();
     tokio::spawn(async move {
         let result = tokio::task::spawn_blocking(|| -> Result<Vec<String>, String> {
-            let output = std::process::Command::new("opencode")
+            let provider = Config::load()
+                .map(|config| config.provider())
+                .unwrap_or(AgentProvider::Opencode);
+            let binary = provider.binary();
+            let output = std::process::Command::new(binary)
                 .arg("models")
                 .output()
                 .map_err(|error| {
                     format!(
-                        "could not run `opencode models`: {error}. Install OpenCode or use ZOU_AGENT_CMD."
+                        "could not run `{binary} models`: {error}. Install {binary} or use ZOU_AGENT_CMD."
                     )
                 })?;
             if !output.status.success() {
@@ -1585,9 +1725,12 @@ fn spawn_models(tx: &mpsc::UnboundedSender<AppMsg>) {
                 } else {
                     detail.lines().next().unwrap_or(detail).to_string()
                 };
-                return Err(format!("`opencode models` failed: {detail}"));
+                return Err(format!("`{binary} models` failed: {detail}"));
             }
-            Ok(parse_models(&String::from_utf8_lossy(&output.stdout)))
+            Ok(parse_models(
+                provider,
+                &String::from_utf8_lossy(&output.stdout),
+            ))
         })
         .await
         .map_err(|error| format!("model discovery task failed: {error}"))
@@ -1596,15 +1739,23 @@ fn spawn_models(tx: &mpsc::UnboundedSender<AppMsg>) {
     });
 }
 
-fn parse_models(output: &str) -> Vec<String> {
+fn parse_models(provider: AgentProvider, output: &str) -> Vec<String> {
     let mut models = Vec::new();
     for line in output.lines() {
-        let model = line.trim();
-        if !model.is_empty()
-            && model.contains('/')
-            && !model.chars().any(char::is_whitespace)
-            && !models.iter().any(|existing| existing == model)
-        {
+        let line = line.trim();
+        let model = match provider {
+            AgentProvider::Opencode => {
+                if line.is_empty() || !line.contains('/') || line.chars().any(char::is_whitespace) {
+                    continue;
+                }
+                line
+            }
+            AgentProvider::Antigravity => match line.split_whitespace().next() {
+                Some(model) if !model.is_empty() => model,
+                _ => continue,
+            },
+        };
+        if !models.iter().any(|existing| existing == model) {
             models.push(model.to_string());
         }
     }
@@ -2116,7 +2267,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
     if parts.is_empty() {
-        parts.push("q quit  p plan  r run  a approve  x reject  c recover".into());
+        parts.push("q quit  p plan  A attach  r run  a approve  x reject  c recover".into());
     }
     parts.push("? help".into());
     let paragraph = Paragraph::new(parts.join("  ·  "))
@@ -2138,11 +2289,14 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
         .style(Style::default().bg(app.theme.bg).fg(app.theme.fg));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
+    let prompt = match input {
+        InputMode::Plan(_) if !app.attachments.is_empty() => {
+            format!("prompt ({} attached): ", app.attachments.len())
+        }
+        _ => format!("{}: ", input.prompt()),
+    };
     let text = Line::from(vec![
-        Span::styled(
-            format!("{}: ", input.prompt()),
-            Style::default().fg(app.theme.muted),
-        ),
+        Span::styled(prompt, Style::default().fg(app.theme.muted)),
         Span::styled(input.text(), Style::default().fg(app.theme.fg)),
         Span::styled("█", Style::default().fg(app.theme.accent)),
     ]);
@@ -2160,6 +2314,9 @@ fn draw_confirm(frame: &mut Frame, app: &App, area: Rect) {
         ConfirmAction::RunAll => "run every ready (TODO) task?".to_string(),
         ConfirmAction::RunOne(task_id) => format!("run {task_id}?"),
         ConfirmAction::Approve(task_id) => format!("approve {task_id} and merge its diff?"),
+        ConfirmAction::Cancel(task_id) => {
+            format!("cancel {task_id}? the agent process tree will be killed")
+        }
         ConfirmAction::Recover(Some(task_id)) => format!("release {task_id} back to TODO?"),
         ConfirmAction::Recover(None) => "release every stuck task back to TODO?".to_string(),
     };
@@ -2276,14 +2433,15 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block, popup);
     let mut lines = vec![
         Line::from("navigation: j/k or ↑/↓ select   tab detail tab   enter logs"),
-        Line::from("actions:    p plan   r run all   R run selected"),
+        Line::from("actions:    p plan   A attach   r run all   R run selected   C cancel"),
         Line::from("            a approve   x reject   c recover   g refresh"),
         Line::from("views:      l logs   o output   d diff   i task"),
         Line::from("config:     t theme   m model   f filter   : command palette"),
         Line::from("logs:       pageup/pagedown scroll   esc clear filter"),
         Line::from(""),
-        Line::from("commands:   :run  :approve  :reject <text>  :recover"),
-        Line::from("            :plan <prompt>  :filter <text>  :theme <name>"),
+        Line::from("commands:   :run  :approve  :reject <text>  :cancel  :recover"),
+        Line::from("            :plan <prompt>  :attach <path>  :clear-attachments"),
+        Line::from("            :filter <text>  :theme <name>"),
         Line::from(""),
         Line::from("config:     ~/.config/zou/tui.toml or .zou/tui.toml"),
         Line::from("themes:     paper, midnight, solarized, high-contrast, mono"),

@@ -3,8 +3,8 @@
 `zou tui` is a thin terminal client for the same REST + WebSocket API as the
 dashboard. It is useful when you want to stay in the terminal without giving up
 the review workflow: task list, live logs, the agent's final Markdown answer,
-the captured diff, plan/run/approve/reject/recover, themes, and a command
-palette.
+the captured diff, plan/attach/run/approve/reject/cancel/recover, themes, and a
+command palette.
 
 It does **not** run agents itself. The daemon (`zou start`) owns the worker
 pool and the SQLite state, so the TUI can attach and detach without stopping a
@@ -78,10 +78,12 @@ file; see [Configuration](#configuration).
 | Key | Action |
 | --- | --- |
 | `p` | Plan a feature. Type the prompt and press `Enter`. |
+| `A` | Attach a file to the next plan. Type a path and press `Enter`; repeat for more files. |
 | `r` | Run all ready (`TODO`) tasks. Asks for confirmation. |
 | `R` | Run the selected task. Only `TODO` tasks can start. |
 | `a` | Approve the selected `REVIEW` task. Asks for confirmation. |
 | `x` | Reject the selected `REVIEW` or `FAILED_NEEDS_HUMAN` task with feedback. |
+| `C` | Cancel the selected running task (`IN_PROGRESS`/`EVALUATING`/`RESOLVING_CONFLICTS`). Asks for confirmation. |
 | `c` | Recover the selected stuck task, or all stuck tasks when nothing is selected. |
 | `g` | Refresh the task list from the daemon. |
 
@@ -101,9 +103,9 @@ file; see [Configuration](#configuration).
 
 ### Confirmation dialogs
 
-`r`, `R`, `a`, and `c` open a confirmation prompt. Press `y` to proceed or
-`n` / `Esc` to cancel. The prompt shows the task and the action so a stray
-keypress cannot merge work.
+`r`, `R`, `a`, `C`, and `c` open a confirmation prompt. Press `y` to proceed
+or `n` / `Esc` to cancel. The prompt shows the task and the action so a stray
+keypress cannot merge work or kill a process.
 
 ## Command palette
 
@@ -112,10 +114,14 @@ Press `:` and type one of:
 ```text
 :help
 :plan <prompt>
+:attach <path>
+:attachments
+:clear-attachments
 :run
 :run-one
 :approve
 :reject <feedback>
+:cancel
 :recover
 :refresh
 :filter <text>
@@ -132,14 +138,26 @@ Commands without an argument act on the selected task where applicable. The
 palette is a shortcut, not a second API: every command maps to the same action
 as its key binding.
 
+## Attachments
+
+Attach files/images to the next plan with `A` or `:attach <path>`. The plan
+prompt shows the attached count; `:attachments` lists the paths and
+`:clear-attachments` starts over. On submit the TUI base64-encodes the files
+and posts them with `/api/plan`; the daemon stores them under
+`.zou/attachments/` and puts their absolute paths in every task description.
+The same limits as the web UI apply (10 files, 8 MiB each, 24 MiB total).
+
 ## Model picker
 
-Press `m` to list the models reported by `opencode models`. Use `j` / `k` or the
-arrow keys to move, `Enter` to save, and `Esc` to cancel.
+Press `m` to list the models reported by `opencode models` or `agy models` for
+the active provider. Use `j` / `k` or the arrow keys to move, `Enter` to save,
+and `Esc` to cancel.
 
 The choice is written to `${XDG_CONFIG_HOME:-~/.config}/zou/config.json` and is
-used by future `zou run` / `zou start` processes. A running daemon keeps the
-model it started with; restart it after changing the model.
+used by future `zou run` / `zou start` processes. Switching provider
+(`zou agent antigravity` / `zou agent opencode`) preserves each provider's
+saved model. A running daemon keeps the provider and model it started with;
+restart it after changing either.
 
 ## Configuration
 
@@ -167,10 +185,12 @@ statusbar = ["project", "connection", "running", "review", "theme"]
 quit = "q"
 help = "?"
 plan = "p"
+attach = "A"
 run = "r"
 run_one = "R"
 approve = "a"
 reject = "x"
+cancel = "C"
 recover = "c"
 refresh = "g"
 logs = "l"
@@ -225,7 +245,8 @@ ignored; the rest of the keymap still loads.
 ### Layout
 
 - `auto` — split when the terminal is at least 100 columns wide, stack
-  otherwise.
+  otherwise. This is what keeps the TUI usable on narrow terminals and phone
+  SSH sessions.
 - `split` — always side by side.
 - `stack` — always list above detail.
 
@@ -250,12 +271,14 @@ one run. `[colors]` overrides apply on top of whichever theme is active.
 
 ## Typical review loop
 
-1. `p` — describe the feature.
+1. `p` — describe the feature (optionally `A` first to attach a file).
 2. `r` — run the ready tasks.
 3. Select a task and watch **Logs** while it works.
-4. When the status becomes `REVIEW`, open **Output** and **Diff**.
-5. `a` to approve, or `x` to reject with feedback.
-6. Repeat until the DAG is `DONE`.
+4. Press `C` to cancel a run that is going the wrong way; the task returns to
+   `TODO` with a note (conflict resolution parks in `FAILED_NEEDS_HUMAN`).
+5. When the status becomes `REVIEW`, open **Output** and **Diff**.
+6. `a` to approve, or `x` to reject with feedback.
+7. Repeat until the DAG is `DONE`.
 
 Approval merges the captured diff into your working tree; it does not create a
 git commit. The repository's history remains yours to write.

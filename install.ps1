@@ -59,7 +59,7 @@ Usage: .\install.ps1 [options]
   -Repo URL          Git repository used for source builds.
   -ReleaseBase URL   Base URL for prebuilt zips. The script appends
                      [/VERSION/]zou-windows-amd64.zip.
-  -Version TAG       Optional release tag (for example v0.9.0).
+  -Version TAG       Optional release tag (for example v0.10.0).
   -Tarball URL       Full URL/path of the prebuilt zip (overrides the above).
   -Source            Skip the prebuilt and build from source.
   -CargoProfile NAME Cargo profile for source builds (default: release).
@@ -70,7 +70,7 @@ Usage: .\install.ps1 [options]
 
 Examples:
   .\install.ps1
-  .\install.ps1 -Version v0.9.0
+  .\install.ps1 -Version v0.10.0
   .\install.ps1 -Source -Repo https://github.com/you/zunesha
   .\install.ps1 -Tarball .\zou-windows-amd64.zip
 "@

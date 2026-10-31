@@ -31,8 +31,10 @@
 
 mod child_env;
 
+pub mod attachments;
 pub mod codebase_map;
 pub mod config;
+pub mod control;
 pub mod dag;
 pub mod db;
 pub mod error;
@@ -43,19 +45,26 @@ pub mod integrator;
 pub mod paths;
 pub mod planner;
 pub mod prior_context;
+pub mod sandbox;
 pub mod task;
 pub mod worker;
 pub mod workspace;
 
-pub use config::{normalize_model, AgentConfig, Config};
+pub use attachments::{
+    append_attachments, attachment_block, save_attachments, AttachmentUpload, SavedAttachment,
+    MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, MAX_TOTAL_ATTACHMENT_BYTES,
+};
+pub use config::{normalize_agent_model, normalize_model, AgentConfig, AgentProvider, Config};
+pub use control::{RunControl, RunRegistry};
 pub use dag::{blocked_tasks, promote_ready, recover_stuck};
-pub use db::{Database, WorkspaceRecord};
+pub use db::{Database, RunEvent, RunRecord, WorkspaceRecord};
 pub use error::{Error, Result};
 pub use eval::{EvalCommand, EvalOutcome};
 pub use init::{init_project, InitReport};
 pub use integrator::{approve_task, ApproveOutcome, Integrator, MergeOutcome};
 pub use paths::ZuneshaPaths;
-pub use planner::{plan, plan_with, Planner, MAX_PLAN_TASKS};
+pub use planner::{plan, plan_with, plan_with_attachments, Planner, MAX_PLAN_TASKS};
+pub use sandbox::{redact_secrets, SandboxMode, SandboxPolicy};
 pub use task::{Task, TaskStatus, MAX_EVAL_RETRIES};
 pub use worker::{AgentCommand, StreamKind, WorkerEvent, WorkerPool, DEFAULT_MAX_CONCURRENCY};
 pub use workspace::{branch_name, ConflictPrep, Workspace, WorkspaceManager};

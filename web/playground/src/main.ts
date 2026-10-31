@@ -20,6 +20,12 @@ import {
   type TaskStatus,
   type TasksResponse,
 } from './api';
+import {
+  addAttachmentFiles,
+  formatBytes,
+  toPayload,
+  type AttachmentDraft,
+} from './attachments';
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   BACKLOG: 'backlog',
@@ -66,6 +72,10 @@ interface State {
   connection: 'connecting' | 'live' | 'offline';
   busy: string | null;
   error: string | null;
+  planAttachments: AttachmentDraft[];
+  planAttachmentErrors: string[];
+  rejectAttachments: AttachmentDraft[];
+  rejectAttachmentErrors: string[];
 }
 
 const state: State = {
@@ -80,6 +90,10 @@ const state: State = {
   connection: 'connecting',
   busy: null,
   error: null,
+  planAttachments: [],
+  planAttachmentErrors: [],
+  rejectAttachments: [],
+  rejectAttachmentErrors: [],
 };
 
 const tracker = new AgentTracker();
@@ -110,6 +124,16 @@ const modalTitleEl = document.getElementById('modal-title') as HTMLElement;
 const rejectFeedbackEl = document.getElementById('reject-feedback') as HTMLTextAreaElement;
 const modalCancelEl = document.getElementById('modal-cancel') as HTMLButtonElement;
 const modalSubmitEl = document.getElementById('modal-submit') as HTMLButtonElement;
+const attachBtn = document.getElementById('attach-btn') as HTMLButtonElement;
+const attachInput = document.getElementById('attach-input') as HTMLInputElement;
+const attachHint = document.getElementById('attach-hint') as HTMLElement;
+const attachList = document.getElementById('attach-list') as HTMLElement;
+const attachErrors = document.getElementById('attach-errors') as HTMLElement;
+const rejectAttachBtn = document.getElementById('reject-attach-btn') as HTMLButtonElement;
+const rejectAttachInput = document.getElementById('reject-attach-input') as HTMLInputElement;
+const rejectAttachHint = document.getElementById('reject-attach-hint') as HTMLElement;
+const rejectAttachList = document.getElementById('reject-attach-list') as HTMLElement;
+const rejectAttachErrors = document.getElementById('reject-attach-errors') as HTMLElement;
 
 let socket: WebSocket | null = null;
 let reconnectTimer: number | null = null;
@@ -404,12 +428,97 @@ function renderRail(): void {
   planBtn.textContent = state.busy === 'planning' ? 'Planning…' : 'Plan';
 }
 
+function renderAttachmentSet(
+  listEl: HTMLElement,
+  hintEl: HTMLElement,
+  errorsEl: HTMLElement,
+  attachments: AttachmentDraft[],
+  errors: string[],
+  kind: 'plan' | 'reject',
+): void {
+  hintEl.textContent = attachments.length
+    ? `images or files · ${attachments.length}/10`
+    : 'images or files · max 10';
+  listEl.innerHTML = attachments
+    .map((attachment, index) => {
+      const preview = attachment.preview
+        ? `<img src="${escapeHtml(attachment.preview)}" alt="" />`
+        : '<span class="attach-file">FILE</span>';
+      return `<li class="attach-chip">
+        ${preview}
+        <span class="attach-copy">
+          <span class="attach-name" title="${escapeHtml(attachment.name)}">${escapeHtml(attachment.name)}</span>
+          <span class="attach-size">${formatBytes(attachment.size)}</span>
+        </span>
+        <button type="button" class="attach-remove" data-remove-attachment="${kind}" data-index="${index}" aria-label="Remove ${escapeHtml(attachment.name)}">✕</button>
+      </li>`;
+    })
+    .join('');
+  errorsEl.innerHTML = errors.map((error) => `<li>${escapeHtml(error)}</li>`).join('');
+}
+
+function renderAttachments(): void {
+  renderAttachmentSet(
+    attachList,
+    attachHint,
+    attachErrors,
+    state.planAttachments,
+    state.planAttachmentErrors,
+    'plan',
+  );
+  renderAttachmentSet(
+    rejectAttachList,
+    rejectAttachHint,
+    rejectAttachErrors,
+    state.rejectAttachments,
+    state.rejectAttachmentErrors,
+    'reject',
+  );
+  attachBtn.disabled = state.busy !== null || state.planAttachments.length >= 10;
+  rejectAttachBtn.disabled = state.busy !== null || state.rejectAttachments.length >= 10;
+}
+
+const attachmentQueues: Record<'plan' | 'reject', Promise<void>> = {
+  plan: Promise.resolve(),
+  reject: Promise.resolve(),
+};
+
+async function addAttachments(kind: 'plan' | 'reject', files: Iterable<File>): Promise<void> {
+  // Serialize reads so two quick drops do not both start from the same list.
+  const run = attachmentQueues[kind].then(async () => {
+    const existing = kind === 'plan' ? state.planAttachments : state.rejectAttachments;
+    const result = await addAttachmentFiles(existing, files);
+    if (kind === 'plan') {
+      state.planAttachments = result.attachments;
+      state.planAttachmentErrors = result.errors;
+    } else {
+      state.rejectAttachments = result.attachments;
+      state.rejectAttachmentErrors = result.errors;
+    }
+    renderAttachments();
+  });
+  attachmentQueues[kind] = run.catch(() => undefined);
+  await run;
+}
+
+function clearAttachments(kind: 'plan' | 'reject'): void {
+  if (kind === 'plan') {
+    state.planAttachments = [];
+    state.planAttachmentErrors = [];
+  } else {
+    state.rejectAttachments = [];
+    state.rejectAttachmentErrors = [];
+  }
+  renderAttachments();
+}
+
 function actionButtons(task: Task): string {
   const busy = state.busy !== null;
   const canRun = task.status === 'TODO';
   const canApprove = task.status === 'REVIEW';
   const canReject = task.status === 'REVIEW' || task.status === 'FAILED_NEEDS_HUMAN';
-  const canRecover = task.status === 'IN_PROGRESS' || task.status === 'EVALUATING' || task.status === 'RESOLVING_CONFLICTS';
+  const canCancel = task.status === 'IN_PROGRESS' || task.status === 'EVALUATING' || task.status === 'RESOLVING_CONFLICTS';
+  const canRecover = canCancel;
   const button = (action: string, label: string, enabled: boolean, className: string, title: string) =>
     `<button class="btn ${className}" data-action="${action}" type="button" ${enabled && !busy ? '' : 'disabled'} title="${escapeHtml(title)}">${label}</button>`;
 
@@ -417,6 +526,7 @@ function actionButtons(task: Task): string {
     button('run', '▶ Run', canRun, 'primary', canRun ? 'Run this ready task' : 'Only ready tasks can start'),
     button('approve', '✓ Approve', canApprove, 'success', canApprove ? 'Merge this reviewed diff' : 'Only REVIEW tasks can be approved'),
     button('reject', '✕ Reject', canReject, 'danger', canReject ? 'Send this task back with feedback' : 'Only REVIEW or needs-human tasks can be rejected'),
+    button('cancel', '■ Cancel', canCancel, 'danger', canCancel ? 'Stop this agent and release the task' : 'Only running tasks can be cancelled'),
     button('recover', '↻ Recover', canRecover, 'ghost', canRecover ? 'Release this stuck task back to ready' : 'Only running tasks can be recovered'),
     button('refresh', 'Refresh', true, 'ghost', 'Refresh from the daemon'),
   ].join('');
@@ -506,6 +616,7 @@ function renderError(): void {
 function render(): void {
   renderHeader();
   renderRail();
+  renderAttachments();
   renderInspector();
   renderOfficeStatus();
   renderError();
@@ -628,8 +739,9 @@ async function planFeature(): Promise<void> {
     return;
   }
   await withBusy('planning', async () => {
-    await api.plan(prompt);
+    await api.plan(prompt, toPayload(state.planAttachments));
     promptEl.value = '';
+    clearAttachments('plan');
     await refresh();
     showToast('Plan created. Review the new tasks, then run them.');
   });
@@ -670,6 +782,15 @@ async function approve(id: string): Promise<void> {
   });
 }
 
+async function cancel(id: string): Promise<void> {
+  if (!window.confirm('Stop this agent and release the task back to ready?')) return;
+  await withBusy('cancelling', async () => {
+    await api.cancel(id);
+    await refresh();
+    showToast('Cancellation requested; the task will return to ready.');
+  });
+}
+
 async function recover(id: string): Promise<void> {
   if (!window.confirm('Release this stuck task back to ready?')) return;
   await withBusy('recovering', async () => {
@@ -683,6 +804,7 @@ function openReject(task: Task): void {
   rejectTaskId = task.id;
   modalTitleEl.textContent = `Reject “${task.title}”`;
   rejectFeedbackEl.value = '';
+  clearAttachments('reject');
   modalEl.hidden = false;
   window.setTimeout(() => rejectFeedbackEl.focus(), 30);
 }
@@ -696,9 +818,11 @@ async function submitReject(): Promise<void> {
   const id = rejectTaskId;
   if (!id) return;
   const feedback = rejectFeedbackEl.value.trim();
+  const attachments = toPayload(state.rejectAttachments);
   closeReject();
   await withBusy('rejecting', async () => {
-    await api.reject(id, feedback);
+    await api.reject(id, feedback, attachments);
+    clearAttachments('reject');
     await refresh();
     showToast('Task rejected and returned to ready.');
   });
@@ -714,6 +838,7 @@ function handleInspectorAction(action: string): void {
   if (action === 'run') void runOne(task.id);
   else if (action === 'approve') void approve(task.id);
   else if (action === 'reject') openReject(task);
+  else if (action === 'cancel') void cancel(task.id);
   else if (action === 'recover') void recover(task.id);
 }
 
@@ -744,6 +869,63 @@ searchEl.addEventListener('input', () => {
 
 planBtn.addEventListener('click', () => void planFeature());
 runAllBtn.addEventListener('click', () => void runAll());
+
+attachBtn.addEventListener('click', () => attachInput.click());
+rejectAttachBtn.addEventListener('click', () => rejectAttachInput.click());
+attachInput.addEventListener('change', () => {
+  if (attachInput.files?.length) void addAttachments('plan', attachInput.files);
+  attachInput.value = '';
+});
+rejectAttachInput.addEventListener('change', () => {
+  if (rejectAttachInput.files?.length) void addAttachments('reject', rejectAttachInput.files);
+  rejectAttachInput.value = '';
+});
+for (const list of [attachList, rejectAttachList]) {
+  list.addEventListener('click', (event) => {
+    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-remove-attachment]');
+    if (!target) return;
+    const kind = target.dataset.removeAttachment as 'plan' | 'reject';
+    const index = Number(target.dataset.index);
+    if (kind === 'plan') {
+      state.planAttachments = state.planAttachments.filter((_, i) => i !== index);
+      state.planAttachmentErrors = [];
+    } else {
+      state.rejectAttachments = state.rejectAttachments.filter((_, i) => i !== index);
+      state.rejectAttachmentErrors = [];
+    }
+    renderAttachments();
+  });
+}
+
+promptEl.addEventListener('paste', (event) => {
+  if (event.clipboardData?.files.length) {
+    event.preventDefault();
+    void addAttachments('plan', event.clipboardData.files);
+  }
+});
+promptEl.addEventListener('dragover', (event) => {
+  if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+});
+promptEl.addEventListener('drop', (event) => {
+  if (!event.dataTransfer?.files.length) return;
+  event.preventDefault();
+  void addAttachments('plan', event.dataTransfer.files);
+});
+rejectFeedbackEl.addEventListener('paste', (event) => {
+  if (event.clipboardData?.files.length) {
+    event.preventDefault();
+    void addAttachments('reject', event.clipboardData.files);
+  }
+});
+rejectFeedbackEl.addEventListener('dragover', (event) => {
+  if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+});
+rejectFeedbackEl.addEventListener('drop', (event) => {
+  if (!event.dataTransfer?.files.length) return;
+  event.preventDefault();
+  void addAttachments('reject', event.dataTransfer.files);
+});
+
 promptEl.addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
     event.preventDefault();
@@ -808,6 +990,12 @@ document.addEventListener('keydown', (event) => {
     if (task && (task.status === 'REVIEW' || task.status === 'FAILED_NEEDS_HUMAN')) {
       event.preventDefault();
       openReject(task);
+    }
+  } else if (event.key === 'C') {
+    const task = selectedTask();
+    if (task && (task.status === 'IN_PROGRESS' || task.status === 'EVALUATING' || task.status === 'RESOLVING_CONFLICTS')) {
+      event.preventDefault();
+      void cancel(task.id);
     }
   }
 });

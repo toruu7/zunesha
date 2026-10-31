@@ -128,6 +128,11 @@ export interface RecoverResponse {
   released: string[];
 }
 
+export interface CancelResponse {
+  task_id: string;
+  cancelled: boolean;
+}
+
 /** A parsed API error (`{ error: string }` + HTTP status). */
 export class ApiError extends Error {
   readonly status: number;

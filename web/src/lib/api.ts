@@ -7,9 +7,11 @@
 //     the daemon's CORS is `very_permissive` so cross-origin is fine.
 //   * `NEXT_PUBLIC_API_BASE` overrides both (tests, remote daemon).
 
+import type { AttachmentPayload } from "./attachments";
 import type {
   ApiEvent,
   ApproveResponse,
+  CancelResponse,
   RecoverResponse,
   StatusResponse,
   Task,
@@ -75,15 +77,24 @@ export const api = {
   tasks: () => request<TasksResponse>("/api/tasks"),
   status: () => request<StatusResponse>("/api/status"),
   task: (id: string) => request<Task>(`/api/tasks/${encodeURIComponent(id)}`),
-  plan: (prompt: string) =>
-    post<{ task_ids: string[] }>("/api/plan", { prompt }),
+  plan: (prompt: string, attachments: AttachmentPayload[] = []) =>
+    post<{ task_ids: string[] }>("/api/plan", { prompt, attachments }),
   runAll: () => post<{ started: number }>("/api/run"),
   runOne: (id: string) =>
     post<{ started: number }>(`/api/tasks/${encodeURIComponent(id)}/run`),
+  cancel: (id: string) =>
+    post<CancelResponse>(`/api/tasks/${encodeURIComponent(id)}/cancel`),
   approve: (id: string) =>
     post<ApproveResponse>(`/api/tasks/${encodeURIComponent(id)}/approve`),
-  reject: (id: string, feedback: string) =>
-    post<Task>(`/api/tasks/${encodeURIComponent(id)}/reject`, { feedback }),
+  reject: (
+    id: string,
+    feedback: string,
+    attachments: AttachmentPayload[] = [],
+  ) =>
+    post<Task>(`/api/tasks/${encodeURIComponent(id)}/reject`, {
+      feedback,
+      attachments,
+    }),
   /** Release a stuck IN_PROGRESS task back to TODO (crash recovery). */
   recover: (id: string) =>
     post<RecoverResponse>("/api/recover", { task_id: id }),

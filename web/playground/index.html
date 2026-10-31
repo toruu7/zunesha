@@ -43,6 +43,13 @@
         <div class="plan-box">
           <label for="prompt">Plan a feature</label>
           <textarea id="prompt" rows="3" placeholder="Add CSV export to the collections table…"></textarea>
+          <div class="attach-row">
+            <button id="attach-btn" class="btn ghost attach-btn" type="button">＋ Attach</button>
+            <input id="attach-input" type="file" multiple hidden />
+            <span id="attach-hint" class="attach-hint">images or files · max 10</span>
+          </div>
+          <ul id="attach-list" class="attach-list" aria-label="Attached files"></ul>
+          <ul id="attach-errors" class="attach-errors" role="alert"></ul>
           <div class="plan-actions">
             <button id="plan-btn" class="btn primary" type="button">Plan</button>
             <button id="run-all-btn" class="btn ghost" type="button" disabled>Run ready</button>
@@ -85,7 +92,7 @@
             <span><i class="dot error"></i>needs human</span>
           </div>
         </div>
-        <p class="hint">Click a desk or task to inspect. <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>p</kbd> plan, <kbd>r</kbd> run, <kbd>a</kbd> approve, <kbd>x</kbd> reject.</p>
+        <p class="hint">Click a desk or task to inspect. <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>p</kbd> plan, <kbd>r</kbd> run, <kbd>a</kbd> approve, <kbd>x</kbd> reject, <kbd>C</kbd> cancel.</p>
       </section>
 
       <aside id="inspector" class="inspector" aria-label="Task inspector"></aside>
@@ -102,6 +109,13 @@
         <p class="modal-copy">The feedback is appended to the task description so the next attempt sees it. The workspace is kept.</p>
         <label for="reject-feedback">Feedback</label>
         <textarea id="reject-feedback" rows="5" placeholder="What should change? Be specific…"></textarea>
+        <div class="attach-row">
+          <button id="reject-attach-btn" class="btn ghost attach-btn" type="button">＋ Attach</button>
+          <input id="reject-attach-input" type="file" multiple hidden />
+          <span id="reject-attach-hint" class="attach-hint">images or files</span>
+        </div>
+        <ul id="reject-attach-list" class="attach-list" aria-label="Feedback attachments"></ul>
+        <ul id="reject-attach-errors" class="attach-errors" role="alert"></ul>
         <div class="modal-actions">
           <button id="modal-cancel" class="btn ghost" type="button">Cancel</button>
           <button id="modal-submit" class="btn danger" type="button">Reject task</button>

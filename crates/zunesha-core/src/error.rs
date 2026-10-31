@@ -65,6 +65,14 @@ pub enum Error {
     #[error("workspace error: {0}")]
     Workspace(String),
 
+    /// The sandbox policy rejected a path, symlink, or workspace.
+    #[error("sandbox violation: {0}")]
+    SandboxViolation(String),
+
+    /// A prompt attachment was invalid, too large, or could not be stored.
+    #[error("attachment error: {0}")]
+    Attachment(String),
+
     /// A status change violated the task lifecycle policy.
     #[error("invalid status transition for task {task_id}: {from} -> {to}")]
     InvalidTransition {
