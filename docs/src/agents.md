@@ -78,6 +78,83 @@ The `--format json` flag is what lets Zunesha show the agent's final Markdown
 response in the dashboard's **Output** tab instead of only the raw transcript.
 The built-in command includes it automatically.
 
+## Straw Hat Crew autonomous agents (`zou crew`)
+
+Instead of sending every task to a generic agent with identical instructions,
+Zunesha features the **Straw Hat Pirates crew** — five specialized autonomous
+agents whose distinct personalities and technical philosophies tackle different
+stages of your development pipeline:
+
+| Crew Member | Role | Specialty & Focus |
+|---|---|---|
+| 👒 **Monkey D. Luffy** | Captain | **Feature Driver**: High-agency, pragmatic implementation of new capabilities. Writes direct, end-to-end working code without getting bogged down in analysis paralysis. |
+| ⚔️ **Roronoa Zoro** | Combatant | **Technical Debt Slayer**: Relentless refactoring, performance optimization, compiler cleanliness (zero warnings), and cutting away redundant code. |
+| 🗺️ **Nami** | Navigator | **Architect & Planner**: System mapping, contracts, schema design, intuitive interfaces, and structured dependency routing. |
+| 🎯 **Usopp** | Sniper | **Edge-Case & Test Scout**: Anticipating failure modes, boundary condition handling, regression tests, and sniper error elimination before review. |
+| 🍳 **Sanji** | Cook | **Polish & Review Presentation**: UX aesthetics, formatting, ergonomics, delightful outputs, and crafting git diffs that are clean for human review. |
+
+### Delegated planning
+
+When decomposing a feature request into a task DAG (whether using the built-in
+planner or an external `ZOU_PLANNER_CMD`), Nami maps out the DAG and assigns
+each task to the most suitable crew member (`task.crew_member`).
+
+When a worker claims that task, the crew member's persona instructions are
+injected directly into the agent's prompt, steering its behavior toward their
+specialty.
+
+### Configuring crew models & providers (zero hardcoding)
+
+No model names are hardcoded. Every crew member can use their own distinct model
+and provider, or automatically fall back to your default model:
+
+```sh
+# View the crew roster, active models, and specialties:
+zou crew
+
+# Configure a specific crew member:
+zou crew zoro --model anthropic/claude-3.7-sonnet --provider opencode
+zou crew nami --model gemini-2.5-pro --provider antigravity
+zou crew luffy --model opencode/deepseek-v4.1-flash-free
+
+# Reset a member back to the global default:
+zou crew zoro --reset
+```
+
+#### Configuration file & environment variables
+
+Crew settings are stored in `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`:
+
+```json
+{
+  "agent": {
+    "provider": "opencode",
+    "model": "opencode/deepseek-v4.1-flash-free"
+  },
+  "crew": {
+    "zoro": {
+      "provider": "opencode",
+      "model": "anthropic/claude-3.7-sonnet"
+    },
+    "nami": {
+      "provider": "antigravity",
+      "model": "gemini-2.5-pro"
+    }
+  }
+}
+```
+
+Environment variables provide per-shell overrides:
+- `ZOU_CREW_<MEMBER>_MODEL` (e.g. `ZOU_CREW_ZORO_MODEL=anthropic/claude-3.7-sonnet`)
+- `ZOU_CREW_<MEMBER>_PROVIDER` (e.g. `ZOU_CREW_NAMI_PROVIDER=antigravity`)
+
+### Interactive Pixel Office Playground
+
+The web UI includes an interactive pixel-art control room served at `/playground`:
+- **Procedural Pixel-Art Sprites**: Distinct sprites for Luffy (straw hat, red vest, scar), Zoro (green hair, earrings, haramaki), Nami (orange hair, Log Pose), Usopp (goggles, dungarees, long nose), and Sanji (blonde hair, lit cigarette, black suit).
+- **Character Desk Props**: Luffy's roast bone meat 🍖 and Jolly Roger terminal, Zoro's 3-katana rack and sake gourd 🍶, Nami's weather radar and mikan tangerines 🍊, Usopp's slingshot and inventor toolbox, and Sanji's coffee cup ☕ and chef pan.
+- **Standby Roster**: When the task queue is empty, the office renders the 5 Straw Hats on standby ready for the next plan.
+
 ## The agent (`ZOU_AGENT_CMD`)
 
 The agent runs **inside the task's workspace**, with an isolated git clone as

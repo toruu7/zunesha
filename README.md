@@ -230,12 +230,15 @@ zou init                      # creates .zou/ (+ .gitignore entry)
 zou plan "add rate limiting"  # 3-task chain (built-in) or a real DAG via ZOU_PLANNER_CMD
 zou plan "match this mock" --attach mock.png  # images/specs are copied into .zou/attachments/
 zou status                    # per-status counts + task ids
+zou crew                      # view Straw Hat crew members & assigned models
 
 # --- drive it from the terminal ---
 zou run                       # agent runs on every ready (TODO) task, in parallel
 zou status                    # head is now REVIEW; dependents still gated
 zou diff <TASK_ID>            # inspect exactly what the agent changed
 zou approve <TASK_ID>         # merge the reviewed diff → DONE, next task promoted
+zou cancel <TASK_ID>          # stop a running agent + process tree, release task
+zou remove <TASK_ID>          # remove a task and its workspace cleanly
 # repeat run → diff → approve until the chain is DONE (rejecting a task —
 # sending it back with feedback for another attempt — is a dashboard action)
 git diff                       # the approved changes are in your working tree
@@ -302,6 +305,47 @@ own workspace isolation, symlink guard, timeout, and human approval gate are
 the safety boundary. `stream-json` events are split into the technical **Logs**
 transcript (tool calls) and the final Markdown **Output**, exactly like
 OpenCode's JSON stream. `ZOU_AGENT_CMD` still overrides both providers.
+
+#### Straw Hat autonomous agent crew (`zou crew`)
+
+Rather than treating every task with generic, one-size-fits-all prompts, Zunesha
+organizes execution around the **Straw Hat Pirates crew** — five autonomous
+specialists with distinct technical directives:
+
+* 👒 **Monkey D. Luffy** (*Captain / Feature Driver*): Bold, high-agency implementation. Direct problem solving that writes working code end-to-end without analysis paralysis.
+* ⚔️ **Roronoa Zoro** (*Combatant / Technical Debt Slayer*): Relentless refactoring, performance optimization, compiler cleanliness (zero warnings), and cutting away dead code.
+* 🗺️ **Nami** (*Navigator / Planner & Architect*): System topology mapping, data schemas, clean interfaces, contracts, and dependency graph routing.
+* 🎯 **Usopp** (*Sniper / Edge-Case & Test Scout*): Failure mode anticipation, boundary condition tests, regression suites, and hunting down edge cases.
+* 🍳 **Sanji** (*Cook / Review & Polish*): Ergonomics, UI/UX aesthetics, documentation, intuitive outputs, and crafting git diffs designed for human review.
+
+##### Delegated planning & zero-hardcoded models
+
+When planning with `zou plan` (built-in or `ZOU_PLANNER_CMD`), Nami tags each task
+with its assigned crew member. When claimed, that member's persona prompt is
+injected automatically into the workspace.
+
+No model names are hardcoded. Each crew member can run with their own provider
+and model (falling back to your global default model if unconfigured):
+
+```sh
+zou crew                                                      # inspect active roster
+zou crew zoro --model anthropic/claude-3.7-sonnet --provider opencode  # configure a member
+zou crew nami --model gemini-2.5-pro --provider antigravity   # assign Antigravity
+zou crew zoro --reset                                         # return to default model
+```
+
+Settings persist in `${XDG_CONFIG_HOME:-~/.config}/zou/config.json` under `crew.<member>`.
+Per-shell environment overrides are supported via `ZOU_CREW_<MEMBER>_MODEL` and
+`ZOU_CREW_<MEMBER>_PROVIDER`.
+
+##### Interactive Pixel Office Playground
+
+Open `http://127.0.0.1:57804/playground` for the interactive pixel control room:
+procedurally rendered pixel-art characters (Luffy's straw hat and red vest, Zoro's
+katanas and earrings, Nami's Log Pose, Usopp's goggles, Sanji's cigarette) sitting
+at desks with custom props (roast bone meat 🍖, katana rack & sake gourd 🍶,
+weather cyclone radar 🍊, gadget blueprints, and porcelain espresso ☕). The
+office shows all 5 Straw Hats on standby ready for work when the board is idle.
 
 Use `ZOU_AGENT_CMD` when you want a different agent CLI or extra flags.
 `{prompt}` and `{workspace}` are substituted after parsing (if the template
@@ -533,6 +577,7 @@ zou approve <TASK_ID>                   # merge reviewed work into the repo (aut
 zou recover [TASK_ID]                   # release stuck IN_PROGRESS/EVALUATING/RESOLVING_CONFLICTS tasks (crash recovery)
 zou agent   [opencode|antigravity] [--model ID]  # show/switch the agent provider
 zou model   [MODEL] [--list|--show|--clear]  # choose/save the active provider's model
+zou crew    [MEMBER] [--model ID] [--provider P] [--reset]  # configure/view Straw Hat crew member models
 zou update  [--check] [--yes] [--repo URL|PATH] [--prefix DIR] [--no-dashboard]
                                         # check release tags; prompt before updating
 zou status  [--path <PATH>]             # per-status counts + task list

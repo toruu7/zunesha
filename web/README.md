@@ -1,9 +1,13 @@
 This is the Zunesha dashboard: a Next.js static export served by `zou start`.
 
-`npm run build` also builds the read-only pixel office in `playground/` with
-Vite and emits it to `out/playground`. Use `npm run dev` for the dashboard and
-`npm run dev:playground` for the office (the latter proxies `/api` and the
-playground WebSocket to `127.0.0.1:57804`).
+The dashboard displays Straw Hat Pirates workflow badges (`👒 Luffy`, `⚔️ Zoro`, `🗺️ Nami`, `🎯 Usopp`, `🍳 Sanji`) on task cards and review modals.
+
+`npm run build` also builds the interactive pixel office in `playground/` with
+Vite and emits it to `out/playground`, featuring procedural pixel-art Straw Hat
+crew sprites, animations, and custom desk props (Luffy's roast meat 🍖,
+Zoro's katanas 🍶, Nami's weather radar 🍊, Usopp's slingshot, Sanji's coffee ☕).
+Use `npm run dev` for the dashboard and `npm run dev:playground` for the office
+(the latter proxies `/api` and the playground WebSocket to `127.0.0.1:57804`).
 
 ## Getting Started
 
