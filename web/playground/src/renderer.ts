@@ -114,6 +114,10 @@ export class Renderer {
         agent.visualState, animFrame, crewOrId);
       this.drawStatusDot(ctx, layout.deskX, layout.deskY, agent.visualState);
 
+      if (agent.queueCount && agent.queueCount > 1) {
+        this.drawQueueBadge(ctx, layout.deskX, layout.deskY, agent.queueCount);
+      }
+
       if (layout.id === this.selectedId) {
         ctx.save();
         ctx.strokeStyle = '#FBBF24'; // Pirate Gold
@@ -174,6 +178,35 @@ export class Renderer {
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
+  }
+
+  private drawQueueBadge(ctx: CanvasRenderingContext2D, x: number, y: number, count: number): void {
+    const text = `x${count}`;
+    const bx = (x + 22) * S;
+    const by = (y - 3) * S;
+    const bw = 12 * S;
+    const bh = 8 * S;
+
+    ctx.save();
+    ctx.fillStyle = '#0F172A';
+    ctx.strokeStyle = '#FBBF24';
+    ctx.lineWidth = 1;
+
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(bx, by, bw, bh, 2 * S);
+    } else {
+      ctx.rect(bx, by, bw, bh);
+    }
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#FCD34D';
+    ctx.font = `bold ${5 * S}px "JetBrains Mono", monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, bx + bw / 2, by + bh / 2 + 0.5);
+    ctx.restore();
   }
 
   // ── background ────────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ export interface PlaygroundAgent {
   status: string;
   state: string;
   crew_member?: string;
+  queueCount?: number;
   updated_at: string;
   retry_count: number;
 }
@@ -87,6 +88,22 @@ export class AgentTracker {
     return this.agents.get(id);
   }
 
+  setBubble(
+    id: string,
+    text: string,
+    type: 'info' | 'error' | 'success' = 'info',
+    durationMs = 12_000,
+  ): void {
+    const agent = this.agents.get(id);
+    if (agent) {
+      agent.bubble = {
+        text: text.length > 90 ? `${text.slice(0, 87)}...` : text,
+        type,
+        expiresAt: Date.now() + durationMs,
+      };
+    }
+  }
+
   private toState(agent: PlaygroundAgent, previous?: AgentState): AgentState {
     const state = visualState(agent.state);
     const lookupKey = agent.crew_member ?? agent.id;
@@ -102,6 +119,7 @@ export class AgentTracker {
       title: agent.title,
       status: agent.status,
       crew_member: agent.crew_member,
+      queueCount: agent.queueCount,
       retryCount: agent.retry_count,
       emoji: agentEmoji(lookupKey),
       color,

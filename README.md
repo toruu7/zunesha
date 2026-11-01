@@ -358,6 +358,10 @@ Open `http://127.0.0.1:57804/playground/` for the interactive pixel control room
   * 🎯 **Usopp**: Stationed at port workshop bench with forehead sniper goggles and yellow bandana.
   * 🍳 **Sanji**: Stationed at starboard galley bar with dark double-breasted suit, blonde hair parted over one eye, and lit cigarette with animated smoke curls.
 * **Live Task Routing & Standby Dossiers**: All 5 Straw Hats remain aboard the Thousand Sunny at all times. Tasks are dispatched to the appropriate pirate, rendering live state animations and speech bubbles. Clicking any pirate's desk selects their active task (logs, output, and diff review) or opens their character dossier when on standby.
+* **In-Browser Crew & Model Switcher**: Configure individual pirate providers (`opencode` / `antigravity`) and models directly in the web UI via the Inspector card (`GET /api/crew` & `PUT /api/crew/:member`).
+* **8-Bit Chiptune SFX & Ocean Ambience**: 100% synthesized in the browser via Web Audio API—cannon fire explosions when agents run, golden treasure chimes upon completion, alert buzzers on review/failure, and rolling sea waves against the hull (toggle with `🔊 SFX`).
+* **Animated Cross-Desk Dialogue**: Automatic speech bubbles track tasks across the 4-stage pipeline (Nami architecture -> specialist code execution -> Usopp edge-case & QA testing -> Luffy Captain's briefing).
+* **Task Queue Badges**: Desks display golden `xN` queue counter badges when multiple tasks are assigned to the same pirate.
 
 ![Thousand Sunny Ship Deck Scene](https://raw.githubusercontent.com/toruu7/zunesha/master/docs/src/images/thousand-sunny-deck.png)
 

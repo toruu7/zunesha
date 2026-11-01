@@ -146,6 +146,32 @@ code, pre, .mono, kbd {
 .connection.offline { color: var(--error); border-color: rgba(248, 113, 113, 0.25); }
 .connection.offline::before { background: var(--error); }
 
+.sfx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.08);
+  color: #FCD34D;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+.sfx-btn:hover {
+  background: rgba(251, 191, 36, 0.2);
+  border-color: #FCD34D;
+  transform: translateY(-1px);
+}
+.sfx-btn.active {
+  background: rgba(52, 211, 153, 0.15);
+  border-color: rgba(52, 211, 153, 0.5);
+  color: #6EE7B7;
+}
+
 .dashboard-link {
   color: var(--muted);
   font-size: 12px;
@@ -483,6 +509,96 @@ code, pre, .mono, kbd {
 }
 .dossier-actions {
   margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.crew-model-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.65);
+}
+.crew-model-card h4 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #FCD34D;
+}
+.crew-custom-badge {
+  padding: 2px 6px;
+  border: 1px solid rgba(52, 211, 153, 0.4);
+  border-radius: 999px;
+  background: rgba(52, 211, 153, 0.12);
+  color: #6EE7B7;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.crew-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.crew-field label {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.crew-field select,
+.crew-field input {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+}
+.crew-field select:focus,
+.crew-field input:focus {
+  outline: none;
+  border-color: #FCD34D;
+}
+.crew-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.crew-tasks-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 6px 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #FCD34D;
+}
+.crew-task-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+.crew-task-item:hover {
+  background: rgba(251, 191, 36, 0.08);
+  border-color: rgba(251, 191, 36, 0.3);
 }
 .task-id { font-family: "JetBrains Mono", ui-monospace, monospace; }
 

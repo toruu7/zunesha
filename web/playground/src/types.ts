@@ -62,6 +62,7 @@ export interface AgentState {
   title: string;
   status: string;
   crew_member?: string;
+  queueCount?: number;
   retryCount: number;
   emoji: string;
   color: string;

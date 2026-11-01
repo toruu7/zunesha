@@ -54,7 +54,7 @@ pub mod ws;
 
 use std::sync::Arc;
 
-use axum::routing::{any, get, post};
+use axum::routing::{any, get, post, put};
 use axum::Router;
 use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
@@ -166,6 +166,8 @@ pub fn router(state: AppState, dashboard_dir: Option<std::path::PathBuf>) -> Rou
         .route("/api/recover", post(handlers::recover))
         .route("/api/playground", get(playground::snapshot))
         .route("/api/playground/ws", get(playground::ws_handler))
+        .route("/api/crew", get(handlers::list_crew))
+        .route("/api/crew/{member}", put(handlers::update_crew_member))
         // Catch-all for unknown API paths: JSON 404 instead of the HTML
         // dashboard fallback (a JSON client would otherwise see `200` + HTML
         // for a typo'd endpoint). Specific routes above always win.

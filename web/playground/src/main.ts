@@ -8,10 +8,13 @@
 import './style.css';
 import { AgentTracker, type PlaygroundAgent } from './agents';
 import { Renderer } from './renderer';
+import { soundManager } from './audio';
 import {
   api,
   eventSocket,
   type ApiEvent,
+  type CrewMember,
+  type CrewResponse,
   type DependencyEdge,
   type LogEvent,
   type ProjectInfo,
@@ -72,6 +75,7 @@ interface State {
   connection: 'connecting' | 'live' | 'offline';
   busy: string | null;
   error: string | null;
+  crewConfig: CrewResponse | null;
   planAttachments: AttachmentDraft[];
   planAttachmentErrors: string[];
   rejectAttachments: AttachmentDraft[];
@@ -90,6 +94,7 @@ const state: State = {
   connection: 'connecting',
   busy: null,
   error: null,
+  crewConfig: null,
   planAttachments: [],
   planAttachmentErrors: [],
   rejectAttachments: [],
@@ -657,17 +662,85 @@ function renderInspector(): void {
     const profileKey = ['luffy', 'zoro', 'nami', 'usopp', 'sanji'].find((k) => rawId.includes(k));
     const profile = profileKey ? CREW_PROFILES[profileKey] : null;
 
-    if (profile) {
+    if (profile && profileKey) {
+      if (!state.crewConfig) {
+        void api.crew().then((c) => {
+          state.crewConfig = c;
+          renderInspector();
+        }).catch(() => {});
+      }
+
+      const crewEntry = state.crewConfig?.crew.find((c) => c.id === profileKey);
+      const activeProvider = crewEntry?.provider ?? state.crewConfig?.default_provider ?? 'opencode';
+      const activeModel = crewEntry?.model ?? state.crewConfig?.default_model ?? '(default)';
+      const isCustom = crewEntry?.is_custom ?? false;
+
+      // Find all tasks assigned to this crew member
+      const assigned = state.tasks.filter((t) => {
+        if (t.crew_member) return t.crew_member.toLowerCase().includes(profileKey);
+        return guessCrewMember(t) === profileKey;
+      });
+
+      let tasksHtml = '';
+      if (assigned.length > 0) {
+        tasksHtml = `<div class="dossier-section">
+          <div class="crew-tasks-title">
+            <span>Assigned Tasks</span>
+            <span class="crew-pill">${assigned.length} task${assigned.length > 1 ? 's' : ''}</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            ${assigned.map((t) => `
+              <div class="crew-task-item" data-task-id="${escapeHtml(t.id)}">
+                <span style="font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(t.title)}</span>
+                <span class="status-pill ${statusClass(t.status)}">${statusLabel(t.status)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>`;
+      }
+
       inspectorEl.innerHTML = `<div class="inspector-head">
         <div class="eyebrow">STRAW HAT PIRATES · BOUNTY ${escapeHtml(profile.bounty)}</div>
         <h2>${profile.emoji} ${escapeHtml(profile.name)}</h2>
         <div class="inspector-state">
           <span class="crew-pill">${profile.emoji} ${escapeHtml(profile.role)}</span>
-          <span class="status-pill status-todo">READY</span>
+          ${isCustom ? '<span class="crew-custom-badge">⚡ Custom Model Active</span>' : '<span class="status-pill status-todo">DEFAULT MODEL</span>'}
         </div>
       </div>
       <div class="character-dossier">
         <blockquote class="character-quote">“${escapeHtml(profile.quote)}”</blockquote>
+
+        <!-- In-Browser Model & Provider Switcher -->
+        <div class="crew-model-card">
+          <h4>
+            <span>Model & Provider</span>
+            ${isCustom ? '<span class="crew-custom-badge">CUSTOM</span>' : ''}
+          </h4>
+          <div class="crew-field">
+            <label for="crew-provider-select">Provider</label>
+            <select id="crew-provider-select">
+              <option value="opencode"${activeProvider === 'opencode' ? ' selected' : ''}>OpenCode (opencode)</option>
+              <option value="antigravity"${activeProvider === 'antigravity' ? ' selected' : ''}>Antigravity (agy)</option>
+            </select>
+          </div>
+          <div class="crew-field">
+            <label for="crew-model-input">Model ID</label>
+            <input id="crew-model-input" list="crew-model-list" placeholder="e.g. anthropic/claude-3.7-sonnet" value="${isCustom && crewEntry?.model ? escapeHtml(crewEntry.model) : ''}" />
+            <datalist id="crew-model-list">
+              <option value="anthropic/claude-3.7-sonnet" />
+              <option value="openai/gpt-4o" />
+              <option value="deepseek/deepseek-r1" />
+              <option value="gemini-3.8-flash-medium" />
+              <option value="gemini-3.8-pro-preview" />
+            </datalist>
+            <small style="color: var(--muted); font-size: 10px;">Active: <code>${escapeHtml(activeModel)}</code></small>
+          </div>
+          <div class="crew-card-actions">
+            <button id="crew-save-btn" class="btn primary" type="button">Save Model</button>
+            <button id="crew-reset-btn" class="btn ghost" type="button"${isCustom ? '' : ' disabled'}>Reset</button>
+          </div>
+        </div>
+
         <div class="dossier-section">
           <h3>Specialty & Role</h3>
           <p>${escapeHtml(profile.specialty)}</p>
@@ -676,10 +749,51 @@ function renderInspector(): void {
           <h3>Description</h3>
           <p>${escapeHtml(profile.description)}</p>
         </div>
+
+        ${tasksHtml}
+
         <div class="dossier-actions">
           <button id="dossier-plan-btn" class="btn primary" type="button">Assign Task to ${escapeHtml(profile.name.split(' ').pop()!)}</button>
         </div>
       </div>`;
+
+      document.getElementById('crew-save-btn')?.addEventListener('click', async () => {
+        const provider = (document.getElementById('crew-provider-select') as HTMLSelectElement)?.value;
+        const model = (document.getElementById('crew-model-input') as HTMLInputElement)?.value.trim();
+        if (!model) {
+          showToast('Please enter a model id or click Reset.', 'error');
+          return;
+        }
+        try {
+          showToast(`Updating model for ${profile.name}...`);
+          await api.updateCrew(profileKey, { provider, model });
+          state.crewConfig = await api.crew();
+          showToast(`Updated ${profile.name} to ${model}!`);
+          renderInspector();
+        } catch (err) {
+          showToast(`Failed to update model: ${errorMessage(err)}`, 'error');
+        }
+      });
+
+      document.getElementById('crew-reset-btn')?.addEventListener('click', async () => {
+        try {
+          showToast(`Resetting ${profile.name} to default...`);
+          await api.updateCrew(profileKey, { reset: true });
+          state.crewConfig = await api.crew();
+          showToast(`Reset ${profile.name} back to default.`);
+          renderInspector();
+        } catch (err) {
+          showToast(`Failed to reset: ${errorMessage(err)}`, 'error');
+        }
+      });
+
+      inspectorEl.querySelectorAll('.crew-task-item').forEach((item) => {
+        item.addEventListener('click', () => {
+          const taskId = (item as HTMLElement).dataset.taskId;
+          if (taskId) selectTask(taskId);
+        });
+      });
+
       document.getElementById('dossier-plan-btn')?.addEventListener('click', () => {
         promptEl.value = `[${profile.name.split(' ').pop()}] `;
         promptEl.focus();
@@ -707,7 +821,7 @@ function renderInspector(): void {
   } else {
     content = `<dl class="meta-grid">
       <dt>Status</dt><dd><span class="status-pill ${statusClass(task.status)}">${statusLabel(task.status)}</span></dd>
-      <dt>Crew</dt><dd>${task.crew_member ? `${crewEmoji(task.crew_member)} ${escapeHtml(task.crew_member)}` : '—'}</dd>
+      <dt>Crew</dt><dd>${task.crew_member ? `<button class="btn ghost" style="padding: 2px 7px; font-size: 11px;" id="task-crew-link" type="button">${crewEmoji(task.crew_member)} ${escapeHtml(task.crew_member)} · ⚙️ Model</button>` : '—'}</dd>
       <dt>Task id</dt><dd class="mono">${escapeHtml(task.id)}</dd>
       <dt>Retries</dt><dd>${task.retry_count}</dd>
       <dt>Created</dt><dd>${escapeHtml(formatDate(task.created_at))}</dd>
@@ -729,6 +843,12 @@ function renderInspector(): void {
     <div class="actions">${actionButtons(task)}</div>
     <div class="tabs" role="tablist">${(Object.keys(TAB_LABEL) as Tab[]).map(tabButton).join('')}</div>
     <div class="tab-body">${content}</div>`;
+
+  if (task.crew_member) {
+    document.getElementById('task-crew-link')?.addEventListener('click', () => {
+      selectDesk(task.crew_member!);
+    });
+  }
 
   if (state.tab === 'logs') {
     const pre = document.getElementById('logs-pre');
@@ -814,6 +934,7 @@ function syncOffice(): void {
         status: activeTask.status,
         state: STATUS_VISUAL[activeTask.status] ?? 'idle',
         crew_member: member.id,
+        queueCount: assignedTasks.length,
         updated_at: activeTask.updated_at,
         retry_count: activeTask.retry_count,
       };
@@ -826,6 +947,7 @@ function syncOffice(): void {
       status: 'TODO',
       state: 'idle',
       crew_member: member.id,
+      queueCount: 0,
       updated_at: '',
       retry_count: 0,
     };
@@ -844,6 +966,64 @@ function syncOffice(): void {
   }
 }
 
+function triggerCrewDialogue(
+  task: Task,
+  prevStatus: TaskStatus | undefined,
+  nextStatus: TaskStatus,
+): void {
+  if (prevStatus === nextStatus) return;
+
+  const specialistKey = task.crew_member
+    ? task.crew_member.toLowerCase()
+    : guessCrewMember(task);
+
+  const titleShort = task.title.length > 28 ? `${task.title.slice(0, 26)}…` : task.title;
+
+  switch (nextStatus) {
+    case 'IN_PROGRESS':
+    case 'RESOLVING_CONFLICTS': {
+      soundManager.playCannon();
+      soundManager.playHandoff();
+      const quotes: Record<string, string> = {
+        zoro: `⚔️ Cutting debt: "${titleShort}"`,
+        sanji: `🍳 Cooking UI: "${titleShort}"`,
+        usopp: `🎯 Hunting bugs: "${titleShort}"`,
+        luffy: `🍖 Let's build: "${titleShort}"`,
+        nami: `🧭 Charting: "${titleShort}"`,
+      };
+      const quote = quotes[specialistKey] ?? `🏴‍☠️ Starting: "${titleShort}"`;
+      tracker.setBubble(specialistKey, quote, 'info', 14_000);
+      break;
+    }
+    case 'EVALUATING': {
+      soundManager.playHandoff();
+      tracker.setBubble('usopp', `🎯 Testing & QA: "${titleShort}"`, 'info', 14_000);
+      break;
+    }
+    case 'REVIEW': {
+      soundManager.playChime();
+      tracker.setBubble('luffy', `🏴‍☠️ Completed "${titleShort}"! Ready for review!`, 'success', 16_000);
+      break;
+    }
+    case 'DONE': {
+      soundManager.playChime();
+      tracker.setBubble('luffy', `✨ Integrated: "${titleShort}"! Kanpai! 🍻`, 'success', 16_000);
+      break;
+    }
+    case 'FAILED_NEEDS_HUMAN': {
+      soundManager.playAlert();
+      tracker.setBubble(specialistKey, `⚠️ Stuck on "${titleShort}"! Need Captain!`, 'error', 18_000);
+      break;
+    }
+    case 'TODO': {
+      if (prevStatus === 'BACKLOG') {
+        tracker.setBubble('nami', `🗺️ Unblocked "${titleShort}" for ${specialistKey.toUpperCase()}!`, 'info', 12_000);
+      }
+      break;
+    }
+  }
+}
+
 function applySnapshot(snapshot: TasksResponse): void {
   state.project = snapshot.project;
   state.tasks = snapshot.tasks;
@@ -858,9 +1038,16 @@ function applySnapshot(snapshot: TasksResponse): void {
 }
 
 function applyTask(task: Task): void {
+  const previous = state.tasks.find((candidate) => candidate.id === task.id);
+  const prevStatus = previous?.status;
+
   const index = state.tasks.findIndex((candidate) => candidate.id === task.id);
   if (index === -1) state.tasks = [...state.tasks, task];
   else state.tasks = state.tasks.map((candidate) => (candidate.id === task.id ? task : candidate));
+
+  if (prevStatus && prevStatus !== task.status) {
+    triggerCrewDialogue(task, prevStatus, task.status);
+  }
 
   const live = state.liveLogs.get(task.id);
   if (live) {
@@ -934,10 +1121,18 @@ async function planFeature(): Promise<void> {
     return;
   }
   await withBusy('planning', async () => {
-    await api.plan(prompt, toPayload(state.planAttachments));
+    tracker.setBubble('nami', '🗺️ Plotting mission coordinates & blueprint...', 'info', 10_000);
+    const res = await api.plan(prompt, toPayload(state.planAttachments));
     promptEl.value = '';
     clearAttachments('plan');
     await refresh();
+    soundManager.playChime();
+    tracker.setBubble(
+      'nami',
+      `🗺️ Mission chartered! Created ${res.task_ids.length} task${res.task_ids.length === 1 ? '' : 's'}!`,
+      'success',
+      12_000,
+    );
     showToast('Plan created. Review the new tasks, then run them.');
   });
 }
@@ -947,6 +1142,7 @@ async function runAll(): Promise<void> {
   if (ready === 0) return;
   if (!window.confirm(`Run ${ready} ready task${ready === 1 ? '' : 's'}?`)) return;
   await withBusy('starting', async () => {
+    soundManager.playCannon();
     const result = await api.runAll();
     await refresh();
     showToast(`${result.started} task${result.started === 1 ? '' : 's'} started.`);
@@ -956,6 +1152,7 @@ async function runAll(): Promise<void> {
 async function runOne(id: string): Promise<void> {
   if (!window.confirm('Run this task now?')) return;
   await withBusy('starting', async () => {
+    soundManager.playCannon();
     await api.runOne(id);
     await refresh();
     showToast('Task started.');
@@ -967,6 +1164,7 @@ async function approve(id: string): Promise<void> {
   await withBusy('approving', async () => {
     const result = await api.approve(id);
     await refresh();
+    soundManager.playChime();
     if (result.integration.status === 'conflict_resolution_queued') {
       showToast('Merge conflict: an agent is resolving it. Review the result when it returns.');
     } else if (result.integration.status === 'applied') {
@@ -1145,10 +1343,11 @@ function selectDesk(crewId: string): void {
     ?? assigned.find((t) => t.status === 'TODO')
     ?? assigned[0];
 
-  if (activeTask) {
-    selectTask(activeTask.id);
-  } else {
+  // If already inspecting this active task, or no active task exists, show the pirate's dossier
+  if (state.selectedId === activeTask?.id || !activeTask) {
     selectTask(memberKey);
+  } else {
+    selectTask(activeTask.id);
   }
 }
 
@@ -1258,13 +1457,34 @@ function connect(): void {
 
 async function loadInitial(): Promise<void> {
   try {
-    applySnapshot(await api.tasks());
+    const [snapshot, crew] = await Promise.all([
+      api.tasks(),
+      api.crew().catch(() => null),
+    ]);
+    if (crew) state.crewConfig = crew;
+    applySnapshot(snapshot);
   } catch (error) {
     state.connection = 'offline';
     state.error = `Could not reach the daemon: ${errorMessage(error)}`;
     render();
   }
 }
+
+const sfxToggleEl = document.getElementById('sfx-toggle') as HTMLButtonElement | null;
+function updateSfxButton(): void {
+  if (!sfxToggleEl) return;
+  const on = soundManager.isEnabled();
+  sfxToggleEl.textContent = on ? '🔊 SFX' : '🔇 SFX';
+  sfxToggleEl.classList.toggle('active', on);
+  sfxToggleEl.title = on
+    ? 'Audio enabled: 8-bit chiptune SFX and ocean waves playing'
+    : 'Audio muted: Click to enable 8-bit sound effects & ocean waves';
+}
+sfxToggleEl?.addEventListener('click', () => {
+  soundManager.toggle();
+  updateSfxButton();
+});
+updateSfxButton();
 
 renderer.start();
 void loadInitial();

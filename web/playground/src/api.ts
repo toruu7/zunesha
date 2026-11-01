@@ -45,6 +45,21 @@ export interface StatusCount {
   count: number;
 }
 
+export interface CrewMember {
+  id: string;
+  name: string;
+  role: string;
+  provider: string;
+  model: string | null;
+  is_custom: boolean;
+}
+
+export interface CrewResponse {
+  default_provider: string;
+  default_model: string | null;
+  crew: CrewMember[];
+}
+
 export interface TasksResponse {
   project: ProjectInfo;
   tasks: Task[];
@@ -122,6 +137,15 @@ export const api = {
   reject: (id: string, feedback: string, attachments: AttachmentPayload[] = []) =>
     post<Task>(`/api/tasks/${encodeURIComponent(id)}/reject`, { feedback, attachments }),
   recover: (id: string) => post<{ released: string[] }>('/api/recover', { task_id: id }),
+  crew: () => request<CrewResponse>('/api/crew'),
+  updateCrew: (
+    member: string,
+    payload: { provider?: string; model?: string; reset?: boolean },
+  ) =>
+    request<CrewMember>(`/api/crew/${encodeURIComponent(member)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
 };
 
 export interface EventSocketHandlers {

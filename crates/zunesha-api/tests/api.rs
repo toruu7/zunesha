@@ -1179,3 +1179,64 @@ async fn delete_task_removes_task_workspace_and_unblocks_dag() {
     // t2 was in BACKLOG, now unblocked and promoted to TODO!
     assert_eq!(db.get_task("t2").unwrap().unwrap().status, TaskStatus::Todo);
 }
+
+#[tokio::test]
+async fn crew_api_lists_and_updates_members() {
+    let (tmp, paths) = scratch();
+    let config_path = tmp.path().join("config.json");
+    unsafe {
+        std::env::set_var("ZOU_CONFIG_FILE", &config_path);
+    }
+    let app = app_for(&paths);
+
+    // Initial listing
+    let (status, res) = json_req(&app, Method::GET, "/api/crew", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let crew = res["crew"].as_array().expect("crew array");
+    assert_eq!(crew.len(), 5);
+    assert_eq!(crew[0]["id"], "luffy");
+    assert_eq!(crew[1]["id"], "zoro");
+
+    // Update Zoro to Claude via OpenCode
+    let (status, res) = json_req(
+        &app,
+        Method::PUT,
+        "/api/crew/zoro",
+        Some(json!({
+            "provider": "opencode",
+            "model": "anthropic/claude-3.7-sonnet"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "res was: {res:?}");
+    assert_eq!(res["id"], "zoro");
+    assert_eq!(res["provider"], "opencode");
+    assert_eq!(res["model"], "anthropic/claude-3.7-sonnet");
+    assert_eq!(res["is_custom"], true);
+
+    // Verify GET reflects the update
+    let (status, res) = json_req(&app, Method::GET, "/api/crew", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let crew = res["crew"].as_array().unwrap();
+    let zoro = crew.iter().find(|m| m["id"] == "zoro").unwrap();
+    assert_eq!(zoro["model"], "anthropic/claude-3.7-sonnet");
+    assert_eq!(zoro["is_custom"], true);
+
+    // Reset Zoro back to defaults
+    let (status, res) = json_req(
+        &app,
+        Method::PUT,
+        "/api/crew/zoro",
+        Some(json!({
+            "reset": true
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(res["is_custom"], false);
+
+    // Clean up env
+    unsafe {
+        std::env::remove_var("ZOU_CONFIG_FILE");
+    }
+}

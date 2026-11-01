@@ -188,6 +188,10 @@ The web UI includes an interactive pixel-art control room served at `/playground
   - The 5 Straw Hats remain permanently aboard the Thousand Sunny regardless of queue state.
   - Active tasks map to crew members, displaying live visual states (`working`, `review`, `ready`, `backlog`, `done`, `needs human`) and speech bubbles.
   - Clicking any pirate desk opens their active task transcript/diff, or their Straw Hat dossier if on standby.
+  - **In-Browser Crew & Model Switcher**: Configure individual pirate providers (`opencode` / `antigravity`) and models directly in the web UI via the Inspector card (`GET /api/crew` & `PUT /api/crew/:member`).
+  - **8-Bit Chiptune SFX & Ocean Ambience**: 100% synthesized in the browser via Web Audio API—cannon fire explosions when agents run, golden treasure chimes upon completion, alert buzzers on review/failure, and rolling sea waves against the hull (toggle with `🔊 SFX`).
+  - **Animated Cross-Desk Dialogue**: Automatic speech bubbles track tasks across the 4-stage pipeline (Nami architecture -> specialist code execution -> Usopp edge-case & QA testing -> Luffy Captain's briefing).
+  - **Task Queue Badges**: Desks display golden `xN` queue counter badges when multiple tasks are assigned to the same pirate.
 
 ![Thousand Sunny Ship Deck Scene](images/thousand-sunny-deck.png)
 

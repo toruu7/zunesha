@@ -16,8 +16,9 @@ use serde_json::json;
 use base64::Engine as _;
 use zunesha_core::{
     append_attachments, approve_task, disk_usage, plan_with_attachments, prune_workspaces,
-    rebase_task, recover_stuck, remove_task, resume_task, save_attachments, AttachmentUpload,
-    Database, Error, MergeOutcome, Planner, ResumeMode, RunEvent, RunRecord, Task, TaskStatus,
+    rebase_task, recover_stuck, remove_task, resume_task, save_attachments, AgentProvider,
+    AttachmentUpload, Config, Database, Error, MergeOutcome, Planner, ResumeMode, RunEvent,
+    RunRecord, Task, TaskStatus,
 };
 
 use crate::events::{
@@ -755,6 +756,115 @@ pub async fn api_not_found(Path(path): Path<String>) -> ApiError {
         StatusCode::NOT_FOUND,
         format!("unknown API endpoint: /api/{path}"),
     )
+}
+
+// ---------------------------------------------------------------------------
+// Straw Hat Crew management
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct CrewMemberResponse {
+    pub id: String,
+    pub name: String,
+    pub role: String,
+    pub provider: String,
+    pub model: Option<String>,
+    pub is_custom: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateCrewMemberRequest {
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub reset: bool,
+}
+
+/// `GET /api/crew` – list all Straw Hat crew members and their configured models.
+pub async fn list_crew() -> Result<Json<serde_json::Value>, ApiError> {
+    let config = Config::load().unwrap_or_default();
+    let members = [
+        ("luffy", "Monkey D. Luffy", "Captain / Feature Driver"),
+        ("zoro", "Roronoa Zoro", "Combatant / Tech Debt Slayer"),
+        ("nami", "Nami", "Navigator / Architect & Planner"),
+        ("usopp", "Usopp", "Sniper / Edge-Case & QA Scout"),
+        ("sanji", "Sanji", "Cook / UI Aesthetics & Polish"),
+    ];
+
+    let crew: Vec<CrewMemberResponse> = members
+        .iter()
+        .map(|(id, name, role)| {
+            let provider = config.resolve_crew_provider(id);
+            let model = config.resolve_crew_model(id);
+            let is_custom = config.crew.contains_key(*id);
+            CrewMemberResponse {
+                id: id.to_string(),
+                name: name.to_string(),
+                role: role.to_string(),
+                provider: provider.as_str().to_string(),
+                model,
+                is_custom,
+            }
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "default_provider": config.provider().as_str(),
+        "default_model": config.model(),
+        "crew": crew,
+    })))
+}
+
+/// `PUT /api/crew/{member}` – configure a crew member's provider and model, or reset.
+pub async fn update_crew_member(
+    Path(member): Path<String>,
+    body: Result<Json<UpdateCrewMemberRequest>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let crew_keys = ["luffy", "zoro", "nami", "usopp", "sanji"];
+    let member_lower = member.to_ascii_lowercase();
+    if !crew_keys.contains(&member_lower.as_str()) {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "unknown crew member `{member}`; choose from: {}",
+                crew_keys.join(", ")
+            ),
+        ));
+    }
+
+    let payload = match body {
+        Ok(Json(p)) => p,
+        Err(e) => return Err(ApiError::new(StatusCode::BAD_REQUEST, e.to_string())),
+    };
+
+    if payload.reset {
+        Config::clear_crew_member(&member_lower).map_err(ApiError::internal)?;
+    } else {
+        let provider = match payload.provider.as_deref() {
+            Some(p) if !p.trim().is_empty() => Some(
+                AgentProvider::parse(p)
+                    .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e.to_string()))?,
+            ),
+            _ => None,
+        };
+        let model = payload.model.as_deref().filter(|m| !m.trim().is_empty());
+        Config::set_crew_member(&member_lower, provider, model)
+            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
+    }
+
+    let config = Config::load().unwrap_or_default();
+    let provider = config.resolve_crew_provider(&member_lower);
+    let model = config.resolve_crew_model(&member_lower);
+    let is_custom = config.crew.contains_key(&member_lower);
+
+    Ok(Json(json!({
+        "id": member_lower,
+        "provider": provider.as_str(),
+        "model": model,
+        "is_custom": is_custom,
+    })))
 }
 
 // ---------------------------------------------------------------------------
