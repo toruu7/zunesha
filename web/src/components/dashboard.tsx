@@ -108,6 +108,37 @@ function RunningNow() {
   );
 }
 
+/** Worktree footprint + the one-click `zou prune` equivalent. */
+function DiskMeter() {
+  const disk = useZou((s) => s.disk);
+  const prune = useZou((s) => s.prune);
+  const busy = useZou((s) => s.busy);
+  if (!disk) return null;
+  return (
+    <div
+      className="flex flex-wrap items-center gap-1.5 border-2 border-ink bg-contrast px-2 py-1 text-[10px] font-black uppercase tracking-[0.06em] shadow-brutal-sm"
+      title="Worktree footprint on disk. REVIEW and NEEDS_INTERACTION workspaces are protected."
+    >
+      <span className="border border-ink bg-ground px-1.5 py-0.5">
+        worktrees {disk.workspace_label}
+      </span>
+      {disk.free_label && (
+        <span className="border border-ink bg-ground px-1.5 py-0.5 text-ink/65">
+          free {disk.free_label}
+        </span>
+      )}
+      <button
+        onClick={() => void prune()}
+        disabled={busy}
+        title="Remove DONE/orphaned worktrees (review and needs-interaction work is kept)"
+        className="border border-ink bg-emphasis px-1.5 py-0.5 hover:bg-signal hover:text-contrast disabled:bg-ground disabled:text-ink/40"
+      >
+        prune
+      </button>
+    </div>
+  );
+}
+
 function ErrorBanner() {
   const error = useZou((s) => s.error);
   const clearError = useZou((s) => s.clearError);
@@ -405,6 +436,7 @@ export default function Dashboard() {
             <div className="flex flex-wrap items-center gap-2">
               <ProjectBadge />
               <RunningNow />
+              <DiskMeter />
               <div className="w-full sm:w-auto sm:ml-auto">
                 <CrewRoster />
               </div>

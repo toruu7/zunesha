@@ -459,10 +459,11 @@ is resolved in this order:
 When validation fails, the task flips back to `IN_PROGRESS` automatically and
 the agent re-runs in the same workspace with the failing output appended to
 its prompt ("The code failed validation with these errors: … Please fix it.").
-After **3 failures** the task parks in `FAILED_NEEDS_HUMAN`; open it in the
-dashboard and either fix the code yourself or **Send back to queue** (which
-resets the retry budget). The whole loop — tests, error capture, retry —
-holds the worker's concurrency slot, so `--jobs` still bounds total load.
+After **`max_verify_retries + 1` failures** (default 3 attempts) the task parks
+in `NEEDS_INTERACTION`; open it in the dashboard and choose **Continue**,
+**Retry with feedback**, or **Hard reset**. The whole loop — tests, error
+capture, retry — holds the worker's concurrency slot, so `--jobs` still bounds
+total load.
 
 Validation output streams live into the task's logs, prefixed `[eval]`.
 `ZOU_EVAL_TIMEOUT_SECS` caps one validation run (default `600`); a hung test
@@ -498,6 +499,48 @@ already produced (the persisted retry counter still counts against the
 3-failure cap). Nothing in the state can tell a live agent from a dead one —
 that is why the manual path stays available and the boot-time resume can be
 switched off.
+
+### Recoverable stops and verification gates (v0.13)
+
+A worker no longer silently drops a failed or quota-paused task back into
+`TODO`. It classifies the stop (`rate_limit`, `token_limit`, `agent_error`,
+`verification_failed`, `merge_conflict`, `hung_process`), persists the last
+transcript tail and a compact handoff summary, and parks the task in
+`NEEDS_INTERACTION` with `requires_attention = true`. The worktree
+(`.zou/ws/<task_id>`) and every partial change stay on disk.
+
+Resume explicitly from the CLI, TUI, or dashboard:
+
+```sh
+zou retry <TASK_ID> --continue        # keep the worktree; ask the agent to finish
+zou retry <TASK_ID> -m "fix the race" # add human feedback + current worktree state
+zou retry <TASK_ID> --hard-reset      # discard the worktree and start clean
+zou rebase <TASK_ID>                  # one-click agent rebase of a drifted REVIEW task
+zou prune                             # remove DONE/orphaned worktrees, show disk use
+```
+
+Project-local behaviour lives in `.zou/config.toml` (all fields optional):
+
+```toml
+verify_cmd = "cargo test && npm test"   # overrides ZOU_EVAL_CMD/auto-detect
+max_verify_retries = 2                  # retries after the first failed verification
+fallback_agents = ["antigravity"]       # tried after a rate/token stop
+rate_limit_cooldown_secs = 60
+bootstrap_copy = [".env", ".env.local"] # copied into each fresh worktree
+bootstrap_cmd = "npm ci --ignore-scripts"
+auto_prune = true                       # remove a worktree after a clean approval
+min_free_disk_gb = 5.0                  # refuse new work below this free-space floor
+idle_timeout_secs = 900                 # kill an agent with no output/file activity
+isolated_caches = true                  # per-worktree CARGO_TARGET_DIR/TMPDIR/caches
+opencode_guardrails = true              # external-directory deny, step cap, doom-loop ask
+opencode_steps = 80
+acceptance_check = false                # require a non-empty diff before REVIEW
+```
+
+A failed `verify_cmd` is fed back into the same worktree for up to
+`max_verify_retries` cycles; exhausting the budget parks the task instead of
+returning it to `TODO`. Approved parent tasks also persist a bounded
+file/interface handoff summary that is injected into downstream task prompts.
 
 ### Environment variables
 
@@ -580,6 +623,9 @@ zou work    <TASK_ID> [--activate]      # spin up isolated workspace for a task
 zou diff    <TASK_ID>                   # show the task workspace's diff
 zou run     [--jobs N] [--follow]       # run the agent on ready tasks, in parallel
 zou cancel  <TASK_ID>                   # stop a running agent + its process tree; release the task
+zou retry   <TASK_ID> [--continue | -m <TEXT> | --hard-reset]  # resume a parked/REVIEW task
+zou rebase  <TASK_ID>                   # one-click agent rebase for a drifted REVIEW task
+zou prune                              # remove DONE/orphaned worktrees and show disk usage
 zou remove  <TASK_ID> [--yes]           # remove a task and its workspace; unblock the DAG (alias: delete, rm)
 zou events  <TASK_ID>                   # print the structured run/audit timeline
 zou approve <TASK_ID>                   # merge reviewed work into the repo (auto-resolves conflicts, Phase 9)
@@ -601,16 +647,18 @@ shows up in `git status`. `init` is idempotent — re-running preserves state.
 
 ## Task lifecycle & DAG engine
 
-Tasks flow through eight statuses:
+Tasks flow through nine statuses:
 
 ```text
 BACKLOG ──▶ TODO ──▶ IN_PROGRESS ──▶ EVALUATING ──▶ REVIEW ──▶ DONE
    ▲          ▲         │  ▲            │        (reject) │
    │          │         │  └──retry─────┘             │   │
    │          └─────────┴───── (agent failed / rejected / sent back)
-   │                            │ (3 failed validations)
-   └── (prereq reopened)        ▼
-                        FAILED_NEEDS_HUMAN ──(reject)──▶ TODO
+   │                            │ (retry budget exhausted, quota, hung process)
+   │                            ▼
+   │                    NEEDS_INTERACTION ──(continue / feedback / reset)──▶ TODO
+   └── (prereq reopened)        │
+                                └── legacy FAILED_NEEDS_HUMAN ──(human)──▶ TODO
 ```
 
 `EVALUATING` is the Phase 8 self-healing gate: the project's test/lint command
@@ -939,10 +987,14 @@ changes and no instruction files simply produces no document.
 | GET    | `/api/status`            | Per-status counts + concurrency cap.       |
 | GET    | `/api/tasks`             | Every task, the dependency DAG (`dependencies`), and per-status counts. |
 | GET    | `/api/tasks/:id`         | One task (transcript, agent output, and diff included). |
+| DELETE | `/api/tasks/:id`         | Remove a task, its workspace, and its DAG edges. |
 | POST   | `/api/plan`              | `{"prompt": "...", "attachments": [{"name","media_type","data"}]}` → DAG of tasks (built-in or `ZOU_PLANNER_CMD`; `400` when the plan or an upload is invalid). `data` is raw base64 or a `data:` URL; body limit 40 MiB (the 24 MiB decoded attachment cap plus base64/JSON overhead). |
 | POST   | `/api/run`               | Start agents on all ready (`TODO`) tasks.  |
 | POST   | `/api/tasks/:id/run`     | Start the agent on one ready task.         |
 | POST   | `/api/tasks/:id/cancel`  | Stop a live agent + process tree and release the task → `TODO`; `409` when this daemon does not own it. |
+| POST   | `/api/tasks/:id/retry`   | `{"mode": "continue" \| "feedback" \| "hard_reset", "feedback": "..."}` → resume a parked/REVIEW task and start it. |
+| POST   | `/api/tasks/:id/rebase`  | Rebase a drifted REVIEW worktree with an agent, then start conflict resolution. |
+| POST   | `/api/prune`             | Remove DONE/orphaned worktrees; returns removed ids + disk usage. |
 | GET    | `/api/tasks/:id/events`  | Latest run row + up to 500 decoded audit events. |
 | POST   | `/api/tasks/:id/approve` | Merge approved diff → repo; `REVIEW→DONE` (a conflict queues auto-resolution, `REVIEW→RESOLVING_CONFLICTS`). |
 | POST   | `/api/tasks/:id/reject`  | `{"feedback": "...", "attachments": [...]}` → back to `TODO` (from `REVIEW` or `FAILED_NEEDS_HUMAN`; resets the retry budget). |
@@ -1352,9 +1404,9 @@ connection pool.
 | 13    | Customizable terminal UI (ratatui, themes, keymaps) | ✅ done |
 | 14    | Interactive pixel-office control room              | ✅ done |
 | 15    | **v0.10.0 Safe by Default**: containment, timeout/cancel, run journal, Antigravity provider, prompt attachments, mobile layouts | ✅ done |
-| 16    | v0.11.0 Recoverable: persistent sessions, requeue with feedback, stronger restart semantics | next |
-| 17    | v0.12.0 Measurable: evals, cost/token accounting, policy checks | planned |
-| 18    | v0.13.0 Coordinated: multi-agent handoffs, live steering protocol | planned |
+| 16    | **v0.11.0 Recoverable**: task removal, planner parallelism, stronger restart semantics | ✅ done |
+| 17    | **v0.12.x Measurable**: crew workflows, configurable agent models, dashboard/docs polish | ✅ done |
+| 18    | **v0.13.0 Resilient**: classified stops, `NEEDS_INTERACTION`, resume modes, verification gates, worktree hygiene | ✅ done |
 | 19    | v1.0.0 Everywhere: stable interfaces, desktop/mobile parity, remote workers | planned |
 
 Beyond the blueprint: a real **external planner** (`ZOU_PLANNER_CMD` — any LLM

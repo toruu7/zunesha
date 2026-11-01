@@ -21,6 +21,10 @@ function task(overrides: Partial<Task> & { id: string }): Task {
     worker_logs: "",
     agent_output: "",
     diff: "",
+    stop_reason: null,
+    requires_attention: false,
+    last_log_tail: "",
+    handoff_summary: "",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -42,6 +46,12 @@ function snapshot(tasks: Task[], dependencies: DependencyEdge[] = []): ApiEvent 
     tasks,
     dependencies,
     counts: [],
+    disk: {
+      workspace_bytes: 0,
+      free_bytes: null,
+      workspace_label: "0 B",
+      free_label: null,
+    },
   };
 }
 
@@ -99,7 +109,7 @@ describe("mergeLogLines", () => {
 // --- countsFor ------------------------------------------------------------
 
 describe("countsFor", () => {
-  it("zero-fills all eight statuses in pipeline order", () => {
+  it("zero-fills all nine statuses in pipeline order", () => {
     const counts = countsFor([task({ id: "t1", status: "REVIEW" })]);
     expect(counts.map((c) => c.status)).toEqual([
       "BACKLOG",
@@ -107,6 +117,7 @@ describe("countsFor", () => {
       "IN_PROGRESS",
       "EVALUATING",
       "REVIEW",
+      "NEEDS_INTERACTION",
       "RESOLVING_CONFLICTS",
       "DONE",
       "FAILED_NEEDS_HUMAN",
@@ -131,6 +142,7 @@ describe("applyEvent", () => {
       tasks: [task({ id: "t1" }), task({ id: "t2" })],
       logs: { t1: [line(0, "a")], t2: [line(0, "b")] },
       deps: [],
+      disk: null,
     };
     const ev: ApiEvent = snapshot([task({ id: "t1" })]);
     const next = applyEvent(state, ev);

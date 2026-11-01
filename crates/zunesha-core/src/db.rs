@@ -25,12 +25,16 @@ CREATE TABLE IF NOT EXISTS tasks (
     title        TEXT NOT NULL,
     description  TEXT NOT NULL DEFAULT '',
     status       TEXT NOT NULL DEFAULT 'BACKLOG'
-                 CHECK (status IN ('BACKLOG','TODO','IN_PROGRESS','EVALUATING','REVIEW','RESOLVING_CONFLICTS','DONE','FAILED_NEEDS_HUMAN')),
+                 CHECK (status IN ('BACKLOG','TODO','IN_PROGRESS','EVALUATING','REVIEW','NEEDS_INTERACTION','RESOLVING_CONFLICTS','DONE','FAILED_NEEDS_HUMAN')),
     retry_count  INTEGER NOT NULL DEFAULT 0,
     worker_logs  TEXT NOT NULL DEFAULT '',
     agent_output TEXT NOT NULL DEFAULT '',
     diff         TEXT NOT NULL DEFAULT '',
     crew_member  TEXT,
+    stop_reason  TEXT,
+    requires_attention INTEGER NOT NULL DEFAULT 0,
+    last_log_tail TEXT NOT NULL DEFAULT '',
+    handoff_summary TEXT NOT NULL DEFAULT '',
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -81,26 +85,49 @@ CREATE INDEX IF NOT EXISTS idx_run_events_task ON run_events(task_id, id);
 "#;
 
 /// Columns selected when hydrating a [`Task`], in struct-field order.
-const TASK_COLUMNS: &str = "id, title, description, status, retry_count, worker_logs, agent_output, diff, crew_member, created_at, updated_at";
+const TASK_COLUMNS: &str = "id, title, description, status, retry_count, worker_logs, agent_output, diff, crew_member, stop_reason, requires_attention, last_log_tail, handoff_summary, created_at, updated_at";
 
-/// `tasks` table shape as of the Markdown-output release.
+/// Current `tasks` table shape, used by the rebuild migration.
 ///
-/// Kept verbatim for [`Database::migrate_tasks_table`]'s rebuild and its test:
-/// the rebuild must produce exactly this shape so fresh and migrated
-/// databases are indistinguishable.
-const TASKS_TABLE_V3: &str = "CREATE TABLE tasks_v3 (
+/// The rebuild must produce exactly this shape so fresh and migrated databases
+/// are indistinguishable.
+const TASKS_TABLE_CURRENT: &str = "CREATE TABLE tasks_new (
     id           TEXT PRIMARY KEY,
     title        TEXT NOT NULL,
     description  TEXT NOT NULL DEFAULT '',
     status       TEXT NOT NULL DEFAULT 'BACKLOG'
-                 CHECK (status IN ('BACKLOG','TODO','IN_PROGRESS','EVALUATING','REVIEW','RESOLVING_CONFLICTS','DONE','FAILED_NEEDS_HUMAN')),
+                 CHECK (status IN ('BACKLOG','TODO','IN_PROGRESS','EVALUATING','REVIEW','NEEDS_INTERACTION','RESOLVING_CONFLICTS','DONE','FAILED_NEEDS_HUMAN')),
     retry_count  INTEGER NOT NULL DEFAULT 0,
     worker_logs  TEXT NOT NULL DEFAULT '',
     agent_output TEXT NOT NULL DEFAULT '',
     diff         TEXT NOT NULL DEFAULT '',
+    crew_member  TEXT,
+    stop_reason  TEXT,
+    requires_attention INTEGER NOT NULL DEFAULT 0,
+    last_log_tail TEXT NOT NULL DEFAULT '',
+    handoff_summary TEXT NOT NULL DEFAULT '',
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 )";
+
+/// All columns in the current `tasks` table, in migration copy order.
+const TASK_TABLE_COLUMNS: [&str; 15] = [
+    "id",
+    "title",
+    "description",
+    "status",
+    "retry_count",
+    "worker_logs",
+    "agent_output",
+    "diff",
+    "crew_member",
+    "stop_reason",
+    "requires_attention",
+    "last_log_tail",
+    "handoff_summary",
+    "created_at",
+    "updated_at",
+];
 
 /// A registered workspace for an in-flight task (one row per task).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,55 +222,50 @@ impl Database {
             |row| row.get(0),
         )?;
         let current = current.unwrap_or_default();
-        // If an older database lacks v3 markers, rebuild it first.
-        if !current.contains("RESOLVING_CONFLICTS")
-            || !current.contains("retry_count")
-            || !current.contains("agent_output")
-        {
-            // Foreign keys must be off while swapping the table (the pragma is a
-            // no-op inside a transaction), so they are toggled around it.
-            let copy_retry = current.contains("retry_count");
-            let copy_output = current.contains("agent_output");
-            let values = match (copy_retry, copy_output) {
-                (true, true) => {
-                    "id, title, description, status, retry_count, worker_logs, agent_output, diff, created_at, updated_at"
-                }
-                (true, false) => {
-                    "id, title, description, status, retry_count, worker_logs, '', diff, created_at, updated_at"
-                }
-                (false, true) => {
-                    "id, title, description, status, 0, worker_logs, agent_output, diff, created_at, updated_at"
-                }
-                (false, false) => {
-                    "id, title, description, status, 0, worker_logs, '', diff, created_at, updated_at"
-                }
-            };
-            conn.pragma_update(None, "foreign_keys", "OFF")?;
-            let rebuild = conn.execute_batch(&format!(
-                "BEGIN;
-                 {TASKS_TABLE_V3};
-                 INSERT INTO tasks_v3 (id, title, description, status, retry_count, worker_logs, agent_output, diff, created_at, updated_at)
-                     SELECT {values} FROM tasks;
-                 DROP TABLE tasks;
-                 ALTER TABLE tasks_v3 RENAME TO tasks;
-                 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-                 COMMIT;"
-            ));
-            if let Err(e) = rebuild {
-                let _ = conn.execute_batch("ROLLBACK;");
-                let _ = conn.pragma_update(None, "foreign_keys", "ON");
-                return Err(e.into());
-            }
-            conn.pragma_update(None, "foreign_keys", "ON")?;
+        let columns = table_columns(conn, "tasks")?;
+        let missing = TASK_TABLE_COLUMNS
+            .iter()
+            .any(|column| !columns.iter().any(|existing| existing == column));
+        // A database created by the current SCHEMA already has all markers.
+        if current.contains("NEEDS_INTERACTION") && !missing {
+            return Ok(());
         }
 
-        // Add crew_member column if absent.
-        let has_crew: bool = conn
-            .prepare("SELECT crew_member FROM tasks LIMIT 0")
-            .is_ok();
-        if !has_crew {
-            conn.execute("ALTER TABLE tasks ADD COLUMN crew_member TEXT", [])?;
+        // Build the copy list from the actual source columns. Columns added by
+        // later releases get a safe default instead of being lost.
+        let values = TASK_TABLE_COLUMNS
+            .iter()
+            .map(|column| {
+                if columns.iter().any(|existing| existing == column) {
+                    (*column).to_string()
+                } else {
+                    default_for_column(column).to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let target = TASK_TABLE_COLUMNS.join(", ");
+
+        // Foreign keys must be off while swapping the table (the pragma is a
+        // no-op inside a transaction), so they are toggled around it.
+        conn.pragma_update(None, "foreign_keys", "OFF")?;
+        let rebuild = conn.execute_batch(&format!(
+            "BEGIN;
+             DROP TABLE IF EXISTS tasks_new;
+             {TASKS_TABLE_CURRENT};
+             INSERT INTO tasks_new ({target})
+                 SELECT {values} FROM tasks;
+             DROP TABLE tasks;
+             ALTER TABLE tasks_new RENAME TO tasks;
+             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+             COMMIT;"
+        ));
+        if let Err(e) = rebuild {
+            let _ = conn.execute_batch("ROLLBACK;");
+            let _ = conn.pragma_update(None, "foreign_keys", "ON");
+            return Err(e.into());
         }
+        conn.pragma_update(None, "foreign_keys", "ON")?;
 
         Ok(())
     }
@@ -253,8 +275,11 @@ impl Database {
     /// Insert a new task. Fails if the id already exists.
     pub fn insert_task(&self, task: &Task) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO tasks (id, title, description, status, retry_count, worker_logs, agent_output, diff, crew_member)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO tasks (
+                 id, title, description, status, retry_count, worker_logs, agent_output, diff,
+                 crew_member, stop_reason, requires_attention, last_log_tail, handoff_summary
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 task.id,
                 task.title,
@@ -265,6 +290,10 @@ impl Database {
                 task.agent_output,
                 task.diff,
                 task.crew_member,
+                task.stop_reason.map(|reason| reason.as_str()),
+                task.requires_attention,
+                task.last_log_tail,
+                task.handoff_summary,
             ],
         )?;
         Ok(())
@@ -453,6 +482,119 @@ impl Database {
             return Err(Error::TaskNotFound(id.to_string()));
         }
         Ok(())
+    }
+
+    /// Persist a classified stop and the context needed to resume.
+    ///
+    /// The worktree is untouched; this is a metadata-only write. `detail` is
+    /// folded into the transcript tail when the tail itself is empty so even a
+    /// setup error leaves a visible explanation.
+    pub fn set_recovery_state(
+        &self,
+        id: &str,
+        reason: Option<crate::task::StopReason>,
+        requires_attention: bool,
+        last_log_tail: &str,
+        handoff_summary: &str,
+        detail: &str,
+    ) -> Result<()> {
+        let tail = if last_log_tail.trim().is_empty() {
+            detail.trim().to_string()
+        } else if detail.trim().is_empty() {
+            last_log_tail.to_string()
+        } else {
+            format!("{}\n{}", last_log_tail.trim_end(), detail.trim())
+        };
+        let changed = self.conn.execute(
+            "UPDATE tasks
+                 SET stop_reason = ?2,
+                     requires_attention = ?3,
+                     last_log_tail = ?4,
+                     handoff_summary = ?5,
+                     updated_at = datetime('now')
+                 WHERE id = ?1",
+            params![
+                id,
+                reason.map(|reason| reason.as_str()),
+                requires_attention,
+                tail,
+                handoff_summary,
+            ],
+        )?;
+        if changed == 0 {
+            return Err(Error::TaskNotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Mark a task as needing attention without changing its status. Used when
+    /// a proactive merge check detects that a REVIEW worktree no longer
+    /// applies.
+    pub fn mark_attention(
+        &self,
+        id: &str,
+        reason: crate::task::StopReason,
+        detail: &str,
+    ) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE tasks
+                 SET stop_reason = ?2,
+                     requires_attention = 1,
+                     last_log_tail = ?3,
+                     updated_at = datetime('now')
+                 WHERE id = ?1",
+            params![id, reason.as_str(), detail.trim()],
+        )?;
+        if changed == 0 {
+            return Err(Error::TaskNotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Clear recovery flags after a human resumes a task.
+    pub fn clear_recovery_state(&self, id: &str) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE tasks
+                 SET stop_reason = NULL,
+                     requires_attention = 0,
+                     last_log_tail = '',
+                     updated_at = datetime('now')
+                 WHERE id = ?1",
+            params![id],
+        )?;
+        if changed == 0 {
+            return Err(Error::TaskNotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Store the compact parent-to-child interface summary generated when a
+    /// task is approved.
+    pub fn set_handoff_summary(&self, id: &str, summary: &str) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE tasks
+                 SET handoff_summary = ?2, updated_at = datetime('now')
+                 WHERE id = ?1",
+            params![id, summary],
+        )?;
+        if changed == 0 {
+            return Err(Error::TaskNotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Hydrate the recovery flags for a task in one query. Kept separate from
+    /// `get_task` callers that only need the row; this helper is used by tests
+    /// and future integrations.
+    pub fn recovery_flags(&self, id: &str) -> Result<(Option<String>, bool, String)> {
+        let mut stmt = self.conn.prepare(
+            "SELECT stop_reason, requires_attention, last_log_tail FROM tasks WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        match rows.next()? {
+            Some(row) => Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            None => Err(Error::TaskNotFound(id.to_string())),
+        }
     }
 
     // ------------------------------------------------------------ run journal
@@ -815,6 +957,13 @@ fn row_to_workspace(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkspaceRecord
 /// Hydrate a [`Task`] from a query row using [`TASK_COLUMNS`].
 fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
     let status: String = row.get(3)?;
+    let stop_reason: Option<String> = row.get(9)?;
+    let stop_reason = stop_reason
+        .map(|value| value.parse())
+        .transpose()
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(e))
+        })?;
     Ok(Task {
         id: row.get(0)?,
         title: row.get(1)?,
@@ -827,9 +976,31 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         agent_output: row.get(6)?,
         diff: row.get(7)?,
         crew_member: row.get(8)?,
-        created_at: row.get(9)?,
-        updated_at: row.get(10)?,
+        stop_reason,
+        requires_attention: row.get(10)?,
+        last_log_tail: row.get(11)?,
+        handoff_summary: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
     })
+}
+
+/// Columns present on a table, used by the rebuild migration.
+fn table_columns(conn: &Connection, table: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// Safe default expression for a column missing from an older schema.
+fn default_for_column(column: &str) -> &'static str {
+    match column {
+        "retry_count" | "requires_attention" => "0",
+        "worker_logs" | "agent_output" | "diff" | "last_log_tail" | "handoff_summary" => "''",
+        "created_at" | "updated_at" => "datetime('now')",
+        "stop_reason" => "NULL",
+        _ => "NULL",
+    }
 }
 
 #[cfg(test)]
@@ -937,7 +1108,7 @@ mod tests {
 
         let counts = db.task_counts_by_status().unwrap();
         // Zero-filled across all statuses.
-        assert_eq!(counts.len(), 8);
+        assert_eq!(counts.len(), 9);
         let backlog = counts
             .iter()
             .find(|(s, _)| *s == TaskStatus::Backlog)
@@ -959,6 +1130,11 @@ mod tests {
         let mut task = Task::new("t1", "title", "description");
         task.worker_logs = "log line".to_string();
         task.agent_output = "## Result\n\nDone.".to_string();
+        task.crew_member = Some("zoro".to_string());
+        task.stop_reason = Some(crate::task::StopReason::RateLimit);
+        task.requires_attention = true;
+        task.last_log_tail = "quota tail".to_string();
+        task.handoff_summary = "changed src/lib.rs".to_string();
         db.insert_task(&task).unwrap();
 
         let loaded = db.get_task("t1").unwrap().expect("task should exist");
@@ -968,6 +1144,11 @@ mod tests {
         assert_eq!(loaded.status, TaskStatus::Backlog);
         assert_eq!(loaded.worker_logs, "log line");
         assert_eq!(loaded.agent_output, "## Result\n\nDone.");
+        assert_eq!(loaded.crew_member.as_deref(), Some("zoro"));
+        assert_eq!(loaded.stop_reason, Some(crate::task::StopReason::RateLimit));
+        assert!(loaded.requires_attention);
+        assert_eq!(loaded.last_log_tail, "quota tail");
+        assert_eq!(loaded.handoff_summary, "changed src/lib.rs");
         // Timestamps are filled in by SQLite on read.
         assert!(!loaded.created_at.is_empty());
         assert!(!loaded.updated_at.is_empty());
@@ -1305,7 +1486,7 @@ mod tests {
             .unwrap();
 
         let counts = db.task_counts_by_status().unwrap();
-        assert_eq!(counts.len(), 8, "every status appears, zero-filled");
+        assert_eq!(counts.len(), 9, "every status appears, zero-filled");
         assert_eq!(
             counts
                 .iter()
@@ -1393,7 +1574,11 @@ mod tests {
         };
         assert!(migrated_sql.contains("retry_count"));
         assert!(migrated_sql.contains("RESOLVING_CONFLICTS"));
+        assert!(migrated_sql.contains("NEEDS_INTERACTION"));
         assert!(migrated_sql.contains("agent_output"));
+        assert!(migrated_sql.contains("crew_member"));
+        assert!(migrated_sql.contains("stop_reason"));
+        assert!(migrated_sql.contains("handoff_summary"));
 
         // 4. Re-opening is a no-op (the markers are now present).
         let _db2 = Database::open(&db_path).unwrap();

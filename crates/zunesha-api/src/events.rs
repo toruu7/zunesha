@@ -72,6 +72,8 @@ pub enum ApiEvent {
         /// planning, so they only change with the plan itself.
         dependencies: Vec<DependencyEdge>,
         counts: Vec<StatusCount>,
+        /// Worktree footprint and free space, refreshed on every snapshot.
+        disk: zunesha_core::DiskUsage,
     },
 
     /// One task changed (typically because a worker touched it).
@@ -90,7 +92,7 @@ pub enum ApiEvent {
     },
 }
 
-/// Count tasks per status, always emitting all seven statuses in pipeline order
+/// Count tasks per status, always emitting all nine statuses in pipeline order
 /// (including zeros) so the dashboard's columns are stable.
 pub fn zero_filled_counts(db: &Database) -> zunesha_core::Result<Vec<StatusCount>> {
     let raw = db.task_counts_by_status()?;
@@ -132,6 +134,7 @@ pub fn snapshot_event(db: &Database, paths: &ZuneshaPaths) -> zunesha_core::Resu
         tasks,
         dependencies,
         counts,
+        disk: zunesha_core::disk_usage(paths),
     })
 }
 

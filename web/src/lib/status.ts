@@ -15,6 +15,7 @@ export const ACCENT: Record<TaskStatus, string> = {
   IN_PROGRESS: "bg-field",
   EVALUATING: "bg-ground",
   REVIEW: "bg-signal",
+  NEEDS_INTERACTION: "bg-signal-ink",
   RESOLVING_CONFLICTS: "bg-signal",
   DONE: "bg-ink",
   FAILED_NEEDS_HUMAN: "bg-signal-ink",

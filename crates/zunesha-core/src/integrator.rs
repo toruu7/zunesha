@@ -45,8 +45,9 @@ use crate::dag::promote_ready;
 use crate::db::Database;
 use crate::error::{Error, Result};
 use crate::paths::ZuneshaPaths;
-use crate::task::{Task, TaskStatus};
-use crate::workspace::WorkspaceManager;
+use crate::project_config::ProjectConfig;
+use crate::task::{StopReason, Task, TaskStatus};
+use crate::workspace::{ConflictPrep, WorkspaceManager};
 
 /// What became of a task's approved diff.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -106,7 +107,7 @@ impl Integrator {
     /// The two are byte-identical in normal operation (the worker regenerates
     /// the stored copy from the same workspace at the end of each run); the
     /// fallback exists so an approved task survives workspace cleanup.
-    fn approved_patch(&self, db: &Database, task_id: &str) -> Result<String> {
+    pub(crate) fn approved_patch(&self, db: &Database, task_id: &str) -> Result<String> {
         let mgr = WorkspaceManager::new(self.paths.clone());
         match db.get_workspace(task_id)? {
             Some(record) if Path::new(&record.path).is_dir() => mgr.generate_diff(db, task_id),
@@ -126,6 +127,15 @@ pub struct ApproveOutcome {
     pub promoted: Vec<String>,
     /// What happened to the approved diff.
     pub integration: MergeOutcome,
+}
+
+/// Result of an explicit one-click rebase request for a REVIEW task.
+#[derive(Debug)]
+pub struct RebaseOutcome {
+    /// The task, now `RESOLVING_CONFLICTS`.
+    pub task: Task,
+    /// Details of the 3-way merge, including conflicted files.
+    pub prep: ConflictPrep,
 }
 
 /// The human-in-the-loop gate: land the approved diff, then finish the task.
@@ -161,13 +171,31 @@ pub fn approve_task(paths: &ZuneshaPaths, task_id: &str) -> Result<ApproveOutcom
     // 1. Merge — may return MergeConflict, leaving the repository untouched.
     match Integrator::new(paths.clone()).integrate(&db, task_id) {
         Ok(integration) => {
-            // 2. Finish the lifecycle and unlock the DAG.
+            let mgr = WorkspaceManager::new(paths.clone());
+            // 2. Capture the interface summary while the workspace still
+            //    exists. Downstream prompts consume this instead of the full
+            //    parent diff.
+            if let Ok(summary) = mgr.contract_summary(&db, task_id) {
+                if !summary.trim().is_empty() {
+                    db.set_handoff_summary(task_id, &summary)?;
+                }
+            }
+
+            // 3. Finish the lifecycle and unlock the DAG.
             db.set_status(task_id, TaskStatus::Done)?;
             let promoted = promote_ready(&db)?;
 
-            // 3. The workspace earned its keep; its content is now in the
-            //    repository.
-            WorkspaceManager::new(paths.clone()).remove(&db, task_id)?;
+            // 4. The workspace earned its keep; its content is now in the
+            //    repository. Keeping it is opt-in via auto_prune = false.
+            let project = ProjectConfig::load_or_default(paths.root());
+            if project.auto_prune {
+                mgr.remove(&db, task_id)?;
+            }
+
+            // 5. The repository just moved. A sibling REVIEW task whose diff
+            //    no longer applies must be flagged before the human clicks
+            //    approve and hits a conflict.
+            mark_review_conflicts(paths, &db, task_id);
 
             Ok(ApproveOutcome {
                 task: db.require_task(task_id)?,
@@ -200,17 +228,113 @@ pub fn approve_task(paths: &ZuneshaPaths, task_id: &str) -> Result<ApproveOutcom
                     })
                 }
                 // If the rebase itself fails (git missing, workspace corrupt),
-                // surface the original conflict — the task stays in REVIEW and the
-                // human reconciles manually, exactly as before Phase 9.
-                Err(_) => Err(Error::MergeConflict {
-                    task_id: task_id.to_string(),
-                    files,
-                    detail,
-                }),
+                // surface the original conflict and flag the task — the task
+                // stays in REVIEW with a one-click rebase control.
+                Err(error) => {
+                    let _ = db.mark_attention(
+                        task_id,
+                        StopReason::MergeConflict,
+                        &format!(
+                            "The approved diff conflicts with the repository and the automatic \
+                             rebase failed: {error}. Approve again to retry, or inspect the \
+                             worktree manually."
+                        ),
+                    );
+                    Err(Error::MergeConflict {
+                        task_id: task_id.to_string(),
+                        files,
+                        detail,
+                    })
+                }
             }
         }
 
         Err(e) => Err(e),
+    }
+}
+
+/// Proactively flag sibling `REVIEW` tasks whose stored diff no longer applies
+/// after a merge. This is best-effort: a failure to run the dry run must never
+/// turn a successful approval into an error.
+fn mark_review_conflicts(paths: &ZuneshaPaths, db: &Database, merged_task: &str) {
+    let Ok(tasks) = db.list_tasks_by_status(TaskStatus::Review) else {
+        return;
+    };
+    let integrator = Integrator::new(paths.clone());
+    for task in tasks {
+        if task.id == merged_task || task.requires_attention {
+            continue;
+        }
+        let Ok(patch) = integrator.approved_patch(db, &task.id) else {
+            continue;
+        };
+        if patch.trim().is_empty() {
+            continue;
+        }
+        let Ok(check) = git_apply(paths.root(), &["--check"], &patch) else {
+            continue;
+        };
+        if check.status.success() {
+            continue;
+        }
+        // Already applied? Then this is not a conflict.
+        if let Ok(reverse) = git_apply(paths.root(), &["--reverse", "--check"], &patch) {
+            if reverse.status.success() {
+                continue;
+            }
+        }
+        let detail = stderr_of(&check);
+        let files = conflict_files(&detail);
+        let message = if files.is_empty() {
+            format!(
+                "The repository changed after this task was snapshotted; the reviewed diff no \
+                 longer applies. Approve to rebase with an agent. Git said: {}",
+                detail.lines().next().unwrap_or("patch check failed")
+            )
+        } else {
+            format!(
+                "The repository changed after this task was snapshotted; the reviewed diff \
+                 conflicts in {}. Approve to rebase with an agent.",
+                files.join(", ")
+            )
+        };
+        let _ = db.mark_attention(&task.id, StopReason::MergeConflict, &message);
+    }
+}
+
+/// Explicit one-click rebase for a `REVIEW` task whose diff has drifted.
+///
+/// This is the same preparation `approve_task` performs on a conflict, exposed
+/// separately so the dashboard/TUI can offer "Rebase with agent" without
+/// requiring another approval attempt. The caller spawns the resolution worker
+/// after this returns.
+pub fn rebase_task(paths: &ZuneshaPaths, task_id: &str) -> Result<RebaseOutcome> {
+    let db = Database::open(&paths.state_db())?;
+    let task = db.require_task(task_id)?;
+    if task.status != TaskStatus::Review {
+        return Err(Error::InvalidTransition {
+            task_id: task_id.to_string(),
+            from: task.status,
+            to: TaskStatus::ResolvingConflicts,
+        });
+    }
+    match WorkspaceManager::new(paths.clone()).prepare_conflict_resolution(&db, task_id) {
+        Ok(prep) => {
+            db.clear_recovery_state(task_id)?;
+            db.set_status(task_id, TaskStatus::ResolvingConflicts)?;
+            Ok(RebaseOutcome {
+                task: db.require_task(task_id)?,
+                prep,
+            })
+        }
+        Err(error) => {
+            let _ = db.mark_attention(
+                task_id,
+                StopReason::MergeConflict,
+                &format!("Could not prepare the rebase: {error}"),
+            );
+            Err(error)
+        }
     }
 }
 

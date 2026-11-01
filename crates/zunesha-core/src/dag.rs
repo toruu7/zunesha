@@ -196,7 +196,10 @@ pub fn render_roadmap(db: &Database, current_task_id: &str) -> Result<Option<Str
 
     for task in &all_tasks {
         if task.id == current_task_id {
-            out.push_str(&format!("- [>] **CURRENT**: {} (`{}`)\n", task.title, task.id));
+            out.push_str(&format!(
+                "- [>] **CURRENT**: {} (`{}`)\n",
+                task.title, task.id
+            ));
             if !current_deps.is_empty() {
                 let mut dep_names: Vec<String> = current_deps
                     .iter()
@@ -563,10 +566,15 @@ mod tests {
         promote_ready(&db).unwrap(); // t2 -> TODO
         db.force_set_status("t2", TaskStatus::InProgress).unwrap();
 
-        let roadmap = render_roadmap(&db, "t2").unwrap().expect("roadmap rendered");
+        let roadmap = render_roadmap(&db, "t2")
+            .unwrap()
+            .expect("roadmap rendered");
         assert!(roadmap.contains("## Feature Roadmap"), "{roadmap}");
         assert!(roadmap.contains("- [x] DONE: one (`t1`)"), "{roadmap}");
-        assert!(roadmap.contains("- [>] **CURRENT**: two (`t2`)"), "{roadmap}");
+        assert!(
+            roadmap.contains("- [>] **CURRENT**: two (`t2`)"),
+            "{roadmap}"
+        );
         assert!(
             roadmap.contains("Direct prerequisites: `one` (DONE, `t1`)"),
             "{roadmap}"

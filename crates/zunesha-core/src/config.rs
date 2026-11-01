@@ -336,10 +336,7 @@ impl Config {
     ) -> Result<PathBuf> {
         let path = Self::path()?;
         let mut config = Self::load_from(&path).unwrap_or_default();
-        let entry = config
-            .crew
-            .entry(member.to_ascii_lowercase())
-            .or_default();
+        let entry = config.crew.entry(member.to_ascii_lowercase()).or_default();
         if let Some(p) = provider {
             entry.provider = Some(p);
         }
@@ -451,11 +448,27 @@ pub fn default_crew_persona(member: &str) -> &'static str {
 /// Structured summary of a Straw Hat crew member's identity and specialty.
 pub fn crew_member_info(member: &str) -> (&'static str, &'static str, &'static str) {
     match member.to_ascii_lowercase().as_str() {
-        "luffy" => ("Monkey D. Luffy", "Captain", "High impact features & bold solutions"),
-        "zoro" => ("Roronoa Zoro", "Combatant", "Deep refactoring, performance & debt elimination"),
-        "nami" => ("Nami", "Navigator", "Architecture, systems mapping & API design"),
+        "luffy" => (
+            "Monkey D. Luffy",
+            "Captain",
+            "High impact features & bold solutions",
+        ),
+        "zoro" => (
+            "Roronoa Zoro",
+            "Combatant",
+            "Deep refactoring, performance & debt elimination",
+        ),
+        "nami" => (
+            "Nami",
+            "Navigator",
+            "Architecture, systems mapping & API design",
+        ),
         "usopp" => ("Usopp", "Sniper", "Edge cases, tests, scripts & utilities"),
-        "sanji" => ("Sanji", "Cook", "UX aesthetics, formatting & review presentation"),
+        "sanji" => (
+            "Sanji",
+            "Cook",
+            "UX aesthetics, formatting & review presentation",
+        ),
         _ => ("Pirate", "Crew Member", "Autonomous coding agent"),
     }
 }
@@ -654,9 +667,17 @@ mod tests {
         config.agent.model = Some("default/model".to_string());
 
         // Default fallbacks
-        assert_eq!(config.resolve_crew_provider("luffy"), AgentProvider::Opencode);
-        assert_eq!(config.resolve_crew_model("luffy").as_deref(), Some("default/model"));
-        assert!(config.resolve_crew_persona("luffy").contains("Monkey D. Luffy"));
+        assert_eq!(
+            config.resolve_crew_provider("luffy"),
+            AgentProvider::Opencode
+        );
+        assert_eq!(
+            config.resolve_crew_model("luffy").as_deref(),
+            Some("default/model")
+        );
+        assert!(config
+            .resolve_crew_persona("luffy")
+            .contains("Monkey D. Luffy"));
         assert!(config.resolve_crew_persona("zoro").contains("Roronoa Zoro"));
 
         // Crew specific overrides
@@ -669,8 +690,14 @@ mod tests {
             },
         );
 
-        assert_eq!(config.resolve_crew_provider("zoro"), AgentProvider::Antigravity);
-        assert_eq!(config.resolve_crew_model("zoro").as_deref(), Some("custom-zoro-slug"));
+        assert_eq!(
+            config.resolve_crew_provider("zoro"),
+            AgentProvider::Antigravity
+        );
+        assert_eq!(
+            config.resolve_crew_model("zoro").as_deref(),
+            Some("custom-zoro-slug")
+        );
         assert_eq!(config.resolve_crew_persona("zoro"), "Custom Zoro prompt");
     }
 }

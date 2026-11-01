@@ -7,6 +7,7 @@
 import type {
   ApiEvent,
   DependencyEdge,
+  DiskUsage,
   LogEvent,
   ProjectInfo,
   StatusCount,
@@ -34,6 +35,8 @@ export interface BoardState {
    * Immutable after planning, so only snapshots ever change them.
    */
   deps: DependencyEdge[];
+  /** Worktree footprint/free space from the latest snapshot. */
+  disk: DiskUsage | null;
 }
 
 export const EMPTY_STATE: BoardState = {
@@ -41,6 +44,7 @@ export const EMPTY_STATE: BoardState = {
   tasks: [],
   logs: {},
   deps: [],
+  disk: null,
 };
 
 /**
@@ -91,7 +95,7 @@ function upsertTask(tasks: Task[], task: Task): Task[] {
   return next;
 }
 
-/** Per-status counts, always zero-filled across all eight statuses. */
+/** Per-status counts, always zero-filled across all nine statuses. */
 export function countsFor(tasks: Task[]): StatusCount[] {
   const tally = new Map<TaskStatus, number>();
   for (const t of tasks) tally.set(t.status, (tally.get(t.status) ?? 0) + 1);
@@ -126,6 +130,7 @@ export function applyEvent(state: BoardState, ev: ApiEvent): BoardState {
         tasks: ev.tasks,
         logs,
         deps: ev.dependencies,
+        disk: ev.disk,
       };
     }
 
@@ -143,7 +148,13 @@ export function applyEvent(state: BoardState, ev: ApiEvent): BoardState {
         ...state.logs,
         [ev.task.id]: mergeLogLines(base, splitLogs(ev.task.worker_logs)),
       };
-      return { project: state.project, tasks, logs, deps: state.deps };
+      return {
+        project: state.project,
+        tasks,
+        logs,
+        deps: state.deps,
+        disk: state.disk,
+      };
     }
 
     case "log": {

@@ -42,6 +42,10 @@ pub enum Error {
     #[error("unknown task status in database: {0}")]
     UnknownTaskStatus(String),
 
+    /// A persisted stop reason was not recognized.
+    #[error("unknown stop reason in database: {0}")]
+    UnknownStopReason(String),
+
     /// A referenced task does not exist.
     #[error("task not found: {0}")]
     TaskNotFound(String),

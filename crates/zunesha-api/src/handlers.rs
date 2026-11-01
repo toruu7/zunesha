@@ -15,9 +15,9 @@ use serde_json::json;
 
 use base64::Engine as _;
 use zunesha_core::{
-    append_attachments, approve_task, plan_with_attachments, recover_stuck, remove_task,
-    save_attachments, AttachmentUpload, Database, Error, MergeOutcome, Planner, RunEvent,
-    RunRecord, Task, TaskStatus,
+    append_attachments, approve_task, disk_usage, plan_with_attachments, prune_workspaces,
+    rebase_task, recover_stuck, remove_task, resume_task, save_attachments, AttachmentUpload,
+    Database, Error, MergeOutcome, Planner, ResumeMode, RunEvent, RunRecord, Task, TaskStatus,
 };
 
 use crate::events::{
@@ -138,6 +138,8 @@ pub struct TasksResponse {
     /// Dependency edges (`task_id` ← `depends_on`), immutable after planning.
     pub dependencies: Vec<DependencyEdge>,
     pub counts: Vec<StatusCount>,
+    /// Worktree footprint and free space, for the TUI/dashboard status bar.
+    pub disk: zunesha_core::DiskUsage,
 }
 
 #[derive(Deserialize)]
@@ -204,6 +206,41 @@ pub struct RecoverResponse {
     pub released: Vec<String>,
 }
 
+#[derive(Deserialize)]
+pub struct RetryBody {
+    /// `continue` (default), `feedback`, or `hard_reset`.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Reviewer guidance for `feedback` mode.
+    #[serde(default)]
+    pub feedback: String,
+    /// Convenience alias for `mode = "hard_reset"`.
+    #[serde(default)]
+    pub hard_reset: bool,
+}
+
+#[derive(Serialize)]
+pub struct RetryResponse {
+    pub task: Task,
+    /// True when the worker was claimed; false when the task is queued and a
+    /// later `/api/run` will start it.
+    pub started: bool,
+}
+
+#[derive(Serialize)]
+pub struct RebaseResponse {
+    pub task: Task,
+    pub files: Vec<String>,
+    pub has_markers: bool,
+    pub started: bool,
+}
+
+#[derive(Serialize)]
+pub struct PruneResponse {
+    pub removed: Vec<String>,
+    pub disk: zunesha_core::DiskUsage,
+}
+
 #[derive(Serialize)]
 pub struct CancelResponse {
     pub task_id: String,
@@ -250,13 +287,15 @@ pub async fn health() -> Json<serde_json::Value> {
 /// per-status counts.
 pub async fn list_tasks(State(state): State<AppState>) -> ApiResult<Json<TasksResponse>> {
     let project = project_info(&state.paths);
+    let paths = state.paths.clone();
     let response = tokio::task::spawn_blocking(move || {
-        let db = Database::open(&state.paths.state_db())?;
+        let db = Database::open(&paths.state_db())?;
         Ok::<_, Error>(TasksResponse {
             project,
             tasks: db.list_tasks()?,
             dependencies: dependency_edges(&db)?,
             counts: zero_filled_counts(&db)?,
+            disk: disk_usage(&paths),
         })
     })
     .await??;
@@ -279,10 +318,13 @@ pub async fn get_task(
 pub async fn status(State(state): State<AppState>) -> ApiResult<Json<serde_json::Value>> {
     let db = state.open_db()?;
     let counts = zero_filled_counts(&db)?;
+    let paths = state.paths.clone();
+    let disk = tokio::task::spawn_blocking(move || disk_usage(&paths)).await?;
     Ok(Json(json!({
         "project": project_info(&state.paths),
         "counts": counts,
         "max_concurrency": state.pool.max_concurrency(),
+        "disk": disk,
         "initialized": true,
     })))
 }
@@ -361,6 +403,100 @@ pub async fn run_one(
     state.pool.spawn_task(task_id).await?;
     state.emit_snapshot();
     Ok(Json(RunResponse { started: 1 }))
+}
+
+/// `POST /api/tasks/:id/retry` – resume a parked or reviewed task.
+///
+/// Three human-chosen modes:
+/// * `continue` re-runs in the existing worktree with a continuation prompt.
+/// * `feedback` appends reviewer guidance plus the current worktree state.
+/// * `hard_reset` discards the worktree and starts from a fresh snapshot.
+///
+/// The task moves to `TODO` and is claimed immediately; its worktree is kept
+/// for the first two modes. Failures/quota pauses never return here
+/// automatically — this endpoint is the explicit human decision.
+pub async fn retry(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+    body: Result<Json<RetryBody>, JsonRejection>,
+) -> ApiResult<Json<RetryResponse>> {
+    let body = body.map(|Json(body)| body).unwrap_or(RetryBody {
+        mode: None,
+        feedback: String::new(),
+        hard_reset: false,
+    });
+    let mode = if body.hard_reset {
+        ResumeMode::HardReset
+    } else {
+        match body.mode.as_deref().unwrap_or("continue") {
+            "continue" => ResumeMode::Continue,
+            "feedback" => ResumeMode::Feedback,
+            "hard_reset" | "reset" => ResumeMode::HardReset,
+            other => {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "unknown retry mode `{other}`; expected continue, feedback, or hard_reset"
+                    ),
+                ))
+            }
+        }
+    };
+    if mode == ResumeMode::Feedback && body.feedback.trim().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "feedback retry requires a non-empty message",
+        ));
+    }
+
+    let paths = state.paths.clone();
+    let feedback = body.feedback;
+    let task = tokio::task::spawn_blocking(move || resume_task(&paths, &task_id, mode, &feedback))
+        .await??;
+    let id = task.id.clone();
+    state.pool.spawn_task(id).await?;
+    state.emit_snapshot();
+    Ok(Json(RetryResponse {
+        task,
+        started: true,
+    }))
+}
+
+/// `POST /api/tasks/:id/rebase` – one-click "rebase with agent".
+///
+/// Prepares the existing `REVIEW` worktree against the repository's current
+/// content (3-way merge, markers left in place), moves the task to
+/// `RESOLVING_CONFLICTS`, and starts the resolution worker.
+pub async fn rebase(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+) -> ApiResult<Json<RebaseResponse>> {
+    let paths = state.paths.clone();
+    let id = task_id.clone();
+    let outcome = tokio::task::spawn_blocking(move || rebase_task(&paths, &id)).await??;
+    state.pool.spawn_resolution(task_id).await?;
+    state.emit_snapshot();
+    Ok(Json(RebaseResponse {
+        task: outcome.task,
+        files: outcome.prep.conflicted_files,
+        has_markers: outcome.prep.has_markers,
+        started: true,
+    }))
+}
+
+/// `POST /api/prune` – remove completed/orphaned worktrees and report disk use.
+///
+/// Active, review, and needs-interaction worktrees are protected.
+pub async fn prune(State(state): State<AppState>) -> ApiResult<Json<PruneResponse>> {
+    let paths = state.paths.clone();
+    let (removed, disk) = tokio::task::spawn_blocking(move || {
+        let db = Database::open(&paths.state_db())?;
+        let removed = prune_workspaces(&paths, &db)?;
+        Ok::<_, Error>((removed, disk_usage(&paths)))
+    })
+    .await??;
+    state.emit_snapshot();
+    Ok(Json(PruneResponse { removed, disk }))
 }
 
 /// `POST /api/tasks/:id/cancel` – stop a running agent and release its claim.
@@ -542,7 +678,7 @@ pub async fn reject(
         let task = db.require_task(&task_id)?;
         if !matches!(
             task.status,
-            TaskStatus::Review | TaskStatus::FailedNeedsHuman
+            TaskStatus::Review | TaskStatus::NeedsInteraction | TaskStatus::FailedNeedsHuman
         ) {
             return Err(Error::InvalidTransition {
                 task_id: task_id.clone(),
@@ -565,8 +701,10 @@ pub async fn reject(
             Some(updated)
         };
         db.update_task(&task_id, None, description.as_deref())?;
-        // Fresh human-approved cycle: the 3-failure budget starts over.
+        // Fresh human-approved cycle: the failure budget starts over and the
+        // previous stop badge no longer applies.
         db.set_retry_count(&task_id, 0)?;
+        db.clear_recovery_state(&task_id)?;
         db.set_status(&task_id, TaskStatus::Todo)?;
         db.require_task(&task_id)
     })

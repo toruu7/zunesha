@@ -12,6 +12,7 @@ export const STATUSES = [
   "IN_PROGRESS",
   "EVALUATING",
   "REVIEW",
+  "NEEDS_INTERACTION",
   "RESOLVING_CONFLICTS",
   "DONE",
   "FAILED_NEEDS_HUMAN",
@@ -21,6 +22,23 @@ export type TaskStatus = (typeof STATUSES)[number];
 
 /** Which stream a log line came from (snake_case on the wire). */
 export type StreamKind = "stdout" | "stderr";
+
+/** Why a task stopped or needs attention (snake_case on the wire). */
+export type StopReason =
+  | "rate_limit"
+  | "token_limit"
+  | "agent_error"
+  | "verification_failed"
+  | "merge_conflict"
+  | "hung_process";
+
+/** Worktree footprint and free disk space, as reported by the daemon. */
+export interface DiskUsage {
+  workspace_bytes: number;
+  free_bytes: number | null;
+  workspace_label: string;
+  free_label: string | null;
+}
 
 /** A single task row, exactly as the API serializes it. */
 export interface Task {
@@ -38,6 +56,14 @@ export interface Task {
   diff: string;
   /** Optional Straw Hat crew member assigned to this task. */
   crew_member?: string;
+  /** Machine-readable reason for the last stop, when one was classified. */
+  stop_reason: StopReason | null;
+  /** True when a human must choose resume/feedback/reset before continuing. */
+  requires_attention: boolean;
+  /** Redacted tail of the agent transcript for the stop badge. */
+  last_log_tail: string;
+  /** Interface/contract summary persisted for downstream DAG tasks. */
+  handoff_summary: string;
   created_at: string;
   updated_at: string;
 }
@@ -50,7 +76,7 @@ export interface ProjectInfo {
   root: string;
 }
 
-/** Per-status count. Always emitted for all eight statuses (zero-filled). */
+/** Per-status count. Always emitted for all nine statuses (zero-filled). */
 export interface StatusCount {
   status: TaskStatus;
   count: number;
@@ -89,6 +115,7 @@ export type ApiEvent =
       /** Dependency edges (`task_id` ← `depends_on`); see `dag.ts`. */
       dependencies: DependencyEdge[];
       counts: StatusCount[];
+      disk: DiskUsage;
     }
   | { type: "task_updated"; task: Task }
   | ({ type: "log" } & LogEvent);
@@ -101,12 +128,14 @@ export interface TasksResponse {
   /** Dependency edges (`task_id` ← `depends_on`), immutable after planning. */
   dependencies: DependencyEdge[];
   counts: StatusCount[];
+  disk: DiskUsage;
 }
 
 export interface StatusResponse {
   project: ProjectInfo;
   counts: StatusCount[];
   max_concurrency: number;
+  disk: DiskUsage;
   initialized: boolean;
 }
 
@@ -138,6 +167,25 @@ export interface CancelResponse {
 export interface DeleteResponse {
   task_id: string;
   deleted: boolean;
+}
+
+export type RetryMode = "continue" | "feedback" | "hard_reset";
+
+export interface RetryResponse {
+  task: Task;
+  started: boolean;
+}
+
+export interface RebaseResponse {
+  task: Task;
+  files: string[];
+  has_markers: boolean;
+  started: boolean;
+}
+
+export interface PruneResponse {
+  removed: string[];
+  disk: DiskUsage;
 }
 
 /** A parsed API error (`{ error: string }` + HTTP status). */

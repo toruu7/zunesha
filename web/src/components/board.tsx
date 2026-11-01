@@ -3,7 +3,22 @@
 import Spinner from "@/components/spinner";
 import { ACCENT, isActive } from "@/lib/status";
 import { useZou } from "@/lib/store";
-import { STATUSES, type Task, type TaskStatus } from "@/lib/types";
+import { type Task, type TaskStatus } from "@/lib/types";
+
+// The desktop sheet is a fixed 2×4 grid, so the board keeps eight columns even
+// though the recovery lifecycle has nine statuses. `NEEDS_INTERACTION` shares
+// the REVIEW column (both are human-gated) and carries its own badge on the
+// card so the distinction is never lost.
+const BOARD_STATUSES: TaskStatus[] = [
+  "BACKLOG",
+  "TODO",
+  "IN_PROGRESS",
+  "EVALUATING",
+  "REVIEW",
+  "RESOLVING_CONFLICTS",
+  "DONE",
+  "FAILED_NEEDS_HUMAN",
+];
 
 function crewEmoji(member?: string): string {
   if (!member) return "";
@@ -41,6 +56,11 @@ function TaskCard({ id }: { id: string }) {
                 {crewEmoji(task.crew_member)} {task.crew_member}
               </span>
             )}
+            {task.status === "NEEDS_INTERACTION" && (
+              <span className="shrink-0 border border-ink bg-signal-ink px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.08em] text-contrast">
+                needs interaction
+              </span>
+            )}
             {isActive(task.status) && (
               <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-[0.08em]">
                 <Spinner
@@ -69,8 +89,18 @@ export default function Board() {
   // tablets use two columns. The desktop sheet stays unchanged at `lg`.
   return (
     <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2 sm:grid sm:grid-cols-2 sm:overflow-visible sm:pb-0 lg:grid-cols-4 lg:grid-rows-2 lg:auto-rows-fr lg:flex-1 lg:min-h-0">
-      {STATUSES.map((status) => {
-        const column = tasks.filter((t) => t.status === status);
+      {BOARD_STATUSES.map((status) => {
+        const column =
+          status === "REVIEW"
+            ? tasks.filter(
+                (t) =>
+                  t.status === "REVIEW" || t.status === "NEEDS_INTERACTION",
+              )
+            : tasks.filter((t) => t.status === status);
+        const count =
+          status === "REVIEW"
+            ? counts.REVIEW + counts.NEEDS_INTERACTION
+            : counts[status];
         return (
           <section
             key={status}
@@ -83,14 +113,14 @@ export default function Board() {
               <h2 className="text-[11px] font-black uppercase tracking-[0.08em] text-contrast">
                 {status.replaceAll("_", " ")}
               </h2>
-              {isActive(status) && counts[status] > 0 && (
+              {isActive(status) && count > 0 && (
                 <Spinner
                   className="size-2.5 text-contrast"
-                  label={`${counts[status]} task${counts[status] === 1 ? "" : "s"} running`}
+                  label={`${count} task${count === 1 ? "" : "s"} running`}
                 />
               )}
               <span className="ml-auto border-2 border-ink bg-emphasis px-1.5 py-0.5 text-[10px] font-black text-ink">
-                {counts[status]}
+                {count}
               </span>
             </header>
             <div className="flex flex-col gap-2 p-2 overflow-y-auto flex-1">
@@ -117,6 +147,7 @@ function countsFrom(tasks: Task[]): Record<TaskStatus, number> {
     IN_PROGRESS: 0,
     EVALUATING: 0,
     REVIEW: 0,
+    NEEDS_INTERACTION: 0,
     RESOLVING_CONFLICTS: 0,
     DONE: 0,
     FAILED_NEEDS_HUMAN: 0,

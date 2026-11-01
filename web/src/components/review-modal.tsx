@@ -92,6 +92,8 @@ export default function ReviewModal({ task }: { task: Task }) {
   const cancel = useZou((s) => s.cancel);
   const deleteTask = useZou((s) => s.deleteTask);
   const recover = useZou((s) => s.recover);
+  const retry = useZou((s) => s.retry);
+  const rebase = useZou((s) => s.rebase);
   const busy = useZou((s) => s.busy);
   const error = useZou((s) => s.error);
   const clearError = useZou((s) => s.clearError);
@@ -130,9 +132,31 @@ export default function ReviewModal({ task }: { task: Task }) {
 
   const isReview = task.status === "REVIEW";
   const isTodo = task.status === "TODO";
-  // Parked after 3 failed validations; the human frees it back to the queue.
-  const isFailed = task.status === "FAILED_NEEDS_HUMAN";
+  // A recovery stop (quota, timeout, verification exhaustion, agent error) or
+  // a legacy parked record. Both keep the worktree and require a human choice.
+  const isParked =
+    task.status === "NEEDS_INTERACTION" ||
+    task.status === "FAILED_NEEDS_HUMAN";
+  const canResume = isReview || isParked;
   const close = () => select(null);
+  const retryWithFeedback = async () => {
+    if (!feedback.trim()) return;
+    await retry(task.id, "feedback", feedback);
+    if (!useZou.getState().error) {
+      setFeedback("");
+      clear();
+    }
+  };
+  const hardReset = async () => {
+    if (
+      !window.confirm(
+        "Discard this task's worktree and all partial work, then start from a fresh snapshot?",
+      )
+    ) {
+      return;
+    }
+    await retry(task.id, "hard_reset");
+  };
 
   return (
     // Backdrop
@@ -212,6 +236,25 @@ export default function ReviewModal({ task }: { task: Task }) {
             </section>
           )}
 
+          {(isParked || task.requires_attention) && (
+            <section className="border-4 border-ink bg-signal px-3 py-2.5 text-[13px] font-medium leading-relaxed text-ink shadow-brutal-sm">
+              <strong className="font-black">
+                {task.stop_reason
+                  ? `Stopped: ${task.stop_reason.replaceAll("_", " ")}.`
+                  : "Needs attention."}
+              </strong>{" "}
+              The worktree and all partial work are preserved. Choose{" "}
+              <strong>Continue</strong> to keep going, <strong>Retry with feedback</strong>{" "}
+              to add reviewer guidance, or <strong>Reset &amp; restart</strong> to
+              discard the worktree.
+              {task.last_log_tail.trim() && (
+                <pre className="mt-2 max-h-32 overflow-auto border-2 border-ink bg-contrast p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
+                  {task.last_log_tail}
+                </pre>
+              )}
+            </section>
+          )}
+
           {task.description.trim() && (
             <section>
               <h3 className={`${LABEL} mb-1.5`}>Description</h3>
@@ -250,12 +293,12 @@ export default function ReviewModal({ task }: { task: Task }) {
 
           {/* Feedback + actions for REVIEW and parked (FAILED_NEEDS_HUMAN)
               tasks — both feed the next attempt via the reject endpoint */}
-          {(isReview || isFailed) && (
+          {canResume && (
             <section className="space-y-2">
               <label htmlFor="feedback" className={LABEL}>
-                {isFailed
-                  ? "What should happen next? (optional — feeds the next attempt)"
-                  : "Reviewer feedback (optional — feeds the next attempt)"}
+                {isParked
+                  ? "What should happen next? (used by Retry with feedback)"
+                  : "Reviewer feedback (used by Reject or Retry with feedback)"}
               </label>
               <textarea
                 id="feedback"
@@ -263,8 +306,8 @@ export default function ReviewModal({ task }: { task: Task }) {
                 onChange={(e) => setFeedback(e.target.value)}
                 rows={3}
                 placeholder={
-                  isFailed
-                    ? "Validation failed 3 times. Why, and what should the agent do differently?"
+                  isParked
+                    ? "The run stopped before review. What should the agent do differently?"
                     : "Why is this rejected? What should the agent do differently?"
                 }
                 className="w-full border-[3px] border-ink bg-contrast px-3 py-2 text-sm font-medium text-ink shadow-brutal-sm placeholder:text-ink/40 resize-y"
@@ -325,6 +368,38 @@ export default function ReviewModal({ task }: { task: Task }) {
               >
                 Reject
               </button>
+              <button
+                onClick={() => void retry(task.id, "continue")}
+                disabled={busy}
+                title="Keep the worktree and run the agent again from its current state."
+                className={`${ACTION} bg-field`}
+              >
+                Continue
+              </button>
+              <button
+                onClick={() => void retryWithFeedback()}
+                disabled={busy || !feedback.trim()}
+                title="Resume in the existing worktree with the feedback above."
+                className={`${ACTION} bg-contrast`}
+              >
+                Retry with feedback
+              </button>
+              <button
+                onClick={() => void hardReset()}
+                disabled={busy}
+                title="Discard the worktree and start from a fresh snapshot."
+                className={`${ACTION} bg-contrast`}
+              >
+                Reset &amp; restart
+              </button>
+              <button
+                onClick={() => void rebase(task.id)}
+                disabled={busy}
+                title="Rebase the reviewed diff onto the current repository with an agent."
+                className={`${ACTION} bg-contrast`}
+              >
+                Rebase with agent
+              </button>
             </>
           ) : isTodo ? (
             <button
@@ -334,21 +409,33 @@ export default function ReviewModal({ task }: { task: Task }) {
             >
               Run agent
             </button>
-          ) : isFailed ? (
-            <button
-              onClick={async () => {
-                await reject(task.id, feedback, payload());
-                if (!useZou.getState().error) {
-                  setFeedback("");
-                  clear();
-                }
-              }}
-              disabled={busy}
-              title="Send the parked task back to the queue with a fresh retry budget (workspace kept)."
-              className={`${ACTION} bg-field`}
-            >
-              Send back to queue
-            </button>
+          ) : isParked ? (
+            <>
+              <button
+                onClick={() => void retry(task.id, "continue")}
+                disabled={busy}
+                title="Keep the worktree and continue from the preserved partial work."
+                className={`${ACTION} bg-field`}
+              >
+                Continue
+              </button>
+              <button
+                onClick={() => void retryWithFeedback()}
+                disabled={busy || !feedback.trim()}
+                title="Resume in the existing worktree with the feedback above."
+                className={`${ACTION} bg-contrast`}
+              >
+                Retry with feedback
+              </button>
+              <button
+                onClick={() => void hardReset()}
+                disabled={busy}
+                title="Delete the worktree and all partial work, then start from scratch."
+                className={`${ACTION} bg-signal`}
+              >
+                Reset &amp; restart
+              </button>
+            </>
           ) : isWorkerOwned ? (
             <>
               <button
