@@ -148,12 +148,36 @@ Environment variables provide per-shell overrides:
 - `ZOU_CREW_<MEMBER>_MODEL` (e.g. `ZOU_CREW_ZORO_MODEL=anthropic/claude-3.7-sonnet`)
 - `ZOU_CREW_<MEMBER>_PROVIDER` (e.g. `ZOU_CREW_NAMI_PROVIDER=antigravity`)
 
-### Interactive Pixel Office Playground
+### Interactive Pixel Office Playground (Thousand Sunny Deck)
 
-The web UI includes an interactive pixel-art control room served at `/playground`:
-- **Procedural Pixel-Art Sprites**: Distinct sprites for Luffy (straw hat, red vest, scar), Zoro (green hair, earrings, haramaki), Nami (orange hair, Log Pose), Usopp (goggles, dungarees, long nose), and Sanji (blonde hair, lit cigarette, black suit).
-- **Character Desk Props**: Luffy's roast bone meat 🍖 and Jolly Roger terminal, Zoro's 3-katana rack and sake gourd 🍶, Nami's weather radar and mikan tangerines 🍊, Usopp's slingshot and inventor toolbox, and Sanji's coffee cup ☕ and chef pan.
-- **Standby Roster**: When the task queue is empty, the office renders the 5 Straw Hats on standby ready for the next plan.
+The web UI includes an interactive pixel-art control room served at `/playground/`, themed entirely as the **Thousand Sunny** pirate ship deck:
+
+![Thousand Sunny Straw Hat HQ Playground](images/thousand-sunny-playground.png)
+
+- **Thousand Sunny Ship Deck Props**:
+  - **Main Mast & Rigging** (`drawSunnyMast`): Central ship mast with yardarm and rigging ropes.
+  - **Straw Hat Jolly Roger** (`drawJollyRogerFlag`): Pirate flag waving in the sea breeze with skull, crossbones, and straw hat.
+  - **Ship Helm** (`drawHelm`): Thousand Sunny wooden steering wheel with gold hub and turned handles.
+  - **Naval Broadside Cannons** (`drawShipCannon`): Wheeled cannons aimed at the sea.
+  - **Rum & Cola Barrels** (`drawRumBarrels`): Stacked oak barrels marked `COLA` and `SAKE`.
+  - **Belle-mère's Mikan Trees** (`drawMikanTrees`): Planter boxes with leafy citrus trees and ripe orange fruit.
+  - **Iron Anchor & Manila Rope** (`drawAnchorAndRope`): Forged iron anchor with coiled rope.
+  - **Treasure Chest** (`drawTreasureChest`): Brass-trimmed mahogany chest overflowing with sparkling gold and gems.
+  - **Sky & Sea**: Animated rolling ocean waves with white foam crests, blue sky with drifting clouds, and golden teak deck planks.
+
+- **Procedural Pixel-Art Sprites & Stations**:
+  - 👒 **Luffy**: Stationed at the bridge helm with his straw hat, red vest, blue shorts, and left-eye scar.
+  - ⚔️ **Zoro**: Stationed at port deck with triple gold earrings, moss-green hair, green haramaki, and katanas.
+  - 🗺️ **Nami**: Stationed at starboard deck beside the mikan trees with orange hair and wrist Log Pose.
+  - 🎯 **Usopp**: Stationed at port workshop bench with forehead sniper goggles and yellow bandana.
+  - 🍳 **Sanji**: Stationed at starboard galley bar with dark double-breasted suit, blonde hair, and lit cigarette with animated smoke curls.
+
+- **Permanent Crew State & Interactivity**:
+  - The 5 Straw Hats remain permanently aboard the Thousand Sunny regardless of queue state.
+  - Active tasks map to crew members, displaying live visual states (`working`, `review`, `ready`, `backlog`, `done`, `needs human`) and speech bubbles.
+  - Clicking any pirate desk opens their active task transcript/diff, or their Straw Hat dossier if on standby.
+
+![Thousand Sunny Ship Deck Scene](images/thousand-sunny-deck.png)
 
 ## The agent (`ZOU_AGENT_CMD`)
 

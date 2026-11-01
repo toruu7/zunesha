@@ -338,14 +338,23 @@ Settings persist in `${XDG_CONFIG_HOME:-~/.config}/zou/config.json` under `crew.
 Per-shell environment overrides are supported via `ZOU_CREW_<MEMBER>_MODEL` and
 `ZOU_CREW_<MEMBER>_PROVIDER`.
 
-##### Interactive Pixel Office Playground
+##### Interactive Pixel Office Playground (Thousand Sunny Deck)
 
-Open `http://127.0.0.1:57804/playground` for the interactive pixel control room:
-procedurally rendered pixel-art characters (Luffy's straw hat and red vest, Zoro's
-katanas and earrings, Nami's Log Pose, Usopp's goggles, Sanji's cigarette) sitting
-at desks with custom props (roast bone meat 🍖, katana rack & sake gourd 🍶,
-weather cyclone radar 🍊, gadget blueprints, and porcelain espresso ☕). The
-office shows all 5 Straw Hats on standby ready for work when the board is idle.
+Open `http://127.0.0.1:57804/playground/` for the interactive pixel control room set aboard the **Thousand Sunny** pirate ship:
+
+![Thousand Sunny Straw Hat HQ Playground](https://raw.githubusercontent.com/toruu7/zunesha/master/docs/src/images/thousand-sunny-playground.png)
+
+* **Thousand Sunny Environment**: Open sea horizon with rolling ocean waves, blue sky with drifting clouds, golden teak ship deck planks with black pitch caulking seams, oak railing balustrades, and a crimson `THOUSAND SUNNY` banner.
+* **Ship Deck Props**: Central main mast with yardarm and waving Straw Hat Jolly Roger flag (`drawJollyRogerFlag`), Thousand Sunny helm steering wheel (`drawHelm`), wheeled naval broadside cannons (`drawShipCannon`), stacked rum and cola barrels (`drawRumBarrels`), Belle-mère's mikan citrus grove planter boxes (`drawMikanTrees`), iron anchor with coiled Manila rope (`drawAnchorAndRope`), and an overflowing treasure chest of sparkling gold coins (`drawTreasureChest`).
+* **Procedural Pixel-Art Sprites & Fixed Stations**:
+  * 👒 **Luffy**: Stationed at the bridge helm with his straw hat, red vest, blue shorts, and left-eye scar.
+  * ⚔️ **Zoro**: Stationed at port deck with triple gold earrings, moss-green hair, green haramaki, and katanas.
+  * 🗺️ **Nami**: Stationed at starboard deck beside the mikan trees with orange hair and wrist Log Pose.
+  * 🎯 **Usopp**: Stationed at port workshop bench with forehead sniper goggles and yellow bandana.
+  * 🍳 **Sanji**: Stationed at starboard galley bar with dark double-breasted suit, blonde hair parted over one eye, and lit cigarette with animated smoke curls.
+* **Live Task Routing & Standby Dossiers**: All 5 Straw Hats remain aboard the Thousand Sunny at all times. Tasks are dispatched to the appropriate pirate, rendering live state animations and speech bubbles. Clicking any pirate's desk selects their active task (logs, output, and diff review) or opens their character dossier when on standby.
+
+![Thousand Sunny Ship Deck Scene](https://raw.githubusercontent.com/toruu7/zunesha/master/docs/src/images/thousand-sunny-deck.png)
 
 Use `ZOU_AGENT_CMD` when you want a different agent CLI or extra flags.
 `{prompt}` and `{workspace}` are substituted after parsing (if the template

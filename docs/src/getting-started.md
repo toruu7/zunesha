@@ -219,18 +219,21 @@ narrow terminals `layout = "auto"` stacks the task list above the detail pane.
 See [Terminal UI](tui.md) for the complete command, key, and configuration
 reference.
 
-## The pixel office
+## The Thousand Sunny pixel office
 
-`http://127.0.0.1:57804/playground/` is an interactive pixel office: each task
-is an agent working, waiting for review, idle, asleep in the backlog, done, or
-blocked on a human. Click a desk or task to open the inspector, where you can
-read the styled Markdown **Output**, the live **Logs**, the **Diff**, and the
-task metadata. The same inspector can plan a feature, run ready tasks, run one
-task, approve, reject with feedback, cancel a running agent, recover a stuck
-task, and refresh. Attachments work there too (picker, drag-and-drop, paste).
-The page uses the full task snapshot and `/ws` stream; the normal dashboard
-build also builds it. On phones the rail, office, and inspector stack, and the
-reject modal becomes a bottom sheet.
+`http://127.0.0.1:57804/playground/` is an interactive pixel office set on the
+deck of the **Thousand Sunny**:
+
+![Thousand Sunny Straw Hat HQ Playground](images/thousand-sunny-playground.png)
+
+The 5 Straw Hat Pirates (Luffy, Zoro, Nami, Usopp, and Sanji) are stationed
+permanently across the ship deck (helm, port cannons, cartography & mikans,
+workshop, and galley). Active tasks are routed to the corresponding pirate,
+rendering live working animations, speech bubbles, and status indicators. Click
+any pirate's desk to open the inspector, where you can read their character
+dossier, styled Markdown **Output**, live **Logs**, the **Diff**, and task
+metadata. The same inspector can plan a feature with Nami, run ready tasks,
+approve, reject with feedback, cancel a running agent, and recover stuck tasks.
 
 ## What lands on disk
 
