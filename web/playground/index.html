@@ -7,14 +7,14 @@
     <meta name="description" content="Interactive pixel office for the Zunesha orchestrator: watch agents work, inspect logs, and plan, run, approve or reject tasks." />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <title>Zou Office — control room</title>
+    <title>Thousand Sunny — Straw Hat Crew Pixel Office</title>
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="/playground/" aria-label="Zou Office home">
-        <span class="brand-mark">▶</span>
-        <span class="brand-name">ZOU</span>
-        <span class="brand-sub">OFFICE</span>
+      <a class="brand" href="/playground/" aria-label="Thousand Sunny Straw Hat Office">
+        <span class="brand-mark">🏴‍☠️</span>
+        <span class="brand-name">THOUSAND SUNNY</span>
+        <span class="brand-sub">STRAW HAT HQ</span>
       </a>
       <div class="project">
         <span id="project-name">connecting…</span>
@@ -22,7 +22,7 @@
       </div>
       <div id="counts" class="counts" aria-label="task counts"></div>
       <div id="connection" class="connection connecting" role="status">connecting…</div>
-      <a class="dashboard-link" href="/">Dashboard ↗</a>
+      <a class="dashboard-link" href="/">← Kanban & DAG Board</a>
     </header>
 
     <div id="error" class="error-banner" hidden>
@@ -34,15 +34,15 @@
       <aside class="rail" aria-label="Tasks and planner">
         <div class="rail-head">
           <div>
-            <h1>Control room</h1>
+            <h1>Straw Hat Crew HQ</h1>
             <p id="task-summary">0 tasks</p>
           </div>
           <span class="rail-live">LIVE</span>
         </div>
 
         <div class="plan-box">
-          <label for="prompt">Plan a feature</label>
-          <textarea id="prompt" rows="3" placeholder="Add CSV export to the collections table…"></textarea>
+          <label for="prompt">Plan a mission with Nami</label>
+          <textarea id="prompt" rows="3" placeholder="Tell Nami & the crew what feature to build…"></textarea>
           <div class="attach-row">
             <button id="attach-btn" class="btn ghost attach-btn" type="button">＋ Attach</button>
             <input id="attach-input" type="file" multiple hidden />
@@ -67,10 +67,10 @@
           <canvas id="office" width="1080" height="840" role="img" aria-label="Pixel office with one desk per task"></canvas>
           <div id="empty" class="empty" hidden>
             <div class="empty-card">
-              <span class="empty-mark">⌁</span>
-              <h2>The office is empty</h2>
-              <p>Plan a feature in the rail to create the first agent and task.</p>
-              <button id="empty-plan" class="btn primary" type="button">Plan something</button>
+              <span class="empty-mark">🏴‍☠️</span>
+              <h2>The crew is at port</h2>
+              <p>Plan a feature in the rail to send the Straw Hat Pirates on their next mission.</p>
+              <button id="empty-plan" class="btn primary" type="button">Set Sail</button>
             </div>
           </div>
         </div>
@@ -79,7 +79,7 @@
             <span id="live-title">Live transcript</span>
             <span id="live-meta"></span>
           </div>
-          <pre id="live-logs">Select a task to see its live transcript.</pre>
+          <pre id="live-logs">Select a task or pirate to inspect output & transcripts.</pre>
         </div>
         <div class="office-foot">
           <div id="office-status" class="office-status"></div>
@@ -92,7 +92,7 @@
             <span><i class="dot error"></i>needs human</span>
           </div>
         </div>
-        <p class="hint">Click a desk or task to inspect. <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>p</kbd> plan, <kbd>r</kbd> run, <kbd>a</kbd> approve, <kbd>x</kbd> reject, <kbd>C</kbd> cancel.</p>
+        <p class="hint">Click a pirate desk or task to inspect dossier & logs. <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>p</kbd> plan, <kbd>r</kbd> run, <kbd>a</kbd> approve, <kbd>x</kbd> reject, <kbd>C</kbd> cancel.</p>
       </section>
 
       <aside id="inspector" class="inspector" aria-label="Task inspector"></aside>

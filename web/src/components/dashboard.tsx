@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 
 import Board from "@/components/board";
@@ -208,6 +208,87 @@ function LiveLogsDock({ task, onHide }: { task: Task; onHide: () => void }) {
   );
 }
 
+const CREW_MEMBERS = [
+  { id: "luffy", name: "Luffy", role: "Captain", title: "Strategic Lead", emoji: "👒" },
+  { id: "zoro", name: "Zoro", role: "Combatant", title: "Core Logic", emoji: "⚔️" },
+  { id: "nami", name: "Nami", role: "Navigator", title: "Planner", emoji: "🗺️" },
+  { id: "usopp", name: "Usopp", role: "Sniper", title: "Bugfixes", emoji: "🎯" },
+  { id: "sanji", name: "Sanji", role: "Cook", title: "UI & Docs", emoji: "🍳" },
+];
+
+function CrewRoster() {
+  const tasks = useZou((s) => s.tasks);
+
+  const memberTasks = useMemo(() => {
+    const map = new Map<string, Task[]>();
+    for (const m of CREW_MEMBERS) map.set(m.id, []);
+    for (const t of tasks) {
+      if (t.crew_member) {
+        const key = t.crew_member.toLowerCase();
+        const list = map.get(key);
+        if (list) list.push(t);
+        else map.set(key, [t]);
+      }
+    }
+    return map;
+  }, [tasks]);
+
+  return (
+    <div
+      role="region"
+      aria-label="Straw Hat Pirates Crew Roster"
+      className="flex flex-wrap items-center gap-1.5 border-2 border-ink bg-contrast px-2 py-1 shadow-brutal-sm"
+    >
+      <div className="flex items-center gap-1 border border-ink bg-ink px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.1em] text-emphasis">
+        <span>🏴‍☠️</span>
+        <span>crew</span>
+      </div>
+      {CREW_MEMBERS.map((member) => {
+        const assigned = memberTasks.get(member.id) ?? [];
+        const running = assigned.filter((t) => isActive(t.status));
+        const hasWork = assigned.length > 0;
+        const isLive = running.length > 0;
+
+        return (
+          <div
+            key={member.id}
+            title={`${member.name} (${member.role} · ${member.title})${
+              assigned.length > 0
+                ? ` — ${assigned.length} assigned task(s)`
+                : " — ready on standby"
+            }`}
+            className={`flex items-center gap-1.5 border-2 border-ink px-2 py-0.5 text-[10px] font-bold transition-all ${
+              isLive
+                ? "bg-emphasis text-ink animate-pulse"
+                : hasWork
+                  ? "bg-signal/25 text-ink"
+                  : "bg-ground text-ink/75"
+            }`}
+          >
+            <span className="text-xs leading-none">{member.emoji}</span>
+            <span className="font-black uppercase tracking-wider">{member.name}</span>
+            <span className="hidden text-[8px] text-ink/60 uppercase tracking-tight sm:inline">
+              {member.role}
+            </span>
+            {isLive ? (
+              <span className="flex items-center gap-1 border border-ink bg-ink px-1 text-[8px] font-black uppercase tracking-wider text-emphasis">
+                <Spinner className="size-2 text-emphasis" label="active" />
+                active
+              </span>
+            ) : hasWork ? (
+              <span className="border border-ink bg-contrast px-1 text-[8px] font-black uppercase">
+                {assigned.length}
+              </span>
+            ) : (
+              <span className="text-[8px] font-bold text-ink/40 uppercase">idle</span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const connect = useZou((s) => s.connect);
   const disconnect = useZou((s) => s.disconnect);
@@ -262,6 +343,10 @@ export default function Dashboard() {
             <span className="hidden -rotate-2 border-2 border-ink bg-ink px-2 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-emphasis sm:inline">
               zunesha
             </span>
+            <div className="hidden items-center gap-1.5 border-2 border-ink bg-emphasis px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-ink shadow-brutal-sm md:flex">
+              <span className="text-sm leading-none">👒</span>
+              <span>straw hat crew</span>
+            </div>
             {/* Decorative directional tile: the sheet reads top to bottom. */}
             <span
               aria-hidden="true"
@@ -279,10 +364,12 @@ export default function Dashboard() {
             <div className="grid w-full grid-cols-4 items-center gap-2 sm:ml-auto sm:flex sm:w-auto sm:justify-start sm:gap-3">
               <a
                 href="/playground/"
-                title="Open the interactive pixel office"
-                className="flex h-10 w-full items-center justify-center gap-2 border-4 border-ink bg-contrast px-2 text-[10px] font-black uppercase tracking-[0.1em] shadow-brutal-sm hover:bg-emphasis focus-visible:outline-4 sm:w-auto sm:px-2.5"
+                title="Step aboard Thousand Sunny — Straw Hat Pixel Office"
+                className="flex h-10 w-full items-center justify-center gap-1.5 border-4 border-ink bg-contrast px-2.5 text-[11px] font-black uppercase tracking-[0.08em] shadow-brutal-sm hover:bg-emphasis hover:-translate-y-0.5 active:translate-y-0 active:shadow-brutal-sm focus-visible:outline-4 sm:w-auto"
               >
-                <span>office</span>
+                <span className="text-sm leading-none">🏴‍☠️</span>
+                <span className="hidden sm:inline">sunny office</span>
+                <span className="sm:hidden">sunny</span>
               </a>
               <button
                 onClick={toggleLogs}
@@ -314,10 +401,13 @@ export default function Dashboard() {
         </div>
         {/* Blush band: explanation + actions. */}
         <div className="border-t-4 border-ink bg-field">
-          <div className="max-w-[1600px] mx-auto flex flex-col gap-2 px-3 py-3 sm:px-4">
+          <div className="max-w-[1600px] mx-auto flex flex-col gap-2.5 px-3 py-3 sm:px-4">
             <div className="flex flex-wrap items-center gap-2">
               <ProjectBadge />
               <RunningNow />
+              <div className="w-full sm:w-auto sm:ml-auto">
+                <CrewRoster />
+              </div>
             </div>
             <PlanBar />
             <ErrorBanner />

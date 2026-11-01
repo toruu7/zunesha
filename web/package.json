@@ -1,12 +1,12 @@
 {
   "name": "web",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "dev:playground": "vite --config playground/vite.config.mts",
     "build": "next build && npm run build:playground",
-    "build:playground": "vite build --config playground/vite.config.mts",
+    "build:playground": "vite build --config playground/vite.config.mts && node -e \"const fs=require('fs'); fs.mkdirSync('public/playground', {recursive: true}); fs.cpSync('out/playground', 'public/playground', {recursive: true});\"",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",

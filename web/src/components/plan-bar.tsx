@@ -65,7 +65,7 @@ export default function PlanBar() {
               void add(event.clipboardData.files);
             }
           }}
-          placeholder="Describe a feature, or drop a screenshot/spec…"
+          placeholder="Set sail! Tell Nami & the Straw Hat crew what to build, or drop a spec…"
           disabled={busy}
           className="h-11 min-w-0 flex-1 border-4 border-ink bg-contrast px-3 text-base font-bold text-ink shadow-brutal-sm placeholder:text-ink/40 disabled:opacity-50"
         />

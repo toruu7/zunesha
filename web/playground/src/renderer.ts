@@ -227,15 +227,16 @@ export class Renderer {
     // Clock
     drawClock(ctx, 172, 3);
 
-    // HQ sign
-    ctx.fillStyle = '#5A5A80';
-    ctx.fillRect(56 * S, 4 * S, 70 * S, 10 * S);
-    ctx.fillStyle = '#3A3A60';
-    ctx.fillRect(56 * S, 4 * S, 70 * S, 1 * S);
-    ctx.fillStyle = '#9999CC';
-    ctx.font = `bold ${4 * S}px monospace`;
+    // HQ sign — Thousand Sunny Straw Hat Deck
+    ctx.fillStyle = '#7A2E1E'; // Pirate red-wood banner
+    ctx.fillRect(50 * S, 4 * S, 82 * S, 10 * S);
+    ctx.fillStyle = '#B8860B'; // Gold trim
+    ctx.fillRect(50 * S, 4 * S, 82 * S, 1 * S);
+    ctx.fillRect(50 * S, 13 * S, 82 * S, 1 * S);
+    ctx.fillStyle = '#FEE880'; // Gold lettering
+    ctx.font = `bold ${3.8 * S}px monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText(`${this.projectName.slice(0, 12)} HQ`, 91 * S, 11 * S);
+    ctx.fillText(`THOUSAND SUNNY`, 91 * S, 11 * S);
     ctx.textAlign = 'start';
 
     // Window
@@ -321,7 +322,7 @@ export class Renderer {
     ctx.fillStyle = '#8888AA';
     ctx.font = `${2.5 * S}px monospace`;
     ctx.fillText(
-      `${agents.length} agents · ${working} working · ${waiting} waiting · ${sleeping} sleeping`,
+      `Straw Hat Pirates · ${agents.length} crew · ${working} working · ${waiting} waiting · ${sleeping} sleeping`,
       28 * S,
       barY + 8 * S,
     );

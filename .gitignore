@@ -5,6 +5,7 @@
 /web/node_modules/
 /web/.next/
 /web/out/
+/web/public/playground/
 *.tsbuildinfo
 
 # Zunesha's own control directory (if this repo is orch/zou-initialized)

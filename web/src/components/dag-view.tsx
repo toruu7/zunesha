@@ -21,6 +21,17 @@ import { buildGraph } from "@/lib/dag";
 import { ACCENT, isActive } from "@/lib/status";
 import { useZou } from "@/lib/store";
 
+function crewEmoji(member?: string): string {
+  if (!member) return "";
+  const lower = member.toLowerCase();
+  if (lower.includes("luffy")) return "👒";
+  if (lower.includes("zoro")) return "⚔️";
+  if (lower.includes("nami")) return "🗺️";
+  if (lower.includes("usopp")) return "🎯";
+  if (lower.includes("sanji")) return "🍳";
+  return "🏴‍☠️";
+}
+
 /**
  * One task on the canvas: the same card the kanban board shows, minus the
  * column it happens to sit in.
@@ -44,10 +55,18 @@ function TaskNode({ id }: NodeProps) {
       <div className="flex">
         <div className={`w-2 shrink-0 border-r-[3px] border-ink ${ACCENT[task.status]}`} />
         <div className="p-2 min-w-0">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <code className="shrink-0 border border-ink bg-ground px-1 font-mono text-[10px] font-bold uppercase">
               {task.id}
             </code>
+            {task.crew_member && (
+              <span
+                title={`Assigned Straw Hat: ${task.crew_member}`}
+                className="shrink-0 border border-ink bg-emphasis px-1 text-[9px] font-black uppercase tracking-wider text-ink"
+              >
+                {crewEmoji(task.crew_member)} {task.crew_member}
+              </span>
+            )}
             {isActive(task.status) && (
               <Spinner
                 className="size-3 text-signal-ink"

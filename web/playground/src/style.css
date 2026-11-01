@@ -451,6 +451,39 @@ code, pre, .mono, kbd {
   font-weight: 700;
   text-transform: capitalize;
 }
+.character-dossier {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.character-quote {
+  margin: 0;
+  padding: 12px 14px;
+  border-left: 3px solid #FCD34D;
+  background: rgba(251, 191, 36, 0.08);
+  color: #F8FAFC;
+  font-style: italic;
+  font-size: 13px;
+  line-height: 1.5;
+  border-radius: 0 6px 6px 0;
+}
+.dossier-section h3 {
+  margin: 0 0 6px 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #FCD34D;
+}
+.dossier-section p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.dossier-actions {
+  margin-top: 8px;
+}
 .task-id { font-family: "JetBrains Mono", ui-monospace, monospace; }
 
 .task-state {

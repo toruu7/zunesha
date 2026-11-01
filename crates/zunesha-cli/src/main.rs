@@ -943,6 +943,7 @@ fn cmd_start(
         println!("zou daemon listening on http://{}", handle.address());
         println!("  REST  → http://{}/api/tasks", handle.address());
         println!("  WS    → ws://{}/ws", handle.address());
+        println!("  Crew  → http://{}/playground/ (Straw Hat Pixel Office)", handle.address());
         // Phase 11: a restarted daemon picks its crashed run back up.
         let resumed = handle.resumed();
         if !resumed.is_empty() {

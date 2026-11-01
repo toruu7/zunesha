@@ -210,6 +210,64 @@ function mergedLogs(task: Task): string[] {
   return persisted;
 }
 
+interface CrewProfile {
+  name: string;
+  role: string;
+  specialty: string;
+  emoji: string;
+  bounty: string;
+  quote: string;
+  description: string;
+}
+
+const CREW_PROFILES: Record<string, CrewProfile> = {
+  luffy: {
+    name: 'Monkey D. Luffy',
+    role: 'Captain & Strategic Lead',
+    specialty: 'High-level orchestration, feature architecture, bold initiatives',
+    emoji: '👒',
+    bounty: '3,000,000,000 ฿',
+    quote: "I'm gonna be King of the Pirates! Let's build something epic!",
+    description: 'Leads the Straw Hat Pirates. Breaks down complex epics and guides overarching architectural decisions with unshakable optimism.',
+  },
+  zoro: {
+    name: 'Roronoa Zoro',
+    role: 'Combatant & Core Logic',
+    specialty: 'Deep backend refactoring, data structures, performance slicing',
+    emoji: '⚔️',
+    bounty: '1,111,000,000 ฿',
+    quote: 'Nothing happened. The bugs have been cut down.',
+    description: 'Master of Three-Sword Style. Slices through stubborn bugs, concurrency deadlocks, and messy legacy code with zero wasted motion.',
+  },
+  nami: {
+    name: 'Nami',
+    role: 'Navigator & Chief Planner',
+    specialty: 'DAG task routing, dependency mapping, scope estimation',
+    emoji: '🗺️',
+    bounty: '366,000,000 ฿',
+    quote: 'The weather in this codebase looks stormy, but I have mapped our route!',
+    description: 'Expert navigator and cartographer. Dissects feature requests into safe, acyclic task graphs and directs the crew to port.',
+  },
+  usopp: {
+    name: 'Usopp',
+    role: 'Sniper & Test Engineer',
+    specialty: 'Precision bugfixes, edge case testing, tool crafting',
+    emoji: '🎯',
+    bounty: '500,000,000 ฿',
+    quote: 'I have 8,000 unit tests behind me! Sniped that regression from 2 miles away.',
+    description: 'Sharp-eyed sniper and inventor. Crafts tests, catches regression edge cases, and delivers surgical fixes with pinpoint precision.',
+  },
+  sanji: {
+    name: 'Sanji',
+    role: 'Cook & UI/UX Specialist',
+    specialty: 'Frontend polish, responsive styling, documentation & delightful UX',
+    emoji: '🍳',
+    bounty: '1,032,000,000 ฿',
+    quote: 'Only the finest, well-crafted interfaces and documentation for our users!',
+    description: 'Black Leg master chef. Refuses to let sloppy UI or stale documentation leave the kitchen, serving only five-star presentation.',
+  },
+};
+
 const DEFAULT_CREW: PlaygroundAgent[] = [
   { id: 'luffy', name: 'Luffy', title: 'Captain', status: 'TODO', state: 'idle', crew_member: 'luffy', updated_at: '', retry_count: 0 },
   { id: 'zoro', name: 'Zoro', title: 'Combatant', status: 'TODO', state: 'idle', crew_member: 'zoro', updated_at: '', retry_count: 0 },
@@ -561,10 +619,44 @@ function tabButton(tab: Tab): string {
 function renderInspector(): void {
   const task = selectedTask();
   if (!task) {
+    const rawId = (state.selectedId ?? '').toLowerCase();
+    const profileKey = ['luffy', 'zoro', 'nami', 'usopp', 'sanji'].find((k) => rawId.includes(k));
+    const profile = profileKey ? CREW_PROFILES[profileKey] : null;
+
+    if (profile) {
+      inspectorEl.innerHTML = `<div class="inspector-head">
+        <div class="eyebrow">STRAW HAT PIRATES · BOUNTY ${escapeHtml(profile.bounty)}</div>
+        <h2>${profile.emoji} ${escapeHtml(profile.name)}</h2>
+        <div class="inspector-state">
+          <span class="crew-pill">${profile.emoji} ${escapeHtml(profile.role)}</span>
+          <span class="status-pill status-todo">READY</span>
+        </div>
+      </div>
+      <div class="character-dossier">
+        <blockquote class="character-quote">“${escapeHtml(profile.quote)}”</blockquote>
+        <div class="dossier-section">
+          <h3>Specialty & Role</h3>
+          <p>${escapeHtml(profile.specialty)}</p>
+        </div>
+        <div class="dossier-section">
+          <h3>Description</h3>
+          <p>${escapeHtml(profile.description)}</p>
+        </div>
+        <div class="dossier-actions">
+          <button id="dossier-plan-btn" class="btn primary" type="button">Assign Task to ${escapeHtml(profile.name.split(' ').pop()!)}</button>
+        </div>
+      </div>`;
+      document.getElementById('dossier-plan-btn')?.addEventListener('click', () => {
+        promptEl.value = `[${profile.name.split(' ').pop()}] `;
+        promptEl.focus();
+      });
+      return;
+    }
+
     inspectorEl.innerHTML = `<div class="inspector-empty">
-      <span class="empty-mark">⌁</span>
-      <h2>Select an agent</h2>
-      <p>Click a desk in the office or a task in the rail to inspect its output, logs, diff and controls.</p>
+      <span class="empty-mark">🏴‍☠️</span>
+      <h2>Straw Hat Crew Office</h2>
+      <p>Click any pirate desk in the office or a task in the rail to inspect their dossier, output, logs, diff and controls.</p>
     </div>`;
     return;
   }

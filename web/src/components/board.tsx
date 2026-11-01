@@ -34,7 +34,10 @@ function TaskCard({ id }: { id: string }) {
               {task.id}
             </code>
             {task.crew_member && (
-              <span className="shrink-0 border border-ink bg-emphasis/40 px-1 text-[10px] font-bold">
+              <span
+                title={`Assigned Straw Hat: ${task.crew_member}`}
+                className="shrink-0 border border-ink bg-emphasis px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-ink shadow-brutal-sm"
+              >
                 {crewEmoji(task.crew_member)} {task.crew_member}
               </span>
             )}
