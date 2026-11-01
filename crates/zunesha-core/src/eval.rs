@@ -380,11 +380,14 @@ async fn read_eval_lines<R>(
 
 /// Last `max` chars of `text` (with a truncation marker when cut).
 fn tail_of(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_string();
+    let mut chars = text.char_indices().rev();
+    match chars.nth(max) {
+        None => text.to_string(),
+        Some((idx, ch)) => {
+            let tail_start = idx + ch.len_utf8();
+            format!("[…truncated…]\n{}", &text[tail_start..])
+        }
     }
-    let cut: String = text.chars().skip(text.chars().count() - max).collect();
-    format!("[…truncated…]\n{cut}")
 }
 
 /// Rewrite the description for the next agent attempt (Phase 8).

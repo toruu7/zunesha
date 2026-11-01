@@ -195,6 +195,8 @@ impl Database {
         // each other; foreign keys keep the DAG edges consistent.
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "temp_store", "MEMORY")?;
         // Concurrent writers (daemon + CLI + web API) are the normal case once
         // Phase 4/5 land. Without a busy timeout SQLite fails immediately with
         // SQLITE_BUSY and writes are silently lost; wait instead.

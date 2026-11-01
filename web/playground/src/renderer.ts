@@ -100,11 +100,9 @@ export class Renderer {
     ctx.drawImage(this.bgCache!, 0, 0);
 
     const layouts = this.tracker.getLayouts();
-    const agents  = this.tracker.getAll();
-    const agentMap = new Map(agents.map(a => [a.id, a]));
 
     for (const layout of layouts) {
-      const agent = agentMap.get(layout.id);
+      const agent = this.tracker.getAgent(layout.id);
       if (!agent) continue;
 
       const crewOrId = agent.crew_member ?? layout.id;

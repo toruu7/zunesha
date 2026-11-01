@@ -1580,8 +1580,7 @@ fn append_transcript(transcript: &Mutex<String>, line: &str) {
             while start < text.len() && !text.is_char_boundary(start) {
                 start += 1;
             }
-            let tail = text[start..].to_string();
-            *text = tail;
+            text.drain(..start);
         }
     }
 }
@@ -1605,7 +1604,7 @@ fn upstream_contracts(db: &Database, task_id: &str) -> String {
         out.push_str(task.handoff_summary.trim());
         out.push('\n');
         count += 1;
-        if out.chars().count() > 8_000 {
+        if out.len() > 8_000 {
             break;
         }
     }

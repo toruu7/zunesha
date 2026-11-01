@@ -314,26 +314,13 @@ fn bwrap_usable() -> bool {
 /// best-effort safety net, not a substitute for not putting secrets in the
 /// workspace in the first place.
 pub fn redact_secrets(line: &str) -> String {
-    let mut result = line.to_string();
+    let lower = line.to_ascii_lowercase();
 
-    // Authorization headers and bearer tokens. Handle bearer first so the
-    // header name itself is not mistaken for the credential.
-    let lower = result.to_ascii_lowercase();
-    if let Some(pos) = lower.find("bearer ") {
-        let start = pos + "bearer ".len();
-        let end = result[start..]
-            .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
-            .map(|offset| start + offset)
-            .unwrap_or(result.len());
-        if end > start {
-            result.replace_range(start..end, "[REDACTED]");
-        }
-    } else if lower.contains("authorization:") {
-        result = redact_after_marker(&result, "authorization:", " ");
-    }
-
-    // KEY=value / KEY: value for secret-looking names.
-    for name in [
+    // Fast path: if the line contains no authorization marker, bearer token,
+    // or known secret assignment name, return immediately without further allocations.
+    let has_bearer = lower.contains("bearer ");
+    let has_auth = lower.contains("authorization:");
+    let matching_names: Vec<&str> = [
         "api_key",
         "apikey",
         "access_token",
@@ -344,7 +331,37 @@ pub fn redact_secrets(line: &str) -> String {
         "passwd",
         "private_key",
         "client_secret",
-    ] {
+    ]
+    .into_iter()
+    .filter(|&name| lower.contains(name))
+    .collect();
+
+    if !has_bearer && !has_auth && matching_names.is_empty() {
+        return line.to_string();
+    }
+
+    let mut result = line.to_string();
+
+    // Authorization headers and bearer tokens. Handle bearer first so the
+    // header name itself is not mistaken for the credential.
+    if has_bearer {
+        let cur_lower = result.to_ascii_lowercase();
+        if let Some(pos) = cur_lower.find("bearer ") {
+            let start = pos + "bearer ".len();
+            let end = result[start..]
+                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+                .map(|offset| start + offset)
+                .unwrap_or(result.len());
+            if end > start {
+                result.replace_range(start..end, "[REDACTED]");
+            }
+        }
+    } else if has_auth {
+        result = redact_after_marker(&result, "authorization:", " ");
+    }
+
+    // KEY=value / KEY: value only for the matching names detected above.
+    for name in matching_names {
         result = redact_assignment(&result, name);
     }
 

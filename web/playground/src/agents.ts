@@ -43,6 +43,7 @@ function timestamp(value: string): number {
 export class AgentTracker {
   private agents = new Map<string, AgentState>();
   private order: string[] = [];
+  private cachedLayouts: AgentLayout[] | null = null;
 
   setSnapshot(agents: PlaygroundAgent[]): void {
     const next = new Map<string, AgentState>();
@@ -54,6 +55,7 @@ export class AgentTracker {
     }
     this.agents = next;
     this.order = order;
+    this.cachedLayouts = null;
   }
 
   update(agent: PlaygroundAgent): void {
@@ -61,6 +63,7 @@ export class AgentTracker {
     const next = this.toState(agent, previous);
     if (!this.agents.has(agent.id)) this.order.push(agent.id);
     this.agents.set(agent.id, next);
+    this.cachedLayouts = null;
   }
 
   tick(): void {
@@ -75,13 +78,16 @@ export class AgentTracker {
   }
 
   getLayouts(): AgentLayout[] {
-    return computeLayout(
-      this.getAll().map((agent) => ({
-        id: agent.id,
-        name: agent.title || agent.name,
-        crew_member: agent.crew_member,
-      })),
-    );
+    if (!this.cachedLayouts) {
+      this.cachedLayouts = computeLayout(
+        this.getAll().map((agent) => ({
+          id: agent.id,
+          name: agent.title || agent.name,
+          crew_member: agent.crew_member,
+        })),
+      );
+    }
+    return this.cachedLayouts;
   }
 
   getAgent(id: string): AgentState | undefined {
