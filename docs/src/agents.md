@@ -93,15 +93,27 @@ stages of your development pipeline:
 | 🎯 **Usopp** | Sniper | **Edge-Case & Test Scout**: Anticipating failure modes, boundary condition handling, regression tests, and sniper error elimination before review. |
 | 🍳 **Sanji** | Cook | **Polish & Review Presentation**: UX aesthetics, formatting, ergonomics, delightful outputs, and crafting git diffs that are clean for human review. |
 
-### Delegated planning
+### Delegated planning & intent-based task routing
 
-When decomposing a feature request into a task DAG (whether using the built-in
-planner or an external `ZOU_PLANNER_CMD`), Nami maps out the DAG and assigns
-each task to the most suitable crew member (`task.crew_member`).
+When decomposing a request into a task DAG (whether using the built-in planner
+or an external `ZOU_PLANNER_CMD`), Zunesha routes work dynamically based on the
+**intent** of the task:
 
-When a worker claims that task, the crew member's persona instructions are
-injected directly into the agent's prompt, steering its behavior toward their
-specialty.
+#### 1. Tasks requiring no code changes (Queries, Audits, Research)
+If a prompt is a question, audit, or exploration (e.g. *"how does the DAG scheduler work?"*, *"audit dependency security"*), Zunesha **does not run the implementation or testing agents**.
+- **Stage 1 (Research & Investigation)**: **Nami** explores the codebase, maps relevant files, and documents technical findings without touching files.
+- **Stage 2 (Captain Briefing & Next Steps)**: **Luffy** reviews Nami's report, delivers the final executive answer to the user in the Markdown Output tab, and outlines suggested next steps.
+- **Skipped**: No workspace edits, no test suite execution, zero git diff churn.
+
+#### 2. Tasks requiring code changes (4-Stage Pipeline)
+When code modifications are needed, the Straw Hat crew executes a specialized 4-stage pipeline:
+1. **Stage 1: Research & Route (Nami)** — Navigates repository topology, maps affected contracts/interfaces, and blueprints the exact changes.
+2. **Stage 2: Specialist Implementation** — Hands off to the specialist matched to the task intent:
+   - **Luffy** for core feature logic and greenfield implementations.
+   - **Zoro** for refactoring, performance optimization, dead code removal, and compiler cleanliness.
+   - **Sanji** for UI/UX styling, frontend components, layout ergonomics, and documentation polish.
+3. **Stage 3: Testing & QA Verification (Usopp)** — Runs test suites, validates boundary conditions, reproduces edge cases, and verifies that no regressions were introduced.
+4. **Stage 4: Captain Briefing & Next Steps (Luffy)** — Consolidates Nami's blueprint, the specialist's diff, and Usopp's QA report into an executive briefing, defining recommended next steps for human approval.
 
 ### Configuring crew models & providers (zero hardcoding)
 

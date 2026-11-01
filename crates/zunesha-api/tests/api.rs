@@ -132,7 +132,7 @@ async fn plan_creates_tasks_and_lists_them() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let ids = body["task_ids"].as_array().unwrap();
-    assert_eq!(ids.len(), 3, "mock planner emits a 3-task chain");
+    assert_eq!(ids.len(), 4, "mock planner emits a 4-task crew pipeline");
 
     let (status, body) = json_req(&app, Method::GET, "/api/tasks", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -143,8 +143,8 @@ async fn plan_creates_tasks_and_lists_them() {
             .display()
             .to_string())
     );
-    assert_eq!(body["tasks"].as_array().unwrap().len(), 3);
-    // The chain's two edges ride along (task 2 ← task 1, task 3 ← task 2),
+    assert_eq!(body["tasks"].as_array().unwrap().len(), 4);
+    // The chain's three edges ride along (task 2 ← task 1, task 3 ← task 2, task 4 ← task 3),
     // which is what the dashboard's DAG view renders.
     let deps = body["dependencies"].as_array().unwrap();
     let mut got: Vec<(&str, &str)> = deps
@@ -160,10 +160,11 @@ async fn plan_creates_tasks_and_lists_them() {
     let mut want = vec![
         (ids[1].as_str().unwrap(), ids[0].as_str().unwrap()),
         (ids[2].as_str().unwrap(), ids[1].as_str().unwrap()),
+        (ids[3].as_str().unwrap(), ids[2].as_str().unwrap()),
     ];
     want.sort_unstable();
     assert_eq!(got, want, "each non-head task depends on its predecessor");
-    // Head is TODO, the other two are BACKLOG.
+    // Head is TODO, the other three are BACKLOG.
     let todo = body["counts"]
         .as_array()
         .unwrap()
@@ -194,7 +195,7 @@ async fn plan_stores_attachments_and_puts_their_paths_in_every_task() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let ids = body["task_ids"].as_array().unwrap();
-    assert_eq!(ids.len(), 3);
+    assert_eq!(ids.len(), 4);
 
     let (status, tasks) = json_req(&app, Method::GET, "/api/tasks", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -251,12 +252,12 @@ async fn playground_projection_is_compact_and_maps_lifecycle_states() {
         Some(json!({ "prompt": "build the office" })),
     )
     .await;
-    assert_eq!(planned["task_ids"].as_array().unwrap().len(), 3);
+    assert_eq!(planned["task_ids"].as_array().unwrap().len(), 4);
 
     let (status, body) = json_req(&app, Method::GET, "/api/playground", None).await;
     assert_eq!(status, StatusCode::OK);
     let agents = body["agents"].as_array().unwrap();
-    assert_eq!(agents.len(), 3);
+    assert_eq!(agents.len(), 4);
     let states: Vec<&str> = agents
         .iter()
         .map(|agent| agent["state"].as_str().unwrap())

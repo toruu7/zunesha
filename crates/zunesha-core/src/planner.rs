@@ -199,41 +199,230 @@ pub fn plan_with(
 // Built-in planner
 // ---------------------------------------------------------------------------
 
-/// The deterministic mock: analyze → implement → verify, chained.
-fn mock_draft(prompt: &str) -> PlanDraft {
-    PlanDraft {
-        tasks: vec![
-            PlannedTask {
-                key: "design".to_string(),
-                title: format!("Analyze & design: {prompt}"),
-                description: plan_step_description(prompt, 1),
-                depends_on: Vec::new(),
-                crew_member: Some("nami".to_string()),
-            },
-            PlannedTask {
-                key: "implement".to_string(),
-                title: format!("Implement the change: {prompt}"),
-                description: plan_step_description(prompt, 2),
-                depends_on: vec!["design".to_string()],
-                crew_member: Some("luffy".to_string()),
-            },
-            PlannedTask {
-                key: "verify".to_string(),
-                title: format!("Test & document: {prompt}"),
-                description: plan_step_description(prompt, 3),
-                depends_on: vec!["implement".to_string()],
-                crew_member: Some("usopp".to_string()),
-            },
-        ],
-    }
+/// The detected intent of a user prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskIntent {
+    /// Pure query, explanation, research, audit, inspection - no code changes needed.
+    Query,
+    /// Refactoring, performance, dead code cleanup, compiler cleanliness.
+    Refactor,
+    /// UI/UX styling, frontend components, CSS, documentation polish.
+    UiOrDocs,
+    /// Bug fix, panic, crash, regression fix.
+    Bugfix,
+    /// Core feature, new functional logic, greenfield addition.
+    Feature,
 }
 
-/// Description for step N of the mock plan.
-fn plan_step_description(prompt: &str, step: u8) -> String {
-    match step {
-        1 => format!("Understand the request and sketch an implementation plan for: {prompt}"),
-        2 => format!("Implement the core of: {prompt}"),
-        _ => format!("Add tests and docs covering: {prompt}"),
+/// Classify a user request into a [`TaskIntent`].
+pub fn detect_intent(prompt: &str) -> TaskIntent {
+    let lower = prompt.trim().to_lowercase();
+
+    // Check if the prompt contains explicit action verbs requiring code modification:
+    let has_action = lower.split_whitespace().any(|word| {
+        let clean = word.trim_matches(|c: char| !c.is_alphanumeric());
+        matches!(
+            clean,
+            "add"
+                | "implement"
+                | "create"
+                | "build"
+                | "make"
+                | "write"
+                | "support"
+                | "fix"
+                | "repair"
+                | "patch"
+                | "resolve"
+                | "refactor"
+                | "optimize"
+                | "clean"
+                | "rewrite"
+                | "ship"
+        )
+    });
+
+    if !has_action {
+        let is_query = lower.starts_with("what")
+            || lower.starts_with("how")
+            || lower.starts_with("why")
+            || lower.starts_with("where")
+            || lower.starts_with("when")
+            || lower.starts_with("which")
+            || lower.starts_with("who")
+            || lower.starts_with("explain")
+            || lower.starts_with("describe")
+            || lower.starts_with("audit")
+            || lower.starts_with("inspect")
+            || lower.starts_with("investigate")
+            || lower.starts_with("analyze")
+            || lower.starts_with("check")
+            || lower.starts_with("find")
+            || lower.starts_with("search")
+            || lower.ends_with('?');
+        if is_query {
+            return TaskIntent::Query;
+        }
+    }
+
+    if lower.contains("refactor")
+        || lower.contains("optimize")
+        || lower.contains("optimization")
+        || lower.contains("performance")
+        || lower.contains("perf")
+        || lower.contains("dead code")
+        || lower.contains("clean up")
+        || lower.contains("cleanup")
+        || lower.contains("warnings")
+        || lower.contains("clippy")
+        || lower.contains("tech debt")
+    {
+        return TaskIntent::Refactor;
+    }
+
+    if lower.contains("ui")
+        || lower.contains("ux")
+        || lower.contains("css")
+        || lower.contains("style")
+        || lower.contains("styling")
+        || lower.contains("theme")
+        || lower.contains("frontend")
+        || lower.contains("component")
+        || lower.contains("readme")
+        || lower.contains("docs")
+        || lower.contains("documentation")
+        || lower.contains("color")
+        || lower.contains("layout")
+        || lower.contains("button")
+        || lower.contains("modal")
+    {
+        return TaskIntent::UiOrDocs;
+    }
+
+    if lower.contains("fix")
+        || lower.contains("bug")
+        || lower.contains("crash")
+        || lower.contains("panic")
+        || lower.contains("error")
+        || lower.contains("fails")
+        || lower.contains("failing")
+        || lower.contains("broken")
+        || lower.contains("issue")
+    {
+        return TaskIntent::Bugfix;
+    }
+
+    TaskIntent::Feature
+}
+
+/// The intent-aware mock planner:
+/// - Pure queries / audits: Nami (Research & Investigate) → Luffy (Captain Briefing & Next Steps).
+///   No code modifications, no implementation agent, no test runner!
+/// - Code modifications: 4-stage Straw Hat crew pipeline:
+///   1. Nami (Research & Route): Blueprints the changes and contracts.
+///   2. Specialist Implementation (Luffy for features, Zoro for refactor/bugfix, Sanji for UI/docs).
+///   3. Usopp (Testing & QA): Runs test suites and verifies edge-case regressions.
+///   4. Luffy (Captain Report): Summarizes outcomes and defines next steps for the user.
+fn mock_draft(prompt: &str) -> PlanDraft {
+    let intent = detect_intent(prompt);
+    match intent {
+        TaskIntent::Query => PlanDraft {
+            tasks: vec![
+                PlannedTask {
+                    key: "research".to_string(),
+                    title: format!("Research & investigate: {prompt}"),
+                    description: format!(
+                        "Investigate the codebase to answer the user request: {prompt}. \
+                         Document all findings, architectural context, file paths, and analysis in detail. \
+                         Do not make any code modifications."
+                    ),
+                    depends_on: Vec::new(),
+                    crew_member: Some("nami".to_string()),
+                },
+                PlannedTask {
+                    key: "report".to_string(),
+                    title: format!("Captain briefing & next steps: {prompt}"),
+                    description: format!(
+                        "Review Nami's research findings for: {prompt}. \
+                         Deliver the final executive summary to the user and outline recommended next steps."
+                    ),
+                    depends_on: vec!["research".to_string()],
+                    crew_member: Some("luffy".to_string()),
+                },
+            ],
+        },
+        _ => {
+            let (specialist, action_title, action_desc) = match intent {
+                TaskIntent::Refactor => (
+                    "zoro",
+                    format!("Refactor & slash debt: {prompt}"),
+                    format!(
+                        "Refactor and optimize the code for: {prompt}. \
+                         Eliminate compiler warnings and slash technical debt while preserving behavior."
+                    ),
+                ),
+                TaskIntent::UiOrDocs => (
+                    "sanji",
+                    format!("UI aesthetics & polish: {prompt}"),
+                    format!(
+                        "Implement the UI/UX styling, component ergonomics, layout, or documentation polish for: {prompt}."
+                    ),
+                ),
+                TaskIntent::Bugfix => (
+                    "zoro",
+                    format!("Implement bugfix: {prompt}"),
+                    format!(
+                        "Diagnose and apply a surgical bugfix addressing: {prompt}. \
+                         Ensure clean error handling and stability."
+                    ),
+                ),
+                TaskIntent::Feature | TaskIntent::Query => (
+                    "luffy",
+                    format!("Implement feature: {prompt}"),
+                    format!("Implement the end-to-end functionality for: {prompt} directly in the workspace."),
+                ),
+            };
+
+            PlanDraft {
+                tasks: vec![
+                    PlannedTask {
+                        key: "research".to_string(),
+                        title: format!("Research & route: {prompt}"),
+                        description: format!(
+                            "Research the codebase, map out the required contracts, and blueprint the changes for: {prompt}."
+                        ),
+                        depends_on: Vec::new(),
+                        crew_member: Some("nami".to_string()),
+                    },
+                    PlannedTask {
+                        key: "implement".to_string(),
+                        title: action_title,
+                        description: action_desc,
+                        depends_on: vec!["research".to_string()],
+                        crew_member: Some(specialist.to_string()),
+                    },
+                    PlannedTask {
+                        key: "verify".to_string(),
+                        title: format!("Test & QA verification: {prompt}"),
+                        description: format!(
+                            "Run the test suite, test boundary conditions, and verify that changes for: {prompt} introduce no regressions."
+                        ),
+                        depends_on: vec!["implement".to_string()],
+                        crew_member: Some("usopp".to_string()),
+                    },
+                    PlannedTask {
+                        key: "report".to_string(),
+                        title: format!("Captain briefing & next steps: {prompt}"),
+                        description: format!(
+                            "Review the implementation diff and Usopp's QA report for: {prompt}. \
+                             Present the final executive summary to the user and define next steps."
+                        ),
+                        depends_on: vec!["verify".to_string()],
+                        crew_member: Some("luffy".to_string()),
+                    },
+                ],
+            }
+        }
     }
 }
 
@@ -370,20 +559,18 @@ fn build_prompt(request: &str, repo_root: &Path) -> String {
          \n\
          Rules:\n\
          - 1-8 tasks. Prefer the fewest tasks that can be reviewed independently.\n\
-         - Every task needs a short `key` (unique in this plan), a `title`, a\n\
-           self-contained `description` with enough context for an agent that has\n\
-           not seen this message, and an optional `crew_member`.\n\
-         - Assign each task to the Straw Hat crew member best suited for it:\n\
-           * \"luffy\": core feature implementation, new functional modules, greenfield logic\n\
-           * \"zoro\": refactoring, performance optimization, tech debt cleanup, type safety\n\
-           * \"nami\": architecture design, schema migrations, API contracts\n\
-           * \"usopp\": tests, edge-case validation, verification commands, error reproduction\n\
-           * \"sanji\": UI/UX styling, frontend components, CLI ergonomics, docs & polish\n\
-         - Maximize parallelism: start independent tasks with `depends_on: []` so\n\
-           they can be worked on concurrently. Only declare dependencies where one\n\
-           task strictly requires code, types, or schemas produced by an earlier\n\
-           task, or when two tasks must touch the exact same files to avoid merge\n\
-           conflicts.\n\
+         - First, check if the request requires code changes:\n\
+           * If it is a PURE QUESTION, AUDIT, or EXPLANATION requiring NO code modifications:\n\
+             Emit only 1-2 research and summary tasks (assigned to \"nami\" and/or \"luffy\"). Do NOT emit implementation or testing tasks!\n\
+           * If it REQUIRES CODE CHANGES: Follow the 4-stage Straw Hat crew workflow:\n\
+             1. Research & Route (\"nami\"): Maps architecture, contracts, and blueprints the changes.\n\
+             2. Specialized Implementation: Assign to the best-suited specialist based on task intent:\n\
+                - \"luffy\": core feature implementation, new functional modules, greenfield logic\n\
+                - \"zoro\": refactoring, performance optimization, tech debt cleanup, compiler cleanliness\n\
+                - \"sanji\": UI/UX styling, frontend components, CLI ergonomics, docs & polish\n\
+             3. Testing & QA (\"usopp\"): Runs tests, checks boundary conditions, and verifies regressions.\n\
+             4. Captain Final Report (\"luffy\"): Synthesizes the final report, summarizes outcomes, and defines next steps for the user.\n\
+         - Maximize parallelism where applicable. Only declare dependencies where one task strictly requires outputs from another.\n\
          - Do not serialize tasks unnecessarily; independent components, orthogonal\n\
            tests, or documentation can proceed in parallel.\n\
          - Treat prior agent context as existing work. Do not plan tasks that\n\
@@ -773,20 +960,59 @@ mod tests {
         plan_with(db, "do the thing", &Planner::command(&spec), dir.path())
     }
 
-    // -- built-in planner (unchanged behaviour) -----------------------------
+    // -- built-in planner (Straw Hat intent routing) -----------------------
 
     #[test]
-    fn plan_creates_a_three_task_chain() {
+    fn plan_creates_a_four_stage_crew_pipeline() {
         let db = db();
         let ids = mock_plan(&db, "add a dark mode toggle");
 
-        assert_eq!(ids.len(), 3);
-        assert_eq!(db.task_count().unwrap(), 3);
-        assert_eq!(db.dependency_count().unwrap(), 2, "a 3-chain has 2 edges");
+        assert_eq!(ids.len(), 4);
+        assert_eq!(db.task_count().unwrap(), 4);
+        assert_eq!(db.dependency_count().unwrap(), 3, "a 4-chain has 3 edges");
 
         assert_eq!(db.dependencies_of(&ids[1]).unwrap(), vec![ids[0].clone()]);
         assert_eq!(db.dependencies_of(&ids[2]).unwrap(), vec![ids[1].clone()]);
+        assert_eq!(db.dependencies_of(&ids[3]).unwrap(), vec![ids[2].clone()]);
         assert!(db.dependencies_of(&ids[0]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn query_intent_skips_implementation_and_testing() {
+        let db = db();
+        let ids = mock_plan(&db, "how does the dag promotion engine work?");
+
+        // Query requires no code changes: only Nami (research) and Luffy (captain briefing)
+        assert_eq!(ids.len(), 2, "query intent skips implementation & testing");
+        assert_eq!(db.dependency_count().unwrap(), 1);
+
+        let research = db.require_task(&ids[0]).unwrap();
+        let report = db.require_task(&ids[1]).unwrap();
+
+        assert_eq!(research.crew_member.as_deref(), Some("nami"));
+        assert_eq!(report.crew_member.as_deref(), Some("luffy"));
+        assert!(research.title.contains("Research & investigate"));
+        assert!(report.title.contains("Captain briefing"));
+    }
+
+    #[test]
+    fn refactor_intent_assigns_zoro() {
+        let db = db();
+        let ids = mock_plan(&db, "refactor the database queries to reduce technical debt");
+        assert_eq!(ids.len(), 4);
+        let impl_task = db.require_task(&ids[1]).unwrap();
+        assert_eq!(impl_task.crew_member.as_deref(), Some("zoro"));
+        assert!(impl_task.title.contains("Refactor"));
+    }
+
+    #[test]
+    fn ui_intent_assigns_sanji() {
+        let db = db();
+        let ids = mock_plan(&db, "polish the UI styling and update component CSS");
+        assert_eq!(ids.len(), 4);
+        let impl_task = db.require_task(&ids[1]).unwrap();
+        assert_eq!(impl_task.crew_member.as_deref(), Some("sanji"));
+        assert!(impl_task.title.contains("UI aesthetics"));
     }
 
     #[test]
@@ -797,6 +1023,7 @@ mod tests {
         assert_eq!(status_of(&db, &ids[0]), TaskStatus::Todo);
         assert_eq!(status_of(&db, &ids[1]), TaskStatus::Backlog);
         assert_eq!(status_of(&db, &ids[2]), TaskStatus::Backlog);
+        assert_eq!(status_of(&db, &ids[3]), TaskStatus::Backlog);
     }
 
     #[test]
@@ -826,7 +1053,7 @@ mod tests {
         let db = db();
         let a = mock_plan(&db, "feature A");
         let b = mock_plan(&db, "feature B");
-        assert_eq!(db.task_count().unwrap(), 6);
+        assert_eq!(db.task_count().unwrap(), 8);
         for id_a in &a {
             assert!(!b.contains(id_a), "ids must be globally unique");
         }
@@ -845,7 +1072,7 @@ mod tests {
 
         let counts = db.task_counts_by_status().unwrap();
         let done = counts.iter().find(|(s, _)| *s == TaskStatus::Done).unwrap();
-        assert_eq!(done.1, 3);
+        assert_eq!(done.1, 4);
     }
 
     // -- external planner ---------------------------------------------------

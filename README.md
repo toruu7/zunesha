@@ -318,14 +318,19 @@ specialists with distinct technical directives:
 * 🎯 **Usopp** (*Sniper / Edge-Case & Test Scout*): Failure mode anticipation, boundary condition tests, regression suites, and hunting down edge cases.
 * 🍳 **Sanji** (*Cook / Review & Polish*): Ergonomics, UI/UX aesthetics, documentation, intuitive outputs, and crafting git diffs designed for human review.
 
-##### Delegated planning & zero-hardcoded models
+##### Intent-based task routing & 4-stage crew pipeline
 
-When planning with `zou plan` (built-in or `ZOU_PLANNER_CMD`), Nami tags each task
-with its assigned crew member. When claimed, that member's persona prompt is
-injected automatically into the workspace.
+When planning with `zou plan` (built-in or `ZOU_PLANNER_CMD`), work is routed
+dynamically based on the **intent** of the prompt:
 
-No model names are hardcoded. Each crew member can run with their own provider
-and model (falling back to your global default model if unconfigured):
+* **Non-code tasks (Queries, Audits, Investigations)**: If a prompt is a pure question or audit (e.g. *"how does the DAG scheduler work?"*, *"audit dependency vulnerabilities"*), implementation and testing agents are **skipped**. **Nami** investigates the repository, and **Luffy** (Captain) summarizes the findings and outlines next steps. No code churn, no unnecessary test runs.
+* **Code-modifying tasks (4-Stage Pipeline)**:
+  1. 🗺️ **Research & Route (Nami)**: Analyzes the codebase map, identifies contract boundaries, and blueprints the changes.
+  2. ⚔️/🍳/👒 **Specialized Implementation**: Hands off to the specialist matched to the intent: **Luffy** (features), **Zoro** (refactoring/perf/debt), or **Sanji** (UI/UX, styling, docs).
+  3. 🎯 **Testing & QA Verification (Usopp)**: Runs project test suites, checks boundary conditions, and verifies regression-free stability.
+  4. 👒 **Captain Briefing & Next Steps (Luffy)**: Reviews the plan, diff, and QA report, delivering the final summary to the user and outlining next steps.
+
+##### Zero-hardcoded models & configuration
 
 ```sh
 zou crew                                                      # inspect active roster
