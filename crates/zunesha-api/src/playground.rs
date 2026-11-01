@@ -204,6 +204,7 @@ fn visual_state(status: TaskStatus) -> &'static str {
             "working"
         }
         TaskStatus::Review => "waiting",
+        TaskStatus::NeedsInteraction => "needs-attention",
         TaskStatus::Done => "done",
         TaskStatus::FailedNeedsHuman => "error",
     }
@@ -216,6 +217,7 @@ fn status_label(status: TaskStatus) -> &'static str {
         TaskStatus::InProgress => "IN_PROGRESS",
         TaskStatus::Evaluating => "EVALUATING",
         TaskStatus::Review => "REVIEW",
+        TaskStatus::NeedsInteraction => "NEEDS_INTERACTION",
         TaskStatus::ResolvingConflicts => "RESOLVING_CONFLICTS",
         TaskStatus::Done => "DONE",
         TaskStatus::FailedNeedsHuman => "FAILED_NEEDS_HUMAN",
@@ -236,6 +238,10 @@ mod tests {
             worker_logs: "secret transcript".into(),
             agent_output: "secret output".into(),
             diff: "secret diff".into(),
+            stop_reason: None,
+            requires_attention: false,
+            last_log_tail: String::new(),
+            handoff_summary: String::new(),
             created_at: "2026-10-28 00:00:00".into(),
             updated_at: "2026-10-28 00:00:01".into(),
         }

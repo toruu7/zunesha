@@ -150,8 +150,11 @@ pub fn router(state: AppState, dashboard_dir: Option<std::path::PathBuf>) -> Rou
         .route("/api/run", post(handlers::run_ready))
         .route("/api/tasks/{id}/run", post(handlers::run_one))
         .route("/api/tasks/{id}/cancel", post(handlers::cancel))
+        .route("/api/tasks/{id}/retry", post(handlers::retry))
+        .route("/api/tasks/{id}/rebase", post(handlers::rebase))
         .route("/api/tasks/{id}/events", get(handlers::events))
         .route("/api/tasks/{id}/approve", post(handlers::approve))
+        .route("/api/prune", post(handlers::prune))
         .route(
             "/api/tasks/{id}/reject",
             post(handlers::reject).layer(axum::extract::DefaultBodyLimit::max(40 * 1024 * 1024)),

@@ -105,7 +105,9 @@ async fn status_zero_fills_every_column() {
     let (status, body) = json_req(&app, Method::GET, "/api/status", None).await;
     assert_eq!(status, StatusCode::OK);
     let counts = body["counts"].as_array().unwrap();
-    assert_eq!(counts.len(), 8, "all eight statuses present, incl. zeros");
+    assert_eq!(counts.len(), 9, "all nine statuses present, incl. zeros");
+    assert!(body["disk"]["workspace_bytes"].is_number());
+    assert!(body["disk"]["workspace_label"].is_string());
     assert!(counts.iter().all(|c| c["count"] == json!(0)));
     assert_eq!(body["max_concurrency"], json!(2));
     let root = std::fs::canonicalize(paths.root()).unwrap();

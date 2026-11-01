@@ -9,7 +9,7 @@ import { create } from "zustand";
 import { api, connectEvents } from "./api";
 import type { AttachmentPayload } from "./attachments";
 import { applyEvent, countsFor, EMPTY_STATE, type BoardState } from "./reducer";
-import type { ApiEvent, Task } from "./types";
+import type { ApiEvent, RetryMode, Task } from "./types";
 
 /** Reconnect delay schedule (ms) after a WebSocket drop. */
 const RECONNECT_STEPS = [500, 1_000, 2_000, 5_000];
@@ -57,6 +57,12 @@ export interface ZouState extends BoardState {
   ) => Promise<void>;
   /** Release a stuck IN_PROGRESS task back to TODO (crash recovery). */
   recover: (id: string) => Promise<void>;
+  /** Resume a parked/reviewed task in place, with feedback, or from scratch. */
+  retry: (id: string, mode: RetryMode, feedback?: string) => Promise<void>;
+  /** One-click agent rebase for a drifted REVIEW task. */
+  rebase: (id: string) => Promise<void>;
+  /** Remove completed/orphaned worktrees and refresh the footprint. */
+  prune: () => Promise<void>;
 
   // --- view ---
   select: (id: string | null) => void;
@@ -148,13 +154,14 @@ export const useZou = create<ZouState>((set, get) => {
 
     refresh: async () => {
       try {
-        const { project, tasks, dependencies } = await api.tasks();
+        const { project, tasks, dependencies, disk } = await api.tasks();
         dispatch({
           type: "snapshot",
           project,
           tasks,
           dependencies,
           counts: countsFor(tasks),
+          disk,
         });
         set({ error: null });
       } catch (err) {
@@ -251,6 +258,54 @@ export const useZou = create<ZouState>((set, get) => {
         await get().refresh();
         // Keep the modal open: the task is still selected, just runnable now.
         set({ error: null });
+      } catch (err) {
+        set({ error: errText(err) });
+      } finally {
+        set({ busy: false });
+      }
+    },
+
+    retry: async (id, mode, feedback = "") => {
+      set({ busy: true });
+      try {
+        await api.retry(id, mode, feedback);
+        await get().refresh();
+        // Keep the dialog open: the resumed task is live and its logs matter.
+        set({ error: null });
+      } catch (err) {
+        set({ error: errText(err) });
+      } finally {
+        set({ busy: false });
+      }
+    },
+
+    rebase: async (id) => {
+      set({ busy: true });
+      try {
+        await api.rebase(id);
+        await get().refresh();
+        set({ error: null, selectedId: id });
+      } catch (err) {
+        set({ error: errText(err) });
+      } finally {
+        set({ busy: false });
+      }
+    },
+
+    prune: async () => {
+      set({ busy: true });
+      try {
+        const result = await api.prune();
+        await get().refresh();
+        set({
+          error: null,
+          selectedId: null,
+        });
+        // A short-lived notice is more useful than silence after a destructive
+        // action; the board itself shows the updated footprint.
+        if (result.removed.length === 0) {
+          set({ error: null });
+        }
       } catch (err) {
         set({ error: errText(err) });
       } finally {

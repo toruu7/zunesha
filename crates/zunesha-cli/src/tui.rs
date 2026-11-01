@@ -34,7 +34,7 @@ use ratatui::{Frame, Terminal};
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use zunesha_api::events::{ApiEvent, ProjectInfo};
-use zunesha_core::{AgentProvider, Config, Error, StreamKind, Task, TaskStatus};
+use zunesha_core::{AgentProvider, Config, DiskUsage, Error, StreamKind, Task, TaskStatus};
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const CONFIG_RELOAD_INTERVAL: Duration = Duration::from_secs(2);
@@ -223,6 +223,8 @@ struct ApiClient {
 struct TasksResponse {
     project: ProjectInfo,
     tasks: Vec<Task>,
+    #[serde(default)]
+    disk: Option<DiskUsage>,
 }
 
 impl ApiClient {
@@ -323,6 +325,28 @@ impl ApiClient {
         };
         self.post("/api/recover", Some(body)).await
     }
+
+    async fn retry(
+        &self,
+        task_id: &str,
+        mode: &str,
+        feedback: &str,
+    ) -> Result<String, String> {
+        self.post(
+            &format!("/api/tasks/{task_id}/retry"),
+            Some(serde_json::json!({ "mode": mode, "feedback": feedback })),
+        )
+        .await
+    }
+
+    async fn rebase(&self, task_id: &str) -> Result<String, String> {
+        self.post(&format!("/api/tasks/{task_id}/rebase"), None)
+            .await
+    }
+
+    async fn prune(&self) -> Result<String, String> {
+        self.post("/api/prune", None).await
+    }
 }
 
 async fn decode_json<T: for<'de> Deserialize<'de>>(
@@ -412,6 +436,8 @@ impl Default for TuiConfig {
                 "connection".into(),
                 "running".into(),
                 "review".into(),
+                "attention".into(),
+                "disk".into(),
                 "theme".into(),
             ],
             keys: HashMap::new(),
@@ -620,6 +646,11 @@ enum Action {
     RunOne,
     Approve,
     Reject,
+    Retry,
+    RetryFeedback,
+    HardReset,
+    Rebase,
+    Prune,
     Cancel,
     Recover,
     Refresh,
@@ -651,6 +682,11 @@ impl Action {
             "run_one" => Self::RunOne,
             "approve" => Self::Approve,
             "reject" => Self::Reject,
+            "retry" => Self::Retry,
+            "retry_feedback" => Self::RetryFeedback,
+            "hard_reset" => Self::HardReset,
+            "rebase" => Self::Rebase,
+            "prune" => Self::Prune,
             "cancel" => Self::Cancel,
             "recover" => Self::Recover,
             "refresh" => Self::Refresh,
@@ -683,6 +719,11 @@ const DEFAULT_KEYS: &[(&str, &str)] = &[
     ("run_one", "R"),
     ("approve", "a"),
     ("reject", "x"),
+    ("retry", "u"),
+    ("retry_feedback", "w"),
+    ("hard_reset", "U"),
+    ("rebase", "b"),
+    ("prune", "P"),
     ("cancel", "C"),
     ("recover", "c"),
     ("refresh", "g"),
@@ -839,6 +880,7 @@ enum InputMode {
     Plan(String),
     Attach(String),
     Reject(String),
+    RetryFeedback(String),
     Filter(String),
     Command(String),
 }
@@ -849,6 +891,7 @@ impl InputMode {
             Self::Plan(_) => "plan a feature",
             Self::Attach(_) => "attach a file",
             Self::Reject(_) => "reject with feedback",
+            Self::RetryFeedback(_) => "resume with feedback",
             Self::Filter(_) => "filter tasks",
             Self::Command(_) => "command",
         }
@@ -859,6 +902,7 @@ impl InputMode {
             Self::Plan(_) => "prompt",
             Self::Attach(_) => "path",
             Self::Reject(_) => "feedback",
+            Self::RetryFeedback(_) => "feedback",
             Self::Filter(_) => "text",
             Self::Command(_) => ":",
         }
@@ -869,6 +913,7 @@ impl InputMode {
             Self::Plan(text)
             | Self::Attach(text)
             | Self::Reject(text)
+            | Self::RetryFeedback(text)
             | Self::Filter(text)
             | Self::Command(text) => text,
         }
@@ -879,6 +924,7 @@ impl InputMode {
             Self::Plan(text)
             | Self::Attach(text)
             | Self::Reject(text)
+            | Self::RetryFeedback(text)
             | Self::Filter(text)
             | Self::Command(text) => text,
         }
@@ -890,6 +936,10 @@ enum ConfirmAction {
     RunAll,
     RunOne(String),
     Approve(String),
+    Retry(String),
+    HardReset(String),
+    Rebase(String),
+    Prune,
     Cancel(String),
     Recover(Option<String>),
 }
@@ -912,6 +962,7 @@ enum Connection {
 struct App {
     api: ApiClient,
     project: Option<ProjectInfo>,
+    disk: Option<DiskUsage>,
     tasks: Vec<Task>,
     logs: HashMap<String, Vec<LogLine>>,
     selected: usize,
@@ -955,6 +1006,7 @@ impl App {
         Self {
             api,
             project: None,
+            disk: None,
             tasks: Vec::new(),
             logs: HashMap::new(),
             selected: 0,
@@ -983,6 +1035,7 @@ impl App {
 
     fn apply_tasks(&mut self, response: TasksResponse) {
         self.project = Some(response.project);
+        self.disk = response.disk;
         self.tasks = response.tasks;
         self.logs.clear();
         for task in &self.tasks {
@@ -994,8 +1047,14 @@ impl App {
 
     fn apply_event(&mut self, event: ApiEvent) {
         match event {
-            ApiEvent::Snapshot { project, tasks, .. } => {
+            ApiEvent::Snapshot {
+                project,
+                tasks,
+                disk,
+                ..
+            } => {
                 self.project = Some(project);
+                self.disk = Some(disk);
                 self.tasks = tasks;
                 self.logs.clear();
                 for task in &self.tasks {
@@ -1230,18 +1289,88 @@ impl App {
                 if let Some(task) = self.selected_task() {
                     if matches!(
                         task.status,
-                        TaskStatus::Review | TaskStatus::FailedNeedsHuman
+                        TaskStatus::Review
+                            | TaskStatus::NeedsInteraction
+                            | TaskStatus::FailedNeedsHuman
                     ) {
                         self.input = Some(InputMode::Reject(String::new()));
                     } else {
                         self.status = format!(
-                            "{} is {}; only REVIEW/FAILED tasks can be rejected",
+                            "{} is {}; only REVIEW/parked tasks can be rejected",
                             task.id,
                             status_label(task.status)
                         );
                     }
                 }
             }
+            Action::Retry => {
+                if let Some(task) = self.selected_task() {
+                    if matches!(
+                        task.status,
+                        TaskStatus::Review
+                            | TaskStatus::NeedsInteraction
+                            | TaskStatus::FailedNeedsHuman
+                    ) {
+                        self.confirm = Some(ConfirmAction::Retry(task.id));
+                    } else {
+                        self.status = format!(
+                            "{} is {}; only REVIEW or parked tasks can be resumed",
+                            task.id,
+                            status_label(task.status)
+                        );
+                    }
+                }
+            }
+            Action::RetryFeedback => {
+                if let Some(task) = self.selected_task() {
+                    if matches!(
+                        task.status,
+                        TaskStatus::Review
+                            | TaskStatus::NeedsInteraction
+                            | TaskStatus::FailedNeedsHuman
+                    ) {
+                        self.input = Some(InputMode::RetryFeedback(String::new()));
+                    } else {
+                        self.status = format!(
+                            "{} is {}; only REVIEW or parked tasks can be resumed",
+                            task.id,
+                            status_label(task.status)
+                        );
+                    }
+                }
+            }
+            Action::HardReset => {
+                if let Some(task) = self.selected_task() {
+                    if matches!(
+                        task.status,
+                        TaskStatus::Review
+                            | TaskStatus::NeedsInteraction
+                            | TaskStatus::FailedNeedsHuman
+                    ) {
+                        self.confirm = Some(ConfirmAction::HardReset(task.id));
+                    } else {
+                        self.status = format!(
+                            "{} is {}; only REVIEW or parked tasks can be reset",
+                            task.id,
+                            status_label(task.status)
+                        );
+                    }
+                }
+            }
+            Action::Rebase => {
+                if let Some(task) = self.selected_task() {
+                    if task.status == TaskStatus::Review {
+                        self.confirm = Some(ConfirmAction::Rebase(task.id));
+                    } else {
+                        self.status = format!(
+                            "{} is {}; only REVIEW tasks can be rebased",
+                            task.id,
+                            status_label(task.status)
+                        );
+                    }
+                }
+            }
+            Action::Prune => self.confirm = Some(ConfirmAction::Prune),
             Action::Cancel => {
                 if let Some(task) = self.selected_task() {
                     if is_active(task.status) {
@@ -1421,6 +1550,21 @@ impl App {
                     api.reject(&task.id, &feedback).await
                 });
             }
+            InputMode::RetryFeedback(feedback) => {
+                let Some(task) = self.selected_task() else {
+                    self.status = "no task selected".into();
+                    return;
+                };
+                if feedback.trim().is_empty() {
+                    self.status = "feedback retry needs a non-empty message".into();
+                    return;
+                }
+                let api = self.api.clone();
+                self.status = format!("resuming {} with feedback…", task.id);
+                spawn_action(tx, "retry feedback", async move {
+                    api.retry(&task.id, "feedback", &feedback).await
+                });
+            }
             InputMode::Filter(text) => {
                 self.filter = text;
                 self.selected = 0;
@@ -1516,6 +1660,25 @@ impl App {
             "reject" => {
                 self.input = Some(InputMode::Reject(argument.to_string()));
             }
+            "retry" | "continue" => {
+                if let Some(task) = self.selected_task() {
+                    self.confirm = Some(ConfirmAction::Retry(task.id));
+                }
+            }
+            "retry-feedback" | "feedback" => {
+                self.input = Some(InputMode::RetryFeedback(argument.to_string()));
+            }
+            "hard-reset" | "hard_reset" | "reset" => {
+                if let Some(task) = self.selected_task() {
+                    self.confirm = Some(ConfirmAction::HardReset(task.id));
+                }
+            }
+            "rebase" => {
+                if let Some(task) = self.selected_task() {
+                    self.confirm = Some(ConfirmAction::Rebase(task.id));
+                }
+            }
+            "prune" => self.confirm = Some(ConfirmAction::Prune),
             "cancel" => {
                 if let Some(task) = self.selected_task() {
                     self.confirm = Some(ConfirmAction::Cancel(task.id));
@@ -1567,6 +1730,30 @@ impl App {
                 let api = self.api.clone();
                 self.status = format!("approving {task_id}…");
                 spawn_action(tx, "approve", async move { api.approve(&task_id).await });
+            }
+            ConfirmAction::Retry(task_id) => {
+                let api = self.api.clone();
+                self.status = format!("resuming {task_id}…");
+                spawn_action(tx, "retry", async move {
+                    api.retry(&task_id, "continue", "").await
+                });
+            }
+            ConfirmAction::HardReset(task_id) => {
+                let api = self.api.clone();
+                self.status = format!("hard-resetting {task_id}…");
+                spawn_action(tx, "hard reset", async move {
+                    api.retry(&task_id, "hard_reset", "").await
+                });
+            }
+            ConfirmAction::Rebase(task_id) => {
+                let api = self.api.clone();
+                self.status = format!("rebasing {task_id} with an agent…");
+                spawn_action(tx, "rebase", async move { api.rebase(&task_id).await });
+            }
+            ConfirmAction::Prune => {
+                let api = self.api.clone();
+                self.status = "pruning worktrees…".into();
+                spawn_action(tx, "prune", async move { api.prune().await });
             }
             ConfirmAction::Cancel(task_id) => {
                 let api = self.api.clone();
@@ -1803,6 +1990,7 @@ fn status_label(status: TaskStatus) -> &'static str {
         TaskStatus::InProgress => "IN_PROGRESS",
         TaskStatus::Evaluating => "EVALUATING",
         TaskStatus::Review => "REVIEW",
+        TaskStatus::NeedsInteraction => "NEEDS ATTENTION",
         TaskStatus::ResolvingConflicts => "RESOLVING",
         TaskStatus::Done => "DONE",
         TaskStatus::FailedNeedsHuman => "FAILED",
@@ -1817,6 +2005,7 @@ fn status_color(theme: &Theme, status: TaskStatus) -> Color {
             theme.signal
         }
         TaskStatus::Review => theme.accent,
+        TaskStatus::NeedsInteraction => theme.danger,
         TaskStatus::Done => theme.success,
         TaskStatus::FailedNeedsHuman => theme.danger,
     }
@@ -2260,6 +2449,18 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             ),
             "running" => parts.push(format!("{} running", app.running_count())),
             "review" => parts.push(format!("{} review", app.count(TaskStatus::Review))),
+            "attention" => parts.push(format!(
+                "{} need attention",
+                app.count(TaskStatus::NeedsInteraction)
+            )),
+            "disk" => {
+                if let Some(disk) = &app.disk {
+                    parts.push(format!("ws {}", disk.workspace_label));
+                    if let Some(free) = &disk.free_label {
+                        parts.push(format!("free {free}"));
+                    }
+                }
+            }
             "theme" => parts.push(format!("theme {}", app.theme.name)),
             "filter" if !app.filter.is_empty() => parts.push(format!("filter {}", app.filter)),
             "counts" => parts.push(format!("{} tasks", app.tasks.len())),
@@ -2267,7 +2468,10 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
     if parts.is_empty() {
-        parts.push("q quit  p plan  A attach  r run  a approve  x reject  c recover".into());
+        parts.push(
+            "q quit  p plan  A attach  r run  a approve  x reject  u resume  b rebase  P prune"
+                .into(),
+        );
     }
     parts.push("? help".into());
     let paragraph = Paragraph::new(parts.join("  ·  "))
@@ -2314,6 +2518,19 @@ fn draw_confirm(frame: &mut Frame, app: &App, area: Rect) {
         ConfirmAction::RunAll => "run every ready (TODO) task?".to_string(),
         ConfirmAction::RunOne(task_id) => format!("run {task_id}?"),
         ConfirmAction::Approve(task_id) => format!("approve {task_id} and merge its diff?"),
+        ConfirmAction::Retry(task_id) => {
+            format!("resume {task_id} in its existing worktree?")
+        }
+        ConfirmAction::HardReset(task_id) => format!(
+            "hard reset {task_id}? its worktree and all partial work will be deleted"
+        ),
+        ConfirmAction::Rebase(task_id) => {
+            format!("rebase {task_id} onto the current repository with an agent?")
+        }
+        ConfirmAction::Prune => {
+            "prune completed/orphaned worktrees? active, review, and parked worktrees are kept"
+                .to_string()
+        }
         ConfirmAction::Cancel(task_id) => {
             format!("cancel {task_id}? the agent process tree will be killed")
         }
@@ -2434,12 +2651,14 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines = vec![
         Line::from("navigation: j/k or ↑/↓ select   tab detail tab   enter logs"),
         Line::from("actions:    p plan   A attach   r run all   R run selected   C cancel"),
-        Line::from("            a approve   x reject   c recover   g refresh"),
+        Line::from("            a approve   x reject   u resume   w resume+feedback   U hard reset"),
+        Line::from("            b rebase   P prune   c recover   g refresh"),
         Line::from("views:      l logs   o output   d diff   i task"),
         Line::from("config:     t theme   m model   f filter   : command palette"),
         Line::from("logs:       pageup/pagedown scroll   esc clear filter"),
         Line::from(""),
         Line::from("commands:   :run  :approve  :reject <text>  :cancel  :recover"),
+        Line::from("            :retry  :retry-feedback <text>  :hard-reset  :rebase  :prune"),
         Line::from("            :plan <prompt>  :attach <path>  :clear-attachments"),
         Line::from("            :filter <text>  :theme <name>"),
         Line::from(""),
@@ -2491,6 +2710,10 @@ mod tests {
             worker_logs: "line one\nline two".into(),
             agent_output: "final output".into(),
             diff: "+added\n-removed".into(),
+            stop_reason: None,
+            requires_attention: false,
+            last_log_tail: String::new(),
+            handoff_summary: String::new(),
             created_at: "2026-10-28 00:00:00".into(),
             updated_at: "2026-10-28 00:00:01".into(),
         }

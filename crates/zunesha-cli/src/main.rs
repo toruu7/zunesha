@@ -29,9 +29,9 @@ use std::sync::{Arc, Mutex};
 use clap::{Parser, Subcommand};
 
 use zunesha_core::{
-    approve_task, init_project, normalize_agent_model, recover_stuck, AgentCommand, AgentProvider,
-    Config, Database, Error, MergeOutcome, StreamKind, TaskStatus, WorkerEvent, WorkerPool,
-    WorkspaceManager, ZuneshaPaths,
+    approve_task, disk_usage, init_project, normalize_agent_model, prune_workspaces, rebase_task,
+    recover_stuck, resume_task, AgentCommand, AgentProvider, Config, Database, Error, MergeOutcome,
+    ResumeMode, StreamKind, TaskStatus, WorkerEvent, WorkerPool, WorkspaceManager, ZuneshaPaths,
 };
 
 #[derive(Parser, Debug)]
@@ -97,6 +97,34 @@ enum Commands {
         /// Id of the task in REVIEW (see `zou status`).
         task_id: String,
     },
+    /// Resume a stopped or reviewed task in its worktree.
+    ///
+    /// `--continue` (default) continues from the current worktree, `-m`
+    /// re-runs with reviewer feedback, and `--hard-reset` discards the
+    /// worktree and starts fresh. The task is re-queued and run immediately.
+    Retry {
+        /// Id of the task to resume.
+        task_id: String,
+        /// Continue from the existing worktree (the default).
+        #[arg(long = "continue")]
+        continue_run: bool,
+        /// Reviewer feedback for the next attempt.
+        #[arg(short = 'm', long = "message", value_name = "TEXT")]
+        message: Option<String>,
+        /// Discard the worktree and start from a fresh snapshot.
+        #[arg(long)]
+        hard_reset: bool,
+        /// Cap on simultaneously running agents.
+        #[arg(long, default_value_t = 1)]
+        jobs: usize,
+    },
+    /// Rebase a drifted REVIEW task with an agent, then validate it again.
+    Rebase {
+        /// Id of the REVIEW task.
+        task_id: String,
+    },
+    /// Remove completed/orphaned worktrees and show disk usage.
+    Prune,
     /// Release stuck IN_PROGRESS/EVALUATING tasks back to TODO (crash recovery).
     ///
     /// A killed daemon or interrupted `zou run` leaves its tasks claimed
@@ -254,6 +282,22 @@ fn main() -> ExitCode {
         Commands::Diff { task_id } => cmd_diff(&target, &task_id),
         Commands::Run { jobs, follow } => cmd_run(&target, jobs, follow),
         Commands::Approve { task_id } => cmd_approve(&target, &task_id),
+        Commands::Retry {
+            task_id,
+            continue_run,
+            message,
+            hard_reset,
+            jobs,
+        } => cmd_retry(
+            &target,
+            &task_id,
+            continue_run,
+            message.as_deref(),
+            hard_reset,
+            jobs,
+        ),
+        Commands::Rebase { task_id } => cmd_rebase(&target, &task_id),
+        Commands::Prune => cmd_prune(&target),
         Commands::Recover { task_id } => cmd_recover(&target, task_id.as_deref()),
         Commands::Cancel { task_id, url } => cmd_cancel(&task_id, &url),
         Commands::Events { task_id, url } => cmd_events(&task_id, &url),
@@ -1220,6 +1264,111 @@ fn cmd_approve(target: &Path, task_id: &str) -> zunesha_core::Result<()> {
         println!("  promoted  : none");
     } else {
         println!("  promoted  : {}", outcome.promoted.join(", "));
+    }
+    Ok(())
+}
+
+/// `zou retry` – human-guided resume for parked/reviewed work.
+fn cmd_retry(
+    target: &Path,
+    task_id: &str,
+    _continue_run: bool,
+    message: Option<&str>,
+    hard_reset: bool,
+    jobs: usize,
+) -> zunesha_core::Result<()> {
+    let paths = discover(target)?;
+    let mode = if hard_reset {
+        ResumeMode::HardReset
+    } else if message.is_some_and(|message| !message.trim().is_empty()) {
+        ResumeMode::Feedback
+    } else {
+        ResumeMode::Continue
+    };
+    let task = resume_task(&paths, task_id, mode, message.unwrap_or(""))?;
+    println!("✔ task {task_id} resumed ({})", mode.as_str());
+    println!("  status    : {}", task.status);
+    if task.description.contains("## Human feedback") {
+        println!("  feedback  : included in the next prompt");
+    }
+    if hard_reset {
+        println!("  worktree  : discarded; a fresh snapshot will be created");
+    } else {
+        println!("  worktree  : preserved at {}", paths.workspace(task_id).display());
+    }
+
+    let pool = WorkerPool::new(paths.clone(), jobs.max(1), AgentCommand::default());
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::Workspace(format!("failed to build async runtime: {e}")))?;
+    rt.block_on(async move {
+        let handle = pool.spawn_task(task_id.to_string()).await?;
+        let success = handle
+            .await
+            .map_err(|e| Error::Workspace(format!("retry task panicked: {e}")))??;
+        let db = Database::open(&paths.state_db())?;
+        let after = db.require_task(task_id)?;
+        println!();
+        if success {
+            println!("✔ task {task_id} reached {}", after.status);
+        } else {
+            println!("⚠ task {task_id} stopped at {}", after.status);
+            if let Some(reason) = after.stop_reason {
+                println!("  reason    : {} ({})", reason.label(), reason);
+            }
+            if !after.last_log_tail.trim().is_empty() {
+                println!("  last log  :");
+                for line in after.last_log_tail.lines().rev().take(8).collect::<Vec<_>>().iter().rev() {
+                    println!("    {line}");
+                }
+            }
+            println!(
+                "  next      : `zou retry {task_id} --continue`, `zou retry {task_id} -m \"…\"`, \
+                 or `zou retry {task_id} --hard-reset`"
+            );
+        }
+        Ok::<_, Error>(())
+    })
+}
+
+/// `zou rebase` – explicit one-click agent rebase for a drifted REVIEW task.
+fn cmd_rebase(target: &Path, task_id: &str) -> zunesha_core::Result<()> {
+    let paths = discover(target)?;
+    let outcome = rebase_task(&paths, task_id)?;
+    println!(
+        "⚠ task {task_id} rebased onto the current repository; {} conflicted file(s)",
+        outcome.prep.conflicted_files.len()
+    );
+    for file in &outcome.prep.conflicted_files {
+        println!("    - {file}");
+    }
+    if !outcome.prep.has_markers {
+        println!("  note      : the merge auto-resolved; validating the rebased diff");
+    }
+    run_resolution(&paths, task_id)
+}
+
+/// `zou prune` – remove completed/orphaned worktrees and report disk usage.
+fn cmd_prune(target: &Path) -> zunesha_core::Result<()> {
+    let paths = discover(target)?;
+    let db = Database::open(&paths.state_db())?;
+    let removed = prune_workspaces(&paths, &db)?;
+    let disk = disk_usage(&paths);
+    if removed.is_empty() {
+        println!("✔ nothing to prune");
+    } else {
+        println!("✔ pruned {} worktree(s)", removed.len());
+        for id in removed {
+            println!("    - {id}");
+        }
+    }
+    println!(
+        "  workspace : {} ({})",
+        disk.workspace_label, paths.workspaces_dir().display()
+    );
+    if let Some(free) = disk.free_label {
+        println!("  free disk : {free}");
     }
     Ok(())
 }

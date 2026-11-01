@@ -12,7 +12,11 @@ import type {
   ApiEvent,
   ApproveResponse,
   CancelResponse,
+  PruneResponse,
+  RebaseResponse,
   RecoverResponse,
+  RetryMode,
+  RetryResponse,
   StatusResponse,
   Task,
   TasksResponse,
@@ -98,6 +102,18 @@ export const api = {
   /** Release a stuck IN_PROGRESS task back to TODO (crash recovery). */
   recover: (id: string) =>
     post<RecoverResponse>("/api/recover", { task_id: id }),
+  /** Resume a parked/reviewed task in place, with feedback, or from scratch. */
+  retry: (id: string, mode: RetryMode, feedback = "") =>
+    post<RetryResponse>(`/api/tasks/${encodeURIComponent(id)}/retry`, {
+      mode,
+      feedback,
+      hard_reset: mode === "hard_reset",
+    }),
+  /** One-click agent rebase for a drifted REVIEW task. */
+  rebase: (id: string) =>
+    post<RebaseResponse>(`/api/tasks/${encodeURIComponent(id)}/rebase`),
+  /** Remove completed/orphaned worktrees and report the new footprint. */
+  prune: () => post<PruneResponse>("/api/prune"),
 };
 
 /**

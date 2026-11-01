@@ -66,6 +66,24 @@ pub(crate) fn prepare<C: CommandEnv>(command: &mut C, dir: &Path) {
             command.remove_env(&name);
         }
     }
+
+    // Per-worktree caches keep builds from sharing mutable state across
+    // concurrent agents and keep the user's global cache clean. The marker
+    // directory is created by workspace setup; when absent (pre-existing
+    // workspaces or tests) behavior is unchanged.
+    let cache = dir.join(".zou-cache");
+    if cache.is_dir() {
+        let mut set = |key: &str, value: &Path| command.set_env(key, value.as_os_str());
+        set("CARGO_TARGET_DIR", &cache.join("target"));
+        set("TMPDIR", &cache.join("tmp"));
+        set("TEMP", &cache.join("tmp"));
+        set("TMP", &cache.join("tmp"));
+        set("XDG_CACHE_HOME", &cache);
+        set("npm_config_cache", &cache.join("npm"));
+        set("PIP_CACHE_DIR", &cache.join("pip"));
+        set("SCCACHE_DIR", &cache.join("sccache"));
+        set("ESLINT_CACHE", &cache.join("eslint"));
+    }
 }
 
 /// Session markers set by common agent CLIs. Keep this list narrow: a child

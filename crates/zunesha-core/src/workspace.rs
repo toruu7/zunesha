@@ -24,6 +24,8 @@ use crate::db::{Database, WorkspaceRecord};
 use crate::error::{Error, Result};
 use crate::paths::ZuneshaPaths;
 use crate::prior_context;
+use crate::project_config::{is_safe_relative, ProjectConfig};
+use crate::recovery;
 use crate::task::TaskStatus;
 
 /// Branch prefix for task workspaces.
@@ -53,17 +55,31 @@ pub struct ConflictPrep {
 /// Creates, inspects, and tears down isolated task workspaces.
 pub struct WorkspaceManager {
     paths: ZuneshaPaths,
+    config: ProjectConfig,
 }
 
 impl WorkspaceManager {
-    /// Bind a manager to an initialized installation.
+    /// Bind a manager to an initialized installation, loading its
+    /// `.zou/config.toml` when present.
     pub fn new(paths: ZuneshaPaths) -> Self {
-        Self { paths }
+        let config = ProjectConfig::load_or_default(paths.root());
+        Self { paths, config }
+    }
+
+    /// Bind a manager with explicit project settings (tests and long-lived
+    /// callers that already loaded the config).
+    pub fn with_config(paths: ZuneshaPaths, config: ProjectConfig) -> Self {
+        Self { paths, config }
     }
 
     /// The installation this manager operates on.
     pub fn paths(&self) -> &ZuneshaPaths {
         &self.paths
+    }
+
+    /// The project settings used for bootstrapping and guardrails.
+    pub fn config(&self) -> &ProjectConfig {
+        &self.config
     }
 
     /// Spin up an isolated workspace for `task_id`.
@@ -133,6 +149,7 @@ impl WorkspaceManager {
         git(&ws_dir, &["init", "--quiet"])?;
         git(&ws_dir, &["config", "user.name", WORKSPACE_GIT_NAME])?;
         git(&ws_dir, &["config", "user.email", WORKSPACE_GIT_EMAIL])?;
+        self.prepare_worktree(&ws_dir)?;
         // Phase 10 / 12: orientation and prior-work scaffolding, written
         // before staging so the exclude rules keep them out of the baseline
         // (scaffolding, never the code).
@@ -163,6 +180,142 @@ impl WorkspaceManager {
         };
         db.upsert_workspace(&record)?;
         Ok(record)
+    }
+
+    /// Bootstrap untracked files, install guardrails, and isolate caches in a
+    /// freshly copied worktree. Runs after `git init` so `.git/info/exclude`
+    /// exists, and before the baseline commit so bootstrapped files are part
+    /// of the snapshot rather than appearing as agent changes.
+    fn prepare_worktree(&self, ws_dir: &Path) -> Result<()> {
+        self.bootstrap_copy(ws_dir)?;
+        // Create the cache marker before bootstrap_cmd so dependency installers
+        // and build scripts already see the isolated CARGO_TARGET_DIR/TMPDIR.
+        if self.config.isolated_caches {
+            prepare_cache_dirs(ws_dir)?;
+        }
+        if let Some(command) = self
+            .config
+            .bootstrap_cmd
+            .as_deref()
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
+        {
+            run_bootstrap_command(ws_dir, command)?;
+        }
+        if self.config.opencode_guardrails {
+            install_opencode_guardrails(ws_dir, &self.config)?;
+        }
+        ensure_excluded(ws_dir)?;
+        Ok(())
+    }
+
+    /// Copy configured untracked files (`.env`, local certs, ...) from the
+    /// repository root into the worktree. Paths are validated as relative
+    /// components so config cannot read outside the repository.
+    fn bootstrap_copy(&self, ws_dir: &Path) -> Result<()> {
+        for relative in &self.config.bootstrap_copy {
+            if !is_safe_relative(relative) {
+                continue;
+            }
+            let src = self.paths.root().join(relative);
+            let dst = ws_dir.join(relative);
+            if !src.exists() && !is_symlink(&src) {
+                continue;
+            }
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let meta = std::fs::symlink_metadata(&src)?;
+            if meta.is_dir() {
+                copy_directory(&src, &dst)?;
+            } else {
+                copy_one(&src, &dst)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// `git status --short` + `git diff --stat` for a task's worktree.
+    pub fn worktree_state(&self, db: &Database, task_id: &str) -> Result<String> {
+        let record = db
+            .get_workspace(task_id)?
+            .ok_or_else(|| Error::Workspace(format!("no workspace recorded for task {task_id}")))?;
+        let ws_dir = Path::new(&record.path);
+        if !ws_dir.is_dir() {
+            return Err(Error::Workspace(format!(
+                "workspace directory missing for task {task_id}: {}",
+                record.path
+            )));
+        }
+        Ok(recovery::worktree_state(self.paths.root(), ws_dir))
+    }
+
+    /// Build a compact parent-to-child contract summary from the workspace.
+    ///
+    /// Includes the changed-file list, `--stat` totals, and lines that look
+    /// like exported/public declarations. The result is deliberately bounded:
+    /// a child needs the interface, not the whole patch.
+    pub fn contract_summary(&self, db: &Database, task_id: &str) -> Result<String> {
+        let record = db
+            .get_workspace(task_id)?
+            .ok_or_else(|| Error::Workspace(format!("no workspace recorded for task {task_id}")))?;
+        let ws_dir = Path::new(&record.path);
+        if !ws_dir.is_dir() {
+            return Ok(String::new());
+        }
+        git(ws_dir, &["add", "--all"])?;
+        untrack_scaffolding(ws_dir)?;
+        let base = record.base_commit.as_str();
+        let files = git_stdout(ws_dir, &["diff", "--name-only", base, "--"])?;
+        let stat = git_stdout(ws_dir, &["diff", "--stat", base, "--"])?;
+        let patch = git_stdout(ws_dir, &["diff", "-U0", base, "--"])?;
+        let mut signatures = Vec::new();
+        for line in patch.lines() {
+            let Some(added) = line.strip_prefix('+') else {
+                continue;
+            };
+            if added.starts_with("+++") || added.trim().is_empty() {
+                continue;
+            }
+            let trimmed = added.trim_start();
+            if is_interface_line(trimmed) && !signatures.iter().any(|s| s == trimmed) {
+                signatures.push(trimmed.to_string());
+            }
+            if signatures.len() >= 40 {
+                break;
+            }
+        }
+        let mut summary = String::new();
+        if !files.trim().is_empty() {
+            summary.push_str("Changed files:\n");
+            summary.push_str(files.trim());
+            summary.push('\n');
+        }
+        if !stat.trim().is_empty() {
+            summary.push_str("\nDiff stat:\n");
+            summary.push_str(stat.trim());
+            summary.push('\n');
+        }
+        if !signatures.is_empty() {
+            summary.push_str("\nExported/interface declarations added:\n");
+            for signature in signatures {
+                summary.push_str("- ");
+                summary.push_str(&signature);
+                summary.push('\n');
+            }
+        }
+        if summary.is_empty() {
+            summary.push_str("No file changes were captured for this task.\n");
+        }
+        if summary.chars().count() > 6_000 {
+            let mut end = 6_000;
+            while end > 0 && !summary.is_char_boundary(end) {
+                end -= 1;
+            }
+            summary.truncate(end);
+            summary.push('…');
+        }
+        Ok(summary)
     }
 
     /// Capture the work done in a task's workspace as a unified diff.
@@ -272,6 +425,7 @@ impl WorkspaceManager {
         )?;
         clear_worktree_except_git(&ws_dir)?;
         copy_repo_snapshot(self.paths.root(), &ws_dir)?;
+        self.prepare_worktree(&ws_dir)?;
         // Phase 10 / 12: the rebuild wiped the scaffolding — regenerate it for
         // the new snapshot (the exclude entries survived in
         // `.git/info/exclude`).
@@ -342,6 +496,168 @@ pub type Workspace = WorkspaceRecord;
 /// The git branch dedicated to a task.
 pub fn branch_name(task_id: &str) -> String {
     format!("{BRANCH_PREFIX}/{task_id}")
+}
+
+/// Recursively copy a bootstrapped directory, skipping VCS/control dirs and
+/// never following a symlinked directory.
+fn copy_directory(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == std::ffi::OsStr::new(".git") || name == std::ffi::OsStr::new(".zou") {
+            continue;
+        }
+        let from = entry.path();
+        let to = dst.join(&name);
+        let meta = std::fs::symlink_metadata(&from)?;
+        if meta.is_dir() {
+            copy_directory(&from, &to)?;
+        } else {
+            copy_one(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
+fn run_bootstrap_command(ws_dir: &Path, command: &str) -> Result<()> {
+    #[cfg(unix)]
+    let mut child = {
+        let mut child = Command::new("sh");
+        child.args(["-c", command]);
+        child
+    };
+    #[cfg(windows)]
+    let mut child = {
+        let mut child = Command::new("cmd");
+        child.args(["/C", command]);
+        child
+    };
+    child
+        .current_dir(ws_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    crate::child_env::prepare(&mut child, ws_dir);
+    let output = child.output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return Err(Error::Workspace(format!(
+            "bootstrap_cmd failed (`{command}`): {}",
+            detail.chars().take(1_500).collect::<String>()
+        )));
+    }
+    Ok(())
+}
+
+fn prepare_cache_dirs(ws_dir: &Path) -> Result<()> {
+    for name in ["target", "tmp", "eslint", "npm", "pip", "sccache"] {
+        std::fs::create_dir_all(ws_dir.join(".zou-cache").join(name))?;
+    }
+    Ok(())
+}
+
+fn ensure_excluded(ws_dir: &Path) -> Result<()> {
+    let exclude = ws_dir.join(".git").join("info").join("exclude");
+    if let Some(parent) = exclude.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut text = std::fs::read_to_string(&exclude).unwrap_or_default();
+    for pattern in [
+        "/.zou-cache/",
+        "/.opencode/opencode.json",
+        "CODEBASE_MAP.md",
+        "PRIOR_AGENT_CONTEXT.md",
+    ] {
+        if !text.lines().any(|line| line.trim() == pattern) {
+            if !text.ends_with('\n') && !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(pattern);
+            text.push('\n');
+        }
+    }
+    std::fs::write(exclude, text)?;
+    Ok(())
+}
+
+/// Merge Zunesha's safety settings into a workspace-local OpenCode config.
+///
+/// The external-directory jail keeps the agent inside the task worktree; the
+/// step cap plus `doom_loop = "ask"` gives OpenCode a chance to emit a
+/// structured progress/remaining-work summary before a hard provider limit.
+/// Existing user keys are preserved.
+fn install_opencode_guardrails(ws_dir: &Path, config: &ProjectConfig) -> Result<()> {
+    let dir = ws_dir.join(".opencode");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("opencode.json");
+    let mut root = if path.is_file() {
+        let text = std::fs::read_to_string(&path)?;
+        match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(value) if value.is_object() => value,
+            Ok(_) | Err(_) => {
+                eprintln!(
+                    "warning: {} is not a JSON object; writing a fresh guardrail config",
+                    path.display()
+                );
+                serde_json::json!({})
+            }
+        }
+    } else {
+        serde_json::json!({})
+    };
+
+    if !root.get("permission").is_some_and(|v| v.is_object()) {
+        root["permission"] = serde_json::json!({});
+    }
+    root["permission"]["external_directory"] = serde_json::json!("deny");
+
+    if !root.get("agent").is_some_and(|v| v.is_object()) {
+        root["agent"] = serde_json::json!({});
+    }
+    for agent in ["build", "plan"] {
+        if !root["agent"].get(agent).is_some_and(|v| v.is_object()) {
+            root["agent"][agent] = serde_json::json!({});
+        }
+        root["agent"][agent]["steps"] = serde_json::json!(config.opencode_steps);
+        root["agent"][agent]["doom_loop"] = serde_json::json!("ask");
+    }
+    let mut text = serde_json::to_string_pretty(&root)
+        .map_err(|e| Error::Workspace(format!("could not serialize opencode config: {e}")))?;
+    text.push('\n');
+    std::fs::write(&path, text)?;
+    Ok(())
+}
+
+fn is_interface_line(line: &str) -> bool {
+    if line.starts_with("//") || line.starts_with('#') || line.starts_with('*') {
+        return false;
+    }
+    [
+        "pub ",
+        "pub(",
+        "export ",
+        "export default ",
+        "interface ",
+        "type ",
+        "class ",
+        "function ",
+        "fn ",
+        "struct ",
+        "enum ",
+        "trait ",
+        "impl ",
+        "const ",
+        "static ",
+    ]
+    .iter()
+    .any(|prefix| line.starts_with(prefix))
 }
 
 /// Validate a task id before using it as a path component.

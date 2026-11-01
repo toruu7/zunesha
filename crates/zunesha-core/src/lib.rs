@@ -40,11 +40,14 @@ pub mod db;
 pub mod error;
 pub mod eval;
 pub mod git;
+pub mod hygiene;
 pub mod init;
 pub mod integrator;
 pub mod paths;
 pub mod planner;
 pub mod prior_context;
+pub mod project_config;
+pub mod recovery;
 pub mod sandbox;
 pub mod task;
 pub mod worker;
@@ -60,11 +63,19 @@ pub use dag::{blocked_tasks, promote_ready, recover_stuck};
 pub use db::{Database, RunEvent, RunRecord, WorkspaceRecord};
 pub use error::{Error, Result};
 pub use eval::{EvalCommand, EvalOutcome};
+pub use hygiene::{disk_usage, prune_workspaces, DiskUsage};
 pub use init::{init_project, InitReport};
-pub use integrator::{approve_task, ApproveOutcome, Integrator, MergeOutcome};
+pub use integrator::{
+    approve_task, rebase_task, ApproveOutcome, Integrator, MergeOutcome, RebaseOutcome,
+};
 pub use paths::ZuneshaPaths;
 pub use planner::{plan, plan_with, plan_with_attachments, Planner, MAX_PLAN_TASKS};
+pub use project_config::{is_safe_relative, ProjectConfig};
+pub use recovery::{
+    classify_agent_stop, classify_log_text, handoff_from_output, log_tail, record_stop,
+    resume_task, ResumeMode, LOG_TAIL_CHARS,
+};
 pub use sandbox::{redact_secrets, SandboxMode, SandboxPolicy};
-pub use task::{Task, TaskStatus, MAX_EVAL_RETRIES};
+pub use task::{StopReason, Task, TaskStatus, MAX_EVAL_RETRIES};
 pub use worker::{AgentCommand, StreamKind, WorkerEvent, WorkerPool, DEFAULT_MAX_CONCURRENCY};
 pub use workspace::{branch_name, ConflictPrep, Workspace, WorkspaceManager};

@@ -54,7 +54,8 @@
 //! *and* a `busy_timeout`, so concurrent writers queue instead of failing.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -66,9 +67,12 @@ use crate::control::{RunControl, RunRegistry};
 use crate::db::{Database, RunRecord};
 use crate::error::{Error, Result};
 use crate::eval::{self, EvalCommand};
+use crate::hygiene::disk_usage;
 use crate::paths::ZuneshaPaths;
+use crate::project_config::ProjectConfig;
+use crate::recovery;
 use crate::sandbox::{redact_secrets, SandboxMode, SandboxPolicy};
-use crate::task::{Task, TaskStatus, MAX_EVAL_RETRIES};
+use crate::task::{StopReason, Task, TaskStatus};
 use crate::workspace::WorkspaceManager;
 
 /// Flush accumulated logs to the database at least this often while an agent
@@ -220,6 +224,27 @@ impl AgentCommand {
             }
             AgentProvider::Antigravity => Some(Self::antigravity(config.model())),
         }
+    }
+
+    /// Build a command for an explicitly named provider, reusing that
+    /// provider's saved model when one exists.
+    pub fn for_provider(config: &Config, provider: AgentProvider) -> Option<Self> {
+        let model = config.model_for(provider).map(str::to_string);
+        let mut config = config.clone();
+        config.agent.provider = provider;
+        config.agent.model = model;
+        Self::from_config(&config)
+    }
+
+    /// Parse one `fallback_agents` entry. A bare provider name resolves to that
+    /// provider's saved command; anything else is treated as a full command
+    /// line honoring `{prompt}` / `{workspace}`.
+    pub fn from_fallback(spec: &str, config: &Config) -> Option<Self> {
+        let spec = spec.trim();
+        if let Ok(provider) = AgentProvider::parse(spec) {
+            return Self::for_provider(config, provider);
+        }
+        Self::from_spec(spec).ok()
     }
 
     /// The built-in Antigravity headless invocation.
@@ -408,6 +433,8 @@ enum AgentOutcome {
     Exited(bool),
     /// The per-attempt wall-clock limit elapsed and the tree was killed.
     TimedOut,
+    /// No stdout and no workspace file activity for the idle timeout.
+    Hung,
     /// A human requested cancellation and the tree was killed.
     Cancelled,
 }
@@ -416,6 +443,7 @@ enum WaitOutcome {
     Exited(std::process::ExitStatus),
     Cancelled,
     TimedOut,
+    Hung,
 }
 
 /// Read `ZOU_AGENT_TIMEOUT_SECS`, defaulting to 30 minutes.
@@ -435,6 +463,8 @@ pub struct WorkerPool {
     db_path: PathBuf,
     paths: ZuneshaPaths,
     agent: AgentCommand,
+    fallbacks: Vec<AgentCommand>,
+    project: ProjectConfig,
     eval: EvalCommand,
     eval_timeout: Duration,
     agent_timeout: Duration,
@@ -458,12 +488,21 @@ impl WorkerPool {
             max_concurrency
         };
         let (events, _) = broadcast::channel(1024);
+        let project = ProjectConfig::load_or_default(paths.root());
+        let saved_config = Config::load().unwrap_or_default();
+        let fallbacks = project
+            .fallback_agents
+            .iter()
+            .filter_map(|spec| AgentCommand::from_fallback(spec, &saved_config))
+            .collect();
         Self {
             db_path: paths.state_db(),
             semaphore: Arc::new(Semaphore::new(max_concurrency)),
             max_concurrency,
             paths,
             agent,
+            fallbacks,
+            project,
             eval: EvalCommand::from_env(),
             eval_timeout: eval::timeout_from_env(),
             agent_timeout: agent_timeout_from_env(),
@@ -494,6 +533,12 @@ impl WorkerPool {
     /// Override the containment mode (tests, programmatic config).
     pub fn with_sandbox_mode(mut self, mode: SandboxMode) -> Self {
         self.sandbox_mode = mode;
+        self
+    }
+
+    /// Override project-local settings (tests, embedding).
+    pub fn with_project_config(mut self, project: ProjectConfig) -> Self {
+        self.project = project;
         self
     }
 
@@ -590,6 +635,19 @@ impl WorkerPool {
         &self,
         task_id: String,
     ) -> Result<tokio::task::JoinHandle<Result<bool>>> {
+        // Circuit breaker: never start a copy-based workspace when the disk is
+        // nearly full. Failing open (no `df`) is deliberate — Windows and
+        // unusual filesystems should still be usable.
+        let usage = disk_usage(&self.paths);
+        if usage.below_floor(self.project.min_free_disk_gb) {
+            return Err(Error::Workspace(format!(
+                "not enough free disk space to start {task_id}: {} free, minimum {} GiB \
+                 (raise/lower min_free_disk_gb in .zou/config.toml)",
+                usage.free_label.as_deref().unwrap_or("unknown"),
+                self.project.min_free_disk_gb
+            )));
+        }
+
         // Claim the task up-front (outside the semaphore) so the UI flips to
         // IN_PROGRESS immediately even while the worker waits for a slot.
         let task = {
@@ -608,6 +666,7 @@ impl WorkerPool {
             db.set_worker_logs(&task_id, "")?;
             db.set_agent_output(&task_id, "")?;
             db.set_diff(&task_id, "")?;
+            db.clear_recovery_state(&task_id)?;
             task
         };
         self.emit(WorkerEvent::StatusChanged {
@@ -655,6 +714,7 @@ impl WorkerPool {
             db.set_worker_logs(&task_id, "")?;
             db.set_agent_output(&task_id, "")?;
             db.set_diff(&task_id, "")?;
+            db.clear_recovery_state(&task_id)?;
             task
         };
         let control = self.controls.register(&task_id);
@@ -673,11 +733,14 @@ impl WorkerPool {
             db_path: self.db_path.clone(),
             paths: self.paths.clone(),
             agent: self.agent.clone(),
+            fallbacks: self.fallbacks.clone(),
+            project: self.project.clone(),
             eval: self.eval.clone(),
             eval_timeout: self.eval_timeout,
             agent_timeout: self.agent_timeout,
             sandbox_mode: self.sandbox_mode,
             events: self.events.clone(),
+            transcript: Arc::new(Mutex::new(String::new())),
         });
         let semaphore = self.semaphore.clone();
         let controls = self.controls.clone();
@@ -708,11 +771,17 @@ struct WorkerHandle {
     db_path: PathBuf,
     paths: ZuneshaPaths,
     agent: AgentCommand,
+    fallbacks: Vec<AgentCommand>,
+    project: ProjectConfig,
     eval: EvalCommand,
     eval_timeout: Duration,
     agent_timeout: Duration,
     sandbox_mode: SandboxMode,
     events: broadcast::Sender<WorkerEvent>,
+    /// Raw transcript accumulated for failure classification and the persisted
+    /// log tail. The collector owns the authoritative copy; this shared buffer
+    /// lets the run loop classify a failure without racing its final flush.
+    transcript: Arc<Mutex<String>>,
 }
 
 impl WorkerHandle {
@@ -813,6 +882,7 @@ impl AgentOutcome {
             Self::Exited(true) => "success",
             Self::Exited(false) => "failed",
             Self::TimedOut => "timed_out",
+            Self::Hung => "hung",
             Self::Cancelled => "cancelled",
         }
     }
@@ -849,13 +919,14 @@ async fn run_one(
     let journal = RunJournal::start(pool, &task, mode)?;
 
     // Workspace setup does blocking filesystem + git work; keep it off the
-    // async runtime. The Phase 10 / 12 reference documents are read here too —
-    // once per run, identical for every prompt of that run.
+    // async runtime. The Phase 10 / 12 reference documents and the upstream
+    // DAG contracts are read here too — once per run, identical for every
+    // prompt of that run.
     let setup = {
         let pool = pool.clone();
         let task_id = task_id.clone();
         tokio::task::spawn_blocking(
-            move || -> Result<(String, Option<String>, Option<String>)> {
+            move || -> Result<(String, Option<String>, Option<String>, String)> {
                 let db = pool.open_db()?;
                 let mgr = WorkspaceManager::new(pool.paths.clone());
                 let ws_dir = match mode {
@@ -879,22 +950,23 @@ async fn run_one(
                 };
                 let map = crate::codebase_map::read(Path::new(&ws_dir));
                 let prior = crate::prior_context::read(Path::new(&ws_dir));
-                Ok((ws_dir, map, prior))
+                let upstream = upstream_contracts(&db, &task_id);
+                Ok((ws_dir, map, prior, upstream))
             },
         )
         .await
         .map_err(|e| Error::Workspace(format!("workspace setup panicked: {e}")))
     };
-    let (ws_dir, codebase_map, prior_context) = match setup {
+    let (ws_dir, codebase_map, prior_context, upstream_context) = match setup {
         Ok(Ok(value)) => value,
         Ok(Err(error)) => {
             journal.finish("ERROR", Some("workspace_setup"), &error.to_string(), false);
-            release_after_setup_error(pool, &task_id, mode).await;
+            release_after_setup_error(pool, &task_id, mode, &error.to_string()).await;
             return Err(error);
         }
         Err(error) => {
             journal.finish("ERROR", Some("workspace_setup"), &error.to_string(), false);
-            release_after_setup_error(pool, &task_id, mode).await;
+            release_after_setup_error(pool, &task_id, mode, &error.to_string()).await;
             return Err(error);
         }
     };
@@ -918,6 +990,16 @@ async fn run_one(
         RunMode::ResolveConflicts => TaskStatus::ResolvingConflicts,
     };
 
+    let eval_command = pool
+        .project
+        .verify_cmd
+        .as_deref()
+        .map(EvalCommand::fixed)
+        .unwrap_or_else(|| pool.eval.clone());
+    let max_verify_retries = pool.project.max_verify_retries;
+    let mut active_agent = pool.agent.clone();
+    let mut fallback_cursor = 0usize;
+
     let drive = async {
         loop {
             // --- Agent attempt --------------------------------------------
@@ -925,6 +1007,10 @@ async fn run_one(
                 RunMode::Normal => render_prompt(&task.title, &description),
                 RunMode::ResolveConflicts => render_conflict_prompt(&task.title, &description),
             };
+            if !upstream_context.trim().is_empty() {
+                prompt.push_str("\n\n");
+                prompt.push_str(&upstream_context);
+            }
             // Phase 12: prior work from the source checkout, then Phase 10's
             // static repository map last — reference material, identical for
             // every attempt of this run.
@@ -941,64 +1027,185 @@ async fn run_one(
                 serde_json::json!({
                     "attempt": retry_count + 1,
                     "timeout_secs": pool.agent_timeout.as_secs(),
+                    "program": active_agent.program,
                 }),
             );
-            let outcome = run_agent_once(pool, &ws_dir, &prompt, &line_tx, &control).await?;
+            let outcome = match run_agent_once(
+                pool,
+                &ws_dir,
+                &prompt,
+                &line_tx,
+                &control,
+                &active_agent,
+            )
+            .await
+            {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    // Spawn/permission failures are classified stops, not
+                    // internal panics: preserve the workspace and let a human
+                    // choose Continue/Feedback/Reset.
+                    let detail = format!("The agent could not start: {error}");
+                    description = append_run_note(&description, "Agent start failed", &detail);
+                    persist_stop(
+                        pool,
+                        &task_id,
+                        &description,
+                        StopReason::AgentError,
+                        &detail,
+                    )?;
+                    journal.event(
+                        "run_stopped",
+                        serde_json::json!({
+                            "reason": StopReason::AgentError.as_str(),
+                            "status": TaskStatus::NeedsInteraction.as_str(),
+                        }),
+                    );
+                    return Ok::<(TaskStatus, bool), Error>((TaskStatus::NeedsInteraction, false));
+                }
+            };
             journal.event(
                 "agent_finished",
                 serde_json::json!({ "outcome": outcome.label() }),
             );
+
+            // Some CLIs exit 0 after printing a quota warning. Treat that as a
+            // classified stop instead of validating a partial response.
+            if matches!(outcome, AgentOutcome::Exited(true)) {
+                let transcript = transcript_snapshot(pool);
+                if let Some(reason) = recovery::classify_log_text(&transcript) {
+                    if switch_to_fallback(
+                        pool,
+                        reason,
+                        &line_tx,
+                        &journal,
+                        &mut fallback_cursor,
+                        &mut active_agent,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                    let detail = format!(
+                        "The agent exited successfully but reported {}; the result was not \
+                         validated. Partial work and the worktree are preserved.",
+                        reason.label()
+                    );
+                    description = append_run_note(&description, "Agent quota stop", &detail);
+                    persist_stop(pool, &task_id, &description, reason, &detail)?;
+                    journal.event(
+                        "run_stopped",
+                        serde_json::json!({
+                            "reason": reason.as_str(),
+                            "status": TaskStatus::NeedsInteraction.as_str(),
+                        }),
+                    );
+                    return Ok((TaskStatus::NeedsInteraction, false));
+                }
+            }
+
             match outcome {
                 AgentOutcome::Exited(true) => {}
-                AgentOutcome::Exited(false) => {
-                    // Normal run: the agent failed; a human decides the next
-                    // attempt. Conflict run: the overlap could not be
-                    // reconciled, and there is no from-scratch re-plan — park
-                    // for a human.
-                    return Ok::<(TaskStatus, bool), Error>(match mode {
-                        RunMode::Normal => (TaskStatus::Todo, false),
-                        RunMode::ResolveConflicts => (TaskStatus::FailedNeedsHuman, false),
-                    });
-                }
-                AgentOutcome::TimedOut | AgentOutcome::Cancelled => {
-                    let (heading, detail, to) = match (outcome, mode) {
-                        (AgentOutcome::TimedOut, RunMode::Normal) => (
+                AgentOutcome::Exited(false) | AgentOutcome::TimedOut | AgentOutcome::Hung => {
+                    let transcript = transcript_snapshot(pool);
+                    let reason = match outcome {
+                        AgentOutcome::Exited(false) => {
+                            recovery::classify_agent_stop(false, &transcript)
+                                .unwrap_or(StopReason::AgentError)
+                        }
+                        AgentOutcome::TimedOut | AgentOutcome::Hung => StopReason::HungProcess,
+                        AgentOutcome::Exited(true) | AgentOutcome::Cancelled => unreachable!(),
+                    };
+
+                    // Quota/token failures are the one case where trying a
+                    // configured backup provider can finish the task without a
+                    // human. Cooldown only applies to rate limits.
+                    if switch_to_fallback(
+                        pool,
+                        reason,
+                        &line_tx,
+                        &journal,
+                        &mut fallback_cursor,
+                        &mut active_agent,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+
+                    let (heading, detail) = match outcome {
+                        AgentOutcome::Exited(false) => (
+                            "Agent stopped",
+                            format!(
+                                "The agent exited non-zero ({}). Partial work and the worktree \
+                                 are preserved.",
+                                reason.label()
+                            ),
+                        ),
+                        AgentOutcome::TimedOut => (
                             "Agent timeout",
                             format!(
                                 "The agent exceeded the {}s wall-clock limit and was stopped. \
-                                 Retry when you are ready.",
+                                 Partial work and the worktree are preserved.",
                                 pool.agent_timeout.as_secs()
                             ),
-                            TaskStatus::Todo,
                         ),
-                        (AgentOutcome::TimedOut, RunMode::ResolveConflicts) => (
-                            "Agent timeout",
+                        AgentOutcome::Hung => (
+                            "Agent hung",
                             format!(
-                                "Conflict resolution exceeded the {}s wall-clock limit and was \
-                                 stopped. Inspect the workspace and retry.",
-                                pool.agent_timeout.as_secs()
+                                "No stdout or workspace file activity for {}s; the process tree \
+                                 was stopped. Partial work and the worktree are preserved.",
+                                pool.project.idle_timeout_secs
                             ),
-                            TaskStatus::FailedNeedsHuman,
                         ),
-                        (AgentOutcome::Cancelled, RunMode::Normal) => (
+                        AgentOutcome::Exited(true) | AgentOutcome::Cancelled => unreachable!(),
+                    };
+                    description = append_run_note(&description, heading, &detail);
+                    persist_stop(pool, &task_id, &description, reason, &detail)?;
+                    journal.event(
+                        "run_stopped",
+                        serde_json::json!({
+                            "reason": reason.as_str(),
+                            "status": TaskStatus::NeedsInteraction.as_str(),
+                        }),
+                    );
+                    return Ok((TaskStatus::NeedsInteraction, false));
+                }
+                AgentOutcome::Cancelled => {
+                    let (heading, detail, to) = match mode {
+                        RunMode::Normal => (
                             "Run cancelled",
                             "The run was cancelled by a human. Retry when you are ready."
                                 .to_string(),
                             TaskStatus::Todo,
                         ),
-                        (AgentOutcome::Cancelled, RunMode::ResolveConflicts) => (
+                        RunMode::ResolveConflicts => (
                             "Run cancelled",
                             "Conflict resolution was cancelled by a human. Inspect the workspace \
                              and retry."
                                 .to_string(),
-                            TaskStatus::FailedNeedsHuman,
+                            TaskStatus::NeedsInteraction,
                         ),
-                        (AgentOutcome::Exited(_), _) => unreachable!("handled above"),
                     };
                     description = append_run_note(&description, heading, &detail);
                     {
                         let db = pool.open_db()?;
                         db.update_task(&task_id, None, Some(&description))?;
+                        if to == TaskStatus::NeedsInteraction {
+                            let tail = recovery::log_tail(
+                                &transcript_snapshot(pool),
+                                recovery::LOG_TAIL_CHARS,
+                            );
+                            let summary = recovery::handoff_from_output("", &description);
+                            db.set_recovery_state(
+                                &task_id,
+                                None,
+                                true,
+                                &tail,
+                                &summary,
+                                &detail,
+                            )?;
+                        }
                     }
                     journal.event(
                         "run_interrupted",
@@ -1018,7 +1225,7 @@ async fn run_one(
                 "status_changed",
                 serde_json::json!({ "from": from.as_str(), "to": status.as_str() }),
             );
-            let Some(argv) = pool.eval.resolve(Path::new(&ws_dir)) else {
+            let Some(argv) = eval_command.resolve(Path::new(&ws_dir)) else {
                 // Nothing to validate in this project: exit-0 is as good as
                 // a green test run, so go straight to human review.
                 journal.event("validation_skipped", serde_json::json!({}));
@@ -1054,13 +1261,28 @@ async fn run_one(
                         "Conflict resolution was cancelled by a human during validation. \
                          Inspect the workspace and retry."
                             .to_string(),
-                        TaskStatus::FailedNeedsHuman,
+                        TaskStatus::NeedsInteraction,
                     ),
                 };
                 description = append_run_note(&description, heading, &detail);
                 {
                     let db = pool.open_db()?;
                     db.update_task(&task_id, None, Some(&description))?;
+                    if to == TaskStatus::NeedsInteraction {
+                        let tail = recovery::log_tail(
+                            &transcript_snapshot(pool),
+                            recovery::LOG_TAIL_CHARS,
+                        );
+                        let summary = recovery::handoff_from_output("", &description);
+                        db.set_recovery_state(
+                            &task_id,
+                            None,
+                            true,
+                            &tail,
+                            &summary,
+                            &detail,
+                        )?;
+                    }
                 }
                 journal.event(
                     "run_interrupted",
@@ -1090,8 +1312,29 @@ async fn run_one(
                 let db = pool.open_db()?;
                 db.set_retry_count(&task_id, retry_count)?;
             }
-            if retry_count >= MAX_EVAL_RETRIES {
-                return Ok((TaskStatus::FailedNeedsHuman, false));
+            if retry_count > max_verify_retries {
+                let detail = format!(
+                    "The verification command failed {} times; the retry budget \
+                     (max_verify_retries = {max_verify_retries}) is exhausted. Partial work \
+                     and the worktree are preserved.",
+                    retry_count
+                );
+                description = append_run_note(&description, "Verification failed", &detail);
+                persist_stop(
+                    pool,
+                    &task_id,
+                    &description,
+                    StopReason::VerificationFailed,
+                    &detail,
+                )?;
+                journal.event(
+                    "run_stopped",
+                    serde_json::json!({
+                        "reason": StopReason::VerificationFailed.as_str(),
+                        "status": TaskStatus::NeedsInteraction.as_str(),
+                    }),
+                );
+                return Ok((TaskStatus::NeedsInteraction, false));
             }
             description = eval::build_fix_description(&description, &outcome.output);
             {
@@ -1130,11 +1373,22 @@ async fn run_one(
         // — the diff would just show as empty in the dashboard.
         let pool = pool.clone();
         let diff_task_id = task_id.clone();
+        let acceptance_check = pool.project.acceptance_check;
         let _ = tokio::task::spawn_blocking(move || -> Result<()> {
             let db = pool.open_db()?;
             let mgr = WorkspaceManager::new(pool.paths.clone());
             match mgr.generate_diff(&db, &diff_task_id) {
-                Ok(diff) => db.set_diff(&diff_task_id, &diff)?,
+                Ok(diff) => {
+                    db.set_diff(&diff_task_id, &diff)?;
+                    if acceptance_check && diff.trim().is_empty() {
+                        db.mark_attention(
+                            &diff_task_id,
+                            StopReason::VerificationFailed,
+                            "Acceptance check: the agent produced no diff. Review the task \
+                             description and resume with feedback if work is missing.",
+                        )?;
+                    }
+                }
                 Err(e) => {
                     // Non-fatal: the dashboard shows an empty diff; note why.
                     eprintln!("warning: diff capture failed for {diff_task_id}: {e}");
@@ -1156,23 +1410,162 @@ async fn run_one(
     Ok(success)
 }
 
-/// Release a task whose workspace setup failed after it was claimed.
-///
-/// Leaving it `IN_PROGRESS` would strand the task until a manual recovery, so
-/// release a normal run to `TODO` and park a conflict-resolution run for a
-/// human (its workspace state needs inspection). Best-effort: the journal row
-/// already records the setup error even if this transition fails.
-async fn release_after_setup_error(pool: &WorkerHandle, task_id: &str, mode: RunMode) {
-    let to = match mode {
-        RunMode::Normal => TaskStatus::Todo,
-        RunMode::ResolveConflicts => TaskStatus::FailedNeedsHuman,
+/// Switch to the next configured fallback agent after a quota/token stop.
+/// Returns false when no fallback remains (the caller then parks the task).
+async fn switch_to_fallback(
+    pool: &WorkerHandle,
+    reason: StopReason,
+    line_tx: &mpsc::UnboundedSender<(StreamKind, String)>,
+    journal: &RunJournal,
+    cursor: &mut usize,
+    active_agent: &mut AgentCommand,
+) -> bool {
+    if !matches!(reason, StopReason::RateLimit | StopReason::TokenLimit) {
+        return false;
+    }
+    let Some(fallback) = pool.fallbacks.get(*cursor).cloned() else {
+        return false;
     };
+    *cursor += 1;
+    if reason == StopReason::RateLimit && pool.project.rate_limit_cooldown_secs > 0 {
+        let delay = Duration::from_secs(pool.project.rate_limit_cooldown_secs);
+        let _ = line_tx.send((
+            StreamKind::Stderr,
+            format!(
+                "[zou] rate limit hit; cooling down {}s before fallback `{}`",
+                delay.as_secs(),
+                fallback.program
+            ),
+        ));
+        tokio::time::sleep(delay).await;
+    }
+    journal.event(
+        "agent_fallback",
+        serde_json::json!({
+            "reason": reason.as_str(),
+            "program": fallback.program,
+        }),
+    );
+    let _ = line_tx.send((
+        StreamKind::Stderr,
+        format!(
+            "[zou] switching to fallback agent `{}` after {}",
+            fallback.program,
+            reason.as_str()
+        ),
+    ));
+    *active_agent = fallback;
+    true
+}
+
+/// Persist a classified stop plus the current transcript tail and handoff
+/// summary. The status transition happens after this so a crash between the
+/// two still leaves the reason visible.
+fn persist_stop(
+    pool: &WorkerHandle,
+    task_id: &str,
+    description: &str,
+    reason: StopReason,
+    detail: &str,
+) -> Result<()> {
+    let db = pool.open_db()?;
+    let current = db.require_task(task_id)?;
+    db.update_task(task_id, None, Some(description))?;
+    let transcript = transcript_snapshot(pool);
+    let tail = recovery::log_tail(&transcript, recovery::LOG_TAIL_CHARS);
+    let summary = if current.handoff_summary.trim().is_empty() {
+        recovery::handoff_from_output(&current.agent_output, description)
+    } else {
+        current.handoff_summary
+    };
+    db.set_recovery_state(task_id, Some(reason), true, &tail, &summary, detail)?;
+    Ok(())
+}
+
+fn transcript_snapshot(pool: &WorkerHandle) -> String {
+    pool.transcript
+        .lock()
+        .map(|text| text.clone())
+        .unwrap_or_default()
+}
+
+/// Append to the shared transcript, keeping only a bounded tail so a chatty
+/// agent cannot grow worker memory without limit.
+fn append_transcript(transcript: &Mutex<String>, line: &str) {
+    if let Ok(mut text) = transcript.lock() {
+        text.push_str(line);
+        text.push('\n');
+        const CAP: usize = 64 * 1024;
+        if text.len() > CAP {
+            let mut start = text.len() - CAP;
+            while start < text.len() && !text.is_char_boundary(start) {
+                start += 1;
+            }
+            let tail = text[start..].to_string();
+            *text = tail;
+        }
+    }
+}
+
+/// Build the parent-to-child contract section from every DAG ancestor that
+/// produced a handoff summary.
+fn upstream_contracts(db: &Database, task_id: &str) -> String {
+    let Ok(ancestors) = db.depends_on(task_id) else {
+        return String::new();
+    };
+    let mut out = String::from("## Upstream task contracts\n");
+    let mut count = 0;
+    for ancestor in ancestors {
+        let Ok(Some(task)) = db.get_task(&ancestor) else {
+            continue;
+        };
+        if task.status != TaskStatus::Done || task.handoff_summary.trim().is_empty() {
+            continue;
+        }
+        out.push_str(&format!("\n### {} — {}\n", task.id, task.title));
+        out.push_str(task.handoff_summary.trim());
+        out.push('\n');
+        count += 1;
+        if out.chars().count() > 8_000 {
+            break;
+        }
+    }
+    if count == 0 {
+        String::new()
+    } else {
+        out
+    }
+}
+
+/// Park a task whose workspace setup failed after it was claimed.
+///
+/// A setup failure is not a normal failed attempt: there may be no worktree to
+/// continue from, but the human still needs the reason and a retry control.
+/// Best-effort: the journal row already records the setup error even if this
+/// transition fails.
+async fn release_after_setup_error(
+    pool: &WorkerHandle,
+    task_id: &str,
+    _mode: RunMode,
+    detail: &str,
+) {
     let Ok(db) = pool.open_db() else {
         return;
     };
     let Ok(Some(task)) = db.get_task(task_id) else {
         return;
     };
+    let to = TaskStatus::NeedsInteraction;
+    let tail = recovery::log_tail(detail, recovery::LOG_TAIL_CHARS);
+    let summary = recovery::handoff_from_output("", &task.description);
+    let _ = db.set_recovery_state(
+        task_id,
+        Some(StopReason::AgentError),
+        true,
+        &tail,
+        &summary,
+        detail,
+    );
     if task.status == to || db.set_status(task_id, to).is_err() {
         return;
     }
@@ -1219,6 +1612,7 @@ async fn run_agent_once(
     prompt: &str,
     line_tx: &mpsc::UnboundedSender<(StreamKind, String)>,
     control: &RunControl,
+    agent: &AgentCommand,
 ) -> Result<AgentOutcome> {
     // A cancel can arrive while this task was waiting for a concurrency slot
     // or during workspace setup. Do not spawn an agent just to kill it.
@@ -1232,7 +1626,7 @@ async fn run_agent_once(
     let policy = SandboxPolicy::new(ws_dir, pool.sandbox_mode)?;
     policy.validate()?;
 
-    let (program, args) = pool.agent.render(prompt, ws_dir);
+    let (program, args) = agent.render(prompt, ws_dir);
     let (program, args) = policy.wrap(&program, &args)?;
 
     // Spawn the agent with piped output, running inside the workspace. The
@@ -1269,25 +1663,51 @@ async fn run_agent_once(
         .take()
         .ok_or_else(|| Error::Workspace("agent stderr missing".into()))?;
 
+    // Heartbeat: any stdout line or workspace file mtime resets the idle
+    // timer. A long build with no output still counts as activity.
+    let activity = Arc::new(AtomicU64::new(now_millis()));
+    let stop_monitor = Arc::new(AtomicBool::new(false));
+    spawn_file_activity_monitor(
+        Path::new(ws_dir),
+        activity.clone(),
+        stop_monitor.clone(),
+    );
+
     // Fan both streams into the shared channel. These readers hold clones;
     // when both finish (after the agent exits and we await them below) the
     // phase is fully drained, but the channel itself stays open for later
     // phases — the run's collector only stops when `run_one` drops the
     // original sender.
-    let out_task = tokio::spawn(read_lines(stdout, StreamKind::Stdout, line_tx.clone()));
-    let err_task = tokio::spawn(read_lines(stderr, StreamKind::Stderr, line_tx.clone()));
+    let out_task = tokio::spawn(read_lines(
+        stdout,
+        StreamKind::Stdout,
+        line_tx.clone(),
+        activity.clone(),
+        pool.transcript.clone(),
+    ));
+    let err_task = tokio::spawn(read_lines(
+        stderr,
+        StreamKind::Stderr,
+        line_tx.clone(),
+        activity.clone(),
+        pool.transcript.clone(),
+    ));
 
+    let idle_timeout = Duration::from_secs(pool.project.idle_timeout_secs);
+    let idle_activity = activity.clone();
     let wait = {
         let wait = child.wait();
         tokio::pin!(wait);
         tokio::select! {
             _ = control.cancelled() => WaitOutcome::Cancelled,
             _ = tokio::time::sleep(pool.agent_timeout) => WaitOutcome::TimedOut,
+            _ = wait_for_idle(idle_activity, idle_timeout) => WaitOutcome::Hung,
             status = &mut wait => WaitOutcome::Exited(
                 status.map_err(|e| Error::Workspace(format!("failed to wait on agent: {e}")))?,
             ),
         }
     };
+    stop_monitor.store(true, Ordering::Relaxed);
 
     let outcome = match wait {
         WaitOutcome::Exited(status) => AgentOutcome::Exited(status.success()),
@@ -1309,6 +1729,18 @@ async fn run_agent_once(
                 ),
             ));
             AgentOutcome::TimedOut
+        }
+        WaitOutcome::Hung => {
+            terminate_child(&mut child).await;
+            let _ = line_tx.send((
+                StreamKind::Stderr,
+                format!(
+                    "[zou] no stdout or workspace file activity for {}s; stopping the agent \
+                     process tree",
+                    pool.project.idle_timeout_secs
+                ),
+            ));
+            AgentOutcome::Hung
         }
     };
 
@@ -1404,15 +1836,117 @@ async fn read_lines<R>(
     reader: R,
     stream: StreamKind,
     tx: mpsc::UnboundedSender<(StreamKind, String)>,
+    activity: Arc<AtomicU64>,
+    transcript: Arc<Mutex<String>>,
 ) where
     R: tokio::io::AsyncRead + Unpin,
 {
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
+        activity.store(now_millis(), Ordering::Relaxed);
+        append_transcript(&transcript, &line);
         if tx.send((stream, line)).is_err() {
             break; // collector gone
         }
     }
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+/// Wait until the heartbeat has been quiet for `timeout`. A zero timeout
+/// disables idle detection entirely.
+async fn wait_for_idle(activity: Arc<AtomicU64>, timeout: Duration) {
+    if timeout.is_zero() {
+        std::future::pending::<()>().await;
+        return;
+    }
+    let timeout_ms = timeout.as_millis().min(u128::from(u64::MAX)) as u64;
+    loop {
+        let last = activity.load(Ordering::Relaxed);
+        let elapsed = now_millis().saturating_sub(last);
+        if elapsed >= timeout_ms {
+            return;
+        }
+        let remaining = timeout_ms - elapsed;
+        tokio::time::sleep(Duration::from_millis(remaining.min(500))).await;
+    }
+}
+
+/// Watch workspace file mtimes in a background thread. This is best-effort:
+/// a large tree is sampled (bounded) and symlinked directories are skipped.
+fn spawn_file_activity_monitor(
+    ws_dir: &Path,
+    activity: Arc<AtomicU64>,
+    stop: Arc<AtomicBool>,
+) {
+    let ws_dir = ws_dir.to_path_buf();
+    std::thread::spawn(move || {
+        while !stop.load(Ordering::Relaxed) {
+            let newest = newest_mtime_millis(&ws_dir);
+            if newest > activity.load(Ordering::Relaxed) {
+                activity.store(newest, Ordering::Relaxed);
+            }
+            for _ in 0..20 {
+                if stop.load(Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+    });
+}
+
+fn newest_mtime_millis(root: &Path) -> u64 {
+    fn walk(path: &Path, newest: &mut u64, visited: &mut usize, depth: usize) {
+        if depth > 32 || *visited > 8_000 {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if *visited > 8_000 {
+                return;
+            }
+            let name = entry.file_name();
+            if matches!(
+                name.to_str(),
+                Some(".git" | ".zou-cache" | "node_modules" | "target" | ".next")
+            ) {
+                continue;
+            }
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_symlink() {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            *visited += 1;
+            if let Ok(modified) = meta.modified() {
+                if let Ok(since) = modified.duration_since(UNIX_EPOCH) {
+                    let millis = since.as_millis().min(u128::from(u64::MAX)) as u64;
+                    if millis > *newest {
+                        *newest = millis;
+                    }
+                }
+            }
+            if kind.is_dir() {
+                walk(&entry.path(), newest, visited, depth + 1);
+            }
+        }
+    }
+    let mut newest = 0;
+    let mut visited = 0;
+    walk(root, &mut newest, &mut visited, 0);
+    newest
 }
 
 /// Turn OpenCode's `--format json` event stream into a readable transcript
@@ -1744,6 +2278,7 @@ async fn flush_logs(pool: &WorkerHandle, task_id: &str, buffer: &str, output: &s
 mod tests {
     use super::*;
     use crate::task::Task;
+    use crate::MAX_EVAL_RETRIES;
 
     /// Scratch git repo + initialized install, returning (repo, paths).
     fn scratch_install() -> (tempfile::TempDir, ZuneshaPaths) {
@@ -2448,11 +2983,15 @@ mod tests {
         assert!(!success, "non-zero exit => not success");
 
         let db = Database::open(&paths.state_db()).unwrap();
+        let task = db.require_task("t0").unwrap();
         assert_eq!(
-            status_of(&db, "t0"),
-            TaskStatus::Todo,
-            "retries are possible"
+            task.status,
+            TaskStatus::NeedsInteraction,
+            "failures park with their worktree; a human chooses the retry mode"
         );
+        assert_eq!(task.stop_reason, Some(StopReason::AgentError));
+        assert!(task.requires_attention);
+        assert!(!task.last_log_tail.is_empty());
     }
 
     #[tokio::test]
@@ -2755,7 +3294,12 @@ mod tests {
 
         let db = Database::open(&paths.state_db()).unwrap();
         let task = db.require_task("t0").unwrap();
-        assert_eq!(task.status, TaskStatus::Todo, "back to TODO for retry");
+        assert_eq!(
+            task.status,
+            TaskStatus::NeedsInteraction,
+            "failed runs stay recoverable in place"
+        );
+        assert_eq!(task.stop_reason, Some(StopReason::AgentError));
         assert!(task.diff.is_empty(), "no diff captured on failure");
     }
 
@@ -2884,7 +3428,9 @@ mod tests {
 
         let db = Database::open(&paths.state_db()).unwrap();
         let task = db.require_task("t0").unwrap();
-        assert_eq!(task.status, TaskStatus::FailedNeedsHuman);
+        assert_eq!(task.status, TaskStatus::NeedsInteraction);
+        assert_eq!(task.stop_reason, Some(StopReason::VerificationFailed));
+        assert!(task.requires_attention);
         assert_eq!(task.retry_count, MAX_EVAL_RETRIES);
         // The agent ran once + twice more to fix it, then gave up.
         assert_eq!(
@@ -2922,7 +3468,9 @@ mod tests {
 
         let db = Database::open(&paths.state_db()).unwrap();
         let task = db.require_task("t0").unwrap();
-        assert_eq!(task.status, TaskStatus::FailedNeedsHuman);
+        assert_eq!(task.status, TaskStatus::NeedsInteraction);
+        assert_eq!(task.stop_reason, Some(StopReason::VerificationFailed));
+        assert!(task.requires_attention);
         assert!(task.description.contains("timed out"));
         assert!(task.worker_logs.contains("[eval] starting"));
     }
@@ -3104,9 +3652,11 @@ mod tests {
         let task = db.require_task("t0").unwrap();
         assert_eq!(
             task.status,
-            TaskStatus::FailedNeedsHuman,
+            TaskStatus::NeedsInteraction,
             "not TODO (no from-scratch re-plan exists) and not a silent loop"
         );
+        assert_eq!(task.stop_reason, Some(StopReason::AgentError));
+        assert!(task.requires_attention);
         assert!(task.worker_logs.contains("giving-up"));
         // The markers are still in the workspace for the human to fix.
         assert!(
@@ -3230,7 +3780,9 @@ mod tests {
 
         let db = Database::open(&paths.state_db()).unwrap();
         let task = db.require_task("t0").unwrap();
-        assert_eq!(task.status, TaskStatus::Todo);
+        assert_eq!(task.status, TaskStatus::NeedsInteraction);
+        assert_eq!(task.stop_reason, Some(StopReason::HungProcess));
+        assert!(task.requires_attention);
         assert!(
             task.description.contains("## Agent timeout"),
             "the retry sees why the run stopped: {}",
@@ -3243,7 +3795,7 @@ mod tests {
         );
 
         let run = db.latest_run("t0").unwrap().expect("run row");
-        assert_eq!(run.state, "TODO");
+        assert_eq!(run.state, "NEEDS_INTERACTION");
         let kinds: Vec<String> = db
             .list_run_events("t0", 100)
             .unwrap()
@@ -3254,7 +3806,7 @@ mod tests {
             "run_started",
             "agent_started",
             "agent_finished",
-            "run_interrupted",
+            "run_stopped",
             "run_finished",
         ] {
             assert!(

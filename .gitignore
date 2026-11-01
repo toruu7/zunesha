@@ -18,3 +18,4 @@
 
 # Pinned mdBook download used by scripts/build-docs.sh
 /.cache/
+.zou/

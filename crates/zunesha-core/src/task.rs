@@ -7,6 +7,84 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
 
+/// Why a task stopped without reaching `REVIEW` (or why a review needs
+/// attention). Persisted as a stable machine-readable value so the CLI, TUI,
+/// and dashboard can all render the same badge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    /// Provider quota, free-usage limit, or HTTP 429.
+    RateLimit,
+    /// Context/token/step ceiling reached.
+    TokenLimit,
+    /// The agent exited non-zero for another reason.
+    AgentError,
+    /// The project's verification command failed after its retry budget.
+    VerificationFailed,
+    /// The reviewed diff no longer applies cleanly against the repository.
+    MergeConflict,
+    /// No stdout or workspace file activity within the idle timeout.
+    HungProcess,
+}
+
+impl StopReason {
+    /// Every reason, in a stable order for UIs and tests.
+    pub const ALL: [StopReason; 6] = [
+        StopReason::RateLimit,
+        StopReason::TokenLimit,
+        StopReason::AgentError,
+        StopReason::VerificationFailed,
+        StopReason::MergeConflict,
+        StopReason::HungProcess,
+    ];
+
+    /// The canonical string stored in SQLite and sent over the API.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RateLimit => "rate_limit",
+            Self::TokenLimit => "token_limit",
+            Self::AgentError => "agent_error",
+            Self::VerificationFailed => "verification_failed",
+            Self::MergeConflict => "merge_conflict",
+            Self::HungProcess => "hung_process",
+        }
+    }
+
+    /// Short human label for badges and status bars.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::RateLimit => "rate limit",
+            Self::TokenLimit => "token limit",
+            Self::AgentError => "agent error",
+            Self::VerificationFailed => "verification failed",
+            Self::MergeConflict => "conflict",
+            Self::HungProcess => "hung",
+        }
+    }
+}
+
+impl fmt::Display for StopReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for StopReason {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "rate_limit" => Ok(Self::RateLimit),
+            "token_limit" => Ok(Self::TokenLimit),
+            "agent_error" => Ok(Self::AgentError),
+            "verification_failed" => Ok(Self::VerificationFailed),
+            "merge_conflict" => Ok(Self::MergeConflict),
+            "hung_process" => Ok(Self::HungProcess),
+            other => Err(Error::UnknownStopReason(other.to_string())),
+        }
+    }
+}
+
 /// Lifecycle of an orchestrator task.
 ///
 /// Tasks flow forward through these states as the DAG engine, the worker pool
@@ -17,28 +95,23 @@ use crate::error::Error;
 /// BACKLOG ─▶ TODO ─▶ IN_PROGRESS ─▶ EVALUATING ─▶ REVIEW ─▶ DONE
 ///    ▲          ▲        │  ▲           │       (reject) │
 ///    │          │        │  └─retry─────┘        │       │
-///    │          └────────┴─────── (agent failed / rejected)
-///    │                             │  (retries exhausted)   │
-///    └─── (prereq reopened)        ▼                        │ (merge conflict)
-///                          FAILED_NEEDS_HUMAN ──(reject)──▶ TODO
-///                                                            │
-///                          RESOLVING_CONFLICTS ◀─────────────┘
+///    │          └────────┴─────── (human retry)  │       │
+///    │                             │                        │ (merge conflict)
+///    └─── (prereq reopened)        ▼                        │
+///                          NEEDS_INTERACTION ◀── failures  │
+///                                    │                    │
+///                          RESOLVING_CONFLICTS ◀───────────┘
 ///                                    │  agent resolves markers, then
 ///                                    └─▶ EVALUATING ──▶ REVIEW (re-approve)
 /// ```
 ///
-/// `EVALUATING` is the self-healing gate added in Phase 8: after an agent
-/// exits 0, the daemon runs the project's test/lint command in the workspace;
-/// failures send the task back to `IN_PROGRESS` (up to 3 times) with the error
-/// output appended to its prompt, and exhausted retries park the task in
-/// `FAILED_NEEDS_HUMAN` for a human.
+/// `NEEDS_INTERACTION` is the recovery state: a task that hit a rate limit,
+/// token/step cap, runtime error, verification exhaustion, or an idle timeout
+/// is parked with its worktree intact. It never silently falls back to `TODO`;
+/// a human chooses Continue, Re-run with feedback, or Reset & Restart.
 ///
-/// `RESOLVING_CONFLICTS` is the auto-merge gate added in Phase 9: when an
-/// approved diff no longer applies cleanly (the repository moved since the
-/// workspace was snapshotted), the merge is aborted, the workspace is updated
-/// to the new base with conflict markers, and an agent resolves them — then the
-/// result re-enters `EVALUATING` and, on a green run, returns to `REVIEW` so a
-/// human approves the now-clean diff.
+/// `FAILED_NEEDS_HUMAN` remains for databases/records created before the
+/// recovery state machine; new failures use `NEEDS_INTERACTION`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TaskStatus {
@@ -53,24 +126,28 @@ pub enum TaskStatus {
     Evaluating,
     /// Worker finished *and* passed validation; waiting for human review.
     Review,
+    /// Work stopped and needs a human decision. The worktree and partial
+    /// commits are preserved; the stop reason says why.
+    NeedsInteraction,
     /// An approved diff conflicted with the changed repository; an agent is
     /// resolving the merge conflict markers in the workspace (Phase 9).
     ResolvingConflicts,
     /// Approved and merged back into the main project.
     Done,
-    /// Validation failed 3 times (or a conflict could not be resolved); parked
-    /// for a human to inspect, fix, or send back to the queue.
+    /// Legacy parked state from before `NEEDS_INTERACTION`; still readable and
+    /// recoverable for existing installations.
     FailedNeedsHuman,
 }
 
 impl TaskStatus {
     /// Every status, in pipeline order.
-    pub const ALL: [TaskStatus; 8] = [
+    pub const ALL: [TaskStatus; 9] = [
         TaskStatus::Backlog,
         TaskStatus::Todo,
         TaskStatus::InProgress,
         TaskStatus::Evaluating,
         TaskStatus::Review,
+        TaskStatus::NeedsInteraction,
         TaskStatus::ResolvingConflicts,
         TaskStatus::Done,
         TaskStatus::FailedNeedsHuman,
@@ -84,11 +161,21 @@ impl TaskStatus {
             TaskStatus::InProgress => "IN_PROGRESS",
             TaskStatus::Evaluating => "EVALUATING",
             TaskStatus::Review => "REVIEW",
+            TaskStatus::NeedsInteraction => "NEEDS_INTERACTION",
             TaskStatus::ResolvingConflicts => "RESOLVING_CONFLICTS",
             TaskStatus::Done => "DONE",
             TaskStatus::FailedNeedsHuman => "FAILED_NEEDS_HUMAN",
         }
     }
+
+    /// Whether this state needs a human decision before work can continue.
+    pub fn needs_attention(self) -> bool {
+        matches!(
+            self,
+            TaskStatus::NeedsInteraction | TaskStatus::FailedNeedsHuman
+        )
+    }
+
     /// Whether a direct transition from `self` to `next` is legal.
     ///
     /// This is the policy that enforces the "Strict DAG Execution" and
@@ -99,7 +186,8 @@ impl TaskStatus {
     ///   (`BACKLOG→TODO→IN_PROGRESS→EVALUATING→REVIEW→DONE`)
     /// * `EVALUATING→IN_PROGRESS` – validation failed; the self-healing loop
     ///   re-runs the agent with the error output appended
-    /// * `EVALUATING→FAILED_NEEDS_HUMAN` – retries exhausted
+    /// * `IN_PROGRESS|EVALUATING|RESOLVING_CONFLICTS→NEEDS_INTERACTION` –
+    ///   classified stop; partial work is preserved
     /// * `REVIEW→TODO` – human rejected the work; it retries
     /// * `REVIEW→RESOLVING_CONFLICTS` – the approved diff conflicted with the
     ///   changed repository; an agent resolves the markers (Phase 9)
@@ -107,13 +195,10 @@ impl TaskStatus {
     ///   result is validated
     /// * `EVALUATING→RESOLVING_CONFLICTS` – validation of a resolved conflict
     ///   failed; the agent re-resolves with the errors in its prompt
-    /// * `RESOLVING_CONFLICTS→FAILED_NEEDS_HUMAN` – the conflict (or its
-    ///   validation) could not be resolved automatically
-    /// * `RESOLVING_CONFLICTS→TODO` – a worker crashed/was interrupted
-    ///   mid-resolution; release the claim (`zou recover`)
-    /// * `FAILED_NEEDS_HUMAN→TODO` – human sent a parked task back to the queue
-    /// * `IN_PROGRESS|EVALUATING→TODO` – a worker crashed/was interrupted;
-    ///   release the claim (`zou recover`)
+    /// * `NEEDS_INTERACTION|FAILED_NEEDS_HUMAN→TODO` – human sent a parked
+    ///   task back to the queue (Continue, feedback, or hard reset)
+    /// * `IN_PROGRESS|EVALUATING|RESOLVING_CONFLICTS→TODO` – a worker crashed
+    ///   or was interrupted; release the claim (`zou recover`)
     /// * `TODO→BACKLOG` – a prerequisite was reopened, so the task is blocked again
     /// * same→same – an idempotent no-op
     ///
@@ -133,16 +218,23 @@ impl TaskStatus {
                 | (InProgress, Evaluating)
                 | (Evaluating, Review)
                 | (Evaluating, InProgress)
+                | (InProgress, NeedsInteraction)
+                | (Evaluating, NeedsInteraction)
+                // Legacy parked state remains reachable for installations and
+                // tests that predate the recovery state machine.
+                | (InProgress, FailedNeedsHuman)
                 | (Evaluating, FailedNeedsHuman)
+                | (ResolvingConflicts, FailedNeedsHuman)
                 | (Review, Done)
                 | (Review, Todo)
                 | (Review, ResolvingConflicts)
                 | (ResolvingConflicts, Evaluating)
                 | (Evaluating, ResolvingConflicts)
-                | (ResolvingConflicts, FailedNeedsHuman)
+                | (ResolvingConflicts, NeedsInteraction)
                 | (ResolvingConflicts, Todo)
                 | (InProgress, Todo)
                 | (Evaluating, Todo)
+                | (NeedsInteraction, Todo)
                 | (FailedNeedsHuman, Todo)
                 | (Todo, Backlog)
         )
@@ -165,6 +257,7 @@ impl FromStr for TaskStatus {
             "IN_PROGRESS" => Ok(TaskStatus::InProgress),
             "EVALUATING" => Ok(TaskStatus::Evaluating),
             "REVIEW" => Ok(TaskStatus::Review),
+            "NEEDS_INTERACTION" => Ok(TaskStatus::NeedsInteraction),
             "RESOLVING_CONFLICTS" => Ok(TaskStatus::ResolvingConflicts),
             "DONE" => Ok(TaskStatus::Done),
             "FAILED_NEEDS_HUMAN" => Ok(TaskStatus::FailedNeedsHuman),
@@ -185,9 +278,7 @@ pub struct Task {
     pub description: String,
     pub status: TaskStatus,
     /// Failed validation attempts in the current review cycle (Phase 8).
-    /// Capped at [`MAX_EVAL_RETRIES`]; at the cap the task parks in
-    /// [`TaskStatus::FailedNeedsHuman`]. Reset when a human sends a parked
-    /// task back to the queue.
+    /// Capped at [`MAX_EVAL_RETRIES`]; reset when a human resumes the task.
     pub retry_count: u32,
     /// Captured worker stdout/stderr, the technical transcript (populated in
     /// Phase 4).
@@ -198,6 +289,21 @@ pub struct Task {
     pub agent_output: String,
     /// Captured `git diff` of the task's workspace (populated in Phase 3).
     pub diff: String,
+    /// Classified reason the last attempt stopped, if any.
+    #[serde(default)]
+    pub stop_reason: Option<StopReason>,
+    /// True when a human must look before this task can move forward. This is
+    /// also set on `REVIEW` when a merge conflict is detected proactively.
+    #[serde(default)]
+    pub requires_attention: bool,
+    /// Tail of the last agent transcript, kept separately from the full logs
+    /// so a recovery prompt and the dashboard badge have concise context.
+    #[serde(default)]
+    pub last_log_tail: String,
+    /// Compact handoff summary (modified files + exported signatures) used by
+    /// downstream DAG tasks and by Continue retries.
+    #[serde(default)]
+    pub handoff_summary: String,
     /// `YYYY-MM-DD HH:MM:SS` (UTC), set by the database.
     pub created_at: String,
     /// `YYYY-MM-DD HH:MM:SS` (UTC), set by the database.
@@ -205,7 +311,7 @@ pub struct Task {
 }
 
 /// Failed evaluations allowed before a task parks in
-/// [`TaskStatus::FailedNeedsHuman`] and asks a human.
+/// [`TaskStatus::NeedsInteraction`] and asks a human.
 pub const MAX_EVAL_RETRIES: u32 = 3;
 
 impl Task {
@@ -227,6 +333,10 @@ impl Task {
             worker_logs: String::new(),
             agent_output: String::new(),
             diff: String::new(),
+            stop_reason: None,
+            requires_attention: false,
+            last_log_tail: String::new(),
+            handoff_summary: String::new(),
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -247,12 +357,20 @@ mod tests {
     }
 
     #[test]
+    fn stop_reasons_roundtrip_through_str() {
+        for reason in StopReason::ALL {
+            let parsed: StopReason = reason.as_str().parse().unwrap();
+            assert_eq!(parsed, reason);
+        }
+    }
+
+    #[test]
     fn all_statuses_have_distinct_canonical_strings() {
         let mut seen = std::collections::HashSet::new();
         for status in TaskStatus::ALL {
             assert!(seen.insert(status.as_str()));
         }
-        assert_eq!(seen.len(), 8);
+        assert_eq!(seen.len(), 9);
     }
 
     #[test]
@@ -269,6 +387,10 @@ mod tests {
         assert!(task.worker_logs.is_empty());
         assert!(task.agent_output.is_empty());
         assert!(task.diff.is_empty());
+        assert_eq!(task.stop_reason, None);
+        assert!(!task.requires_attention);
+        assert!(task.last_log_tail.is_empty());
+        assert!(task.handoff_summary.is_empty());
         assert!(task.created_at.is_empty());
     }
 
@@ -287,9 +409,14 @@ mod tests {
             "failed validation re-runs the agent"
         );
         assert!(
-            Evaluating.can_transition_to(FailedNeedsHuman),
+            Evaluating.can_transition_to(NeedsInteraction),
             "retries exhausted park the task"
         );
+        // Recovery state machine.
+        assert!(InProgress.can_transition_to(NeedsInteraction));
+        assert!(ResolvingConflicts.can_transition_to(NeedsInteraction));
+        assert!(NeedsInteraction.can_transition_to(Todo));
+        assert!(FailedNeedsHuman.can_transition_to(Todo));
         // Auto-merge conflict resolution (Phase 9).
         assert!(
             Review.can_transition_to(ResolvingConflicts),
@@ -304,19 +431,11 @@ mod tests {
             "failed validation re-resolves the conflict"
         );
         assert!(
-            ResolvingConflicts.can_transition_to(FailedNeedsHuman),
-            "an unresolvable conflict parks the task"
-        );
-        assert!(
             ResolvingConflicts.can_transition_to(Todo),
             "crash during resolution releases the claim"
         );
         // Human-in-the-loop and recovery moves.
         assert!(Review.can_transition_to(Todo), "reject sends work back");
-        assert!(
-            FailedNeedsHuman.can_transition_to(Todo),
-            "human can send a parked task back to the queue"
-        );
         assert!(
             InProgress.can_transition_to(Todo),
             "crash releases the claim"
@@ -355,8 +474,14 @@ mod tests {
             "no skipping human review"
         );
         assert!(
-            !FailedNeedsHuman.can_transition_to(InProgress),
+            !NeedsInteraction.can_transition_to(InProgress),
             "parked tasks go through the queue, not straight back to work"
+        );
+        assert!(!NeedsInteraction.can_transition_to(Review));
+        assert!(!NeedsInteraction.can_transition_to(Done));
+        assert!(
+            !FailedNeedsHuman.can_transition_to(InProgress),
+            "legacy parked tasks also go through the queue"
         );
         assert!(!FailedNeedsHuman.can_transition_to(Review));
         assert!(!FailedNeedsHuman.can_transition_to(Done));
