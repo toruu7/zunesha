@@ -4,9 +4,8 @@ import { AgentTracker } from './agents';
 
 import {
   drawCharacter, drawDesk,
-  drawServerRack, drawWhiteboard, drawCorkboard, drawBookshelf,
-  drawFilingCabinet, drawCoffeeStation, drawPlant, drawMeetingTable,
-  drawWaterCooler, drawCeilingLight, drawClock,
+  drawHelm, drawJollyRogerFlag, drawTreasureChest, drawRumBarrels,
+  drawShipCannon, drawSunnyMast, drawMikanTrees, drawAnchorAndRope,
   SPRITE_SIZE,
 } from './sprites';
 import { drawBubble } from './bubbles';
@@ -117,7 +116,7 @@ export class Renderer {
 
       if (layout.id === this.selectedId) {
         ctx.save();
-        ctx.strokeStyle = '#7DD3FC';
+        ctx.strokeStyle = '#FBBF24'; // Pirate Gold
         ctx.globalAlpha = 0.55 + 0.25 * Math.sin(this.frame * 0.4);
         ctx.lineWidth = 1.5;
         ctx.setLineDash([4, 3]);
@@ -187,115 +186,88 @@ export class Renderer {
     ctx.imageSmoothingEnabled = false;
     const w = bg.width, h = bg.height;
 
-    // Floor — wood planks
-    ctx.fillStyle = '#2A2018';
-    ctx.fillRect(0, 20 * S, w, h - 20 * S);
-    for (let row = 0; row < 30; row++) {
-      const py = 20 * S + row * 9 * S;
-      ctx.fillStyle = row % 2 === 0 ? '#2E2418' : '#32291C';
-      ctx.fillRect(0, py, w, 9 * S);
-      ctx.fillStyle = '#1A140E';
+    // ── 1. SKY & CLOUDS (y: 0 to 14 logical px) ──
+    ctx.fillStyle = '#38BDF8'; // Sky blue
+    ctx.fillRect(0, 0, w, 14 * S);
+    // Fluffy pixel clouds
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.fillRect(24 * S, 3 * S, 28 * S, 5 * S);
+    ctx.fillRect(28 * S, 1 * S, 20 * S, 3 * S);
+    ctx.fillRect(240 * S, 4 * S, 32 * S, 5 * S);
+    ctx.fillRect(246 * S, 2 * S, 20 * S, 3 * S);
+
+    // ── 2. OPEN SEA WITH ROLLING WAVES (y: 12 to 24 logical px) ──
+    ctx.fillStyle = '#0284C7'; // Deep ocean
+    ctx.fillRect(0, 13 * S, w, 11 * S);
+    // Wave foam crests (animated with frame)
+    ctx.fillStyle = '#BAE6FD';
+    for (let i = 0; i < 12; i++) {
+      const waveX = ((i * 32 + (frame * 2)) % 360) * S;
+      ctx.fillRect(waveX, 16 * S + (i % 2) * 2 * S, 14 * S, 2 * S);
+      ctx.fillRect(waveX + 2 * S, 15 * S + (i % 2) * 2 * S, 10 * S, 1 * S);
+    }
+
+    // ── 3. THOUSAND SUNNY SHIP RAILING (y: 20 to 25 logical px) ──
+    ctx.fillStyle = '#78350F'; // Dark teak railing
+    ctx.fillRect(0, 21 * S, w, 4 * S);
+    ctx.fillStyle = '#B45309'; // Golden oak handrail
+    ctx.fillRect(0, 20 * S, w, 2 * S);
+    ctx.fillStyle = '#F59E0B'; // Brass top rail
+    ctx.fillRect(0, 20 * S, w, 1 * S);
+    // Railing posts/balusters every 20 logical px
+    ctx.fillStyle = '#92400E';
+    for (let p = 0; p < 18; p++) {
+      ctx.fillRect((p * 20 + 8) * S, 21 * S, 3 * S, 4 * S);
+    }
+
+    // ── 4. THOUSAND SUNNY WOODEN DECK (y: 24 to bottom) ──
+    ctx.fillStyle = '#B45309'; // Golden teak ship deck
+    ctx.fillRect(0, 24 * S, w, h - 24 * S);
+    for (let row = 0; row < 28; row++) {
+      const py = 25 * S + row * 9 * S;
+      ctx.fillStyle = row % 2 === 0 ? '#92400E' : '#B45309';
+      ctx.fillRect(0, py, w, 8 * S);
+      // Pitch caulking between planks
+      ctx.fillStyle = '#451A03';
       ctx.fillRect(0, py + 8 * S, w, 1 * S);
     }
-    ctx.fillStyle = '#1A140E';
-    ctx.globalAlpha = 0.4;
-    for (let col = 0; col < 10; col++) {
-      ctx.fillRect(col * 36 * S, 20 * S, 1 * S, h);
-      ctx.fillRect(col * 36 * S + 18 * S, 20 * S, 1 * S, h);
+    // Vertical wood plank seams
+    ctx.fillStyle = '#451A03';
+    ctx.globalAlpha = 0.25;
+    for (let col = 0; col < 12; col++) {
+      ctx.fillRect(col * 30 * S + 10 * S, 25 * S, 1 * S, h);
     }
     ctx.globalAlpha = 1;
 
-    // Top wall
-    ctx.fillStyle = '#323248';
-    ctx.fillRect(0, 0, w, 22 * S);
-    ctx.fillStyle = '#3A3A50';
-    ctx.fillRect(0, 18 * S, w, 4 * S);
-    ctx.fillStyle = '#4A4A68';
-    ctx.fillRect(0, 18 * S, w, 1 * S);
-    ctx.fillStyle = '#282840';
-    ctx.fillRect(0, 21 * S, w, 1 * S);
-    ctx.fillStyle = '#28284A';
-    ctx.fillRect(0, 8 * S, w, 2 * S);
-    ctx.fillStyle = '#2E2E44';
-    ctx.fillRect(0, 22 * S, 2 * S, h - 22 * S);
-    ctx.fillRect(w - 2 * S, 22 * S, 2 * S, h - 22 * S);
+    // ── 5. THOUSAND SUNNY BRIDGE & PROPS ──
+    // Center mast & Straw Hat Jolly Roger
+    drawSunnyMast(ctx, 160, 5);
+    drawJollyRogerFlag(ctx, 120, 3, frame);
 
-    // Ceiling lights
-    drawCeilingLight(ctx, 120, 5, true, frame);
-    drawCeilingLight(ctx, 240, 5, true, frame);
+    // Sunny Helm (ship's wheel) at the bridge
+    drawHelm(ctx, 164, 18);
 
-    // Clock
-    drawClock(ctx, 172, 3);
+    // Port side (left) naval cannon, rum barrels & treasure chest
+    drawShipCannon(ctx, 6, 26);
+    drawRumBarrels(ctx, 6, 110);
+    drawTreasureChest(ctx, 10, 210);
 
-    // HQ sign — Thousand Sunny Straw Hat Deck
-    ctx.fillStyle = '#7A2E1E'; // Pirate red-wood banner
-    ctx.fillRect(50 * S, 4 * S, 82 * S, 10 * S);
-    ctx.fillStyle = '#B8860B'; // Gold trim
-    ctx.fillRect(50 * S, 4 * S, 82 * S, 1 * S);
-    ctx.fillRect(50 * S, 13 * S, 82 * S, 1 * S);
-    ctx.fillStyle = '#FEE880'; // Gold lettering
+    // Starboard side (right) Nami's Mikan trees, anchor, and sake barrels
+    drawMikanTrees(ctx, 332, 26);
+    drawAnchorAndRope(ctx, 332, 110);
+    drawRumBarrels(ctx, 332, 210);
+
+    // Sunny Nameplate Banner
+    ctx.fillStyle = '#7F1D1D'; // Pirate Crimson
+    ctx.fillRect(125 * S, 3 * S, 110 * S, 10 * S);
+    ctx.fillStyle = '#F59E0B'; // Gold trim
+    ctx.fillRect(125 * S, 3 * S, 110 * S, 1 * S);
+    ctx.fillRect(125 * S, 12 * S, 110 * S, 1 * S);
+    ctx.fillStyle = '#FEF08A'; // Yellow lettering
     ctx.font = `bold ${3.8 * S}px monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText(`THOUSAND SUNNY`, 91 * S, 11 * S);
+    ctx.fillText(`THOUSAND SUNNY`, 180 * S, 10 * S);
     ctx.textAlign = 'start';
-
-    // Window
-    ctx.fillStyle = '#1A2A3A';
-    ctx.fillRect(200 * S, 4 * S, 28 * S, 14 * S);
-    ctx.fillStyle = '#2A4A6A';
-    ctx.fillRect(201 * S, 5 * S, 26 * S, 12 * S);
-    ctx.fillStyle = '#4A5060';
-    ctx.fillRect(213 * S, 5 * S, 1 * S, 12 * S);
-    ctx.fillRect(201 * S, 10 * S, 26 * S, 1 * S);
-    ctx.fillStyle = 'rgba(180,220,255,0.15)';
-    ctx.fillRect(202 * S, 6 * S, 10 * S, 4 * S);
-
-    // Left side furniture
-    drawServerRack(ctx, 4, 22, frame);
-    drawWhiteboard(ctx, 20, 22);
-    drawPlant(ctx, 3, 143, false);
-
-    // Right side furniture
-    drawCorkboard(ctx, 288, 22);
-    drawFilingCabinet(ctx, 344, 22);
-
-    // Center corridor
-    drawMeetingTable(ctx, 148, 115);
-    drawCoffeeStation(ctx, 158, 218, frame);
-    drawWaterCooler(ctx, 316, 220);
-
-    // Bibliotecario zone
-    drawBookshelf(ctx, 338, 105);
-
-    // Felipe zone
-    drawFilingCabinet(ctx, 4, 158);
-
-    // Plants — corners
-    drawPlant(ctx, 0, 238, true);
-    drawPlant(ctx, 348, 238, true);
-    drawPlant(ctx, 0, 44, false);
-    drawPlant(ctx, 350, 44, false);
-
-    // Floor mats (computed from current layouts)
-    const matColors = ['#4A3A50', '#2A4A38', '#5A3A20', '#3A2A4A',
-                       '#5A2A2A', '#2A4A4A', '#4A4A2A', '#2A2A4A',
-                       '#4A3A2A', '#2A4A3A', '#3A2A4A', '#3A3A2A'];
-    const layouts = this.tracker.getLayouts();
-    layouts.forEach((layout, i) => {
-      const mc = matColors[i % matColors.length];
-      ctx.fillStyle = mc;
-      ctx.globalAlpha = 0.35;
-      ctx.fillRect((layout.deskX - 6) * S, (layout.deskY + 12) * S, 34 * S, 30 * S);
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = mc;
-      ctx.lineWidth = 1;
-      ctx.globalAlpha = 0.6;
-      ctx.strokeRect((layout.deskX - 6) * S, (layout.deskY + 12) * S, 34 * S, 30 * S);
-      ctx.globalAlpha = 1;
-    });
-
-    ctx.fillStyle = '#1A1A28';
-    ctx.fillRect(0, 21 * S, w, 1 * S);
 
     return bg;
   }
@@ -349,7 +321,7 @@ export class Renderer {
     ctx.fillStyle = '#666677';
     ctx.font = `${3 * S}px monospace`;
     ctx.textAlign = 'right';
-    ctx.fillText(`${agents.length} agents`, w - 4 * S, barY + 20 * S);
+    ctx.fillText(`${agents.length} crew aboard`, w - 4 * S, barY + 20 * S);
     ctx.textAlign = 'start';
   }
 }

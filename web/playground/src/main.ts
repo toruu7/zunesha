@@ -268,13 +268,47 @@ const CREW_PROFILES: Record<string, CrewProfile> = {
   },
 };
 
-const DEFAULT_CREW: PlaygroundAgent[] = [
-  { id: 'luffy', name: 'Luffy', title: 'Captain', status: 'TODO', state: 'idle', crew_member: 'luffy', updated_at: '', retry_count: 0 },
-  { id: 'zoro', name: 'Zoro', title: 'Combatant', status: 'TODO', state: 'idle', crew_member: 'zoro', updated_at: '', retry_count: 0 },
-  { id: 'nami', name: 'Nami', title: 'Navigator', status: 'TODO', state: 'idle', crew_member: 'nami', updated_at: '', retry_count: 0 },
-  { id: 'usopp', name: 'Usopp', title: 'Sniper', status: 'TODO', state: 'idle', crew_member: 'usopp', updated_at: '', retry_count: 0 },
-  { id: 'sanji', name: 'Sanji', title: 'Cook', status: 'TODO', state: 'idle', crew_member: 'sanji', updated_at: '', retry_count: 0 },
-];
+const CREW_MEMBERS = [
+  { id: 'luffy', name: 'Luffy', role: 'Captain', title: 'Strategic Lead', emoji: '👒' },
+  { id: 'zoro', name: 'Zoro', role: 'Combatant', title: 'Core Logic', emoji: '⚔️' },
+  { id: 'nami', name: 'Nami', role: 'Navigator', title: 'Planner', emoji: '🗺️' },
+  { id: 'usopp', name: 'Usopp', role: 'Sniper', title: 'Bugfixes', emoji: '🎯' },
+  { id: 'sanji', name: 'Sanji', role: 'Cook', title: 'UI & Docs', emoji: '🍳' },
+] as const;
+
+function guessCrewMember(task: Task): 'luffy' | 'zoro' | 'nami' | 'usopp' | 'sanji' {
+  if (task.crew_member) {
+    const lower = task.crew_member.toLowerCase();
+    for (const m of ['luffy', 'zoro', 'nami', 'usopp', 'sanji'] as const) {
+      if (lower.includes(m)) return m;
+    }
+  }
+  const text = `${task.title} ${task.description}`.toLowerCase();
+  if (text.includes('test') || text.includes('fix') || text.includes('bug') || text.includes('patch') || text.includes('snipe')) {
+    return 'usopp';
+  }
+  if (text.includes('refactor') || text.includes('core') || text.includes('perf') || text.includes('slice') || text.includes('db') || text.includes('engine')) {
+    return 'zoro';
+  }
+  if (text.includes('ui') || text.includes('ux') || text.includes('doc') || text.includes('style') || text.includes('css') || text.includes('cook') || text.includes('readme')) {
+    return 'sanji';
+  }
+  if (text.includes('plan') || text.includes('dag') || text.includes('route') || text.includes('navigate') || text.includes('chart')) {
+    return 'nami';
+  }
+  return 'luffy';
+}
+
+const DEFAULT_CREW: PlaygroundAgent[] = CREW_MEMBERS.map((m) => ({
+  id: m.id,
+  name: m.name,
+  title: `${m.role} · On Standby`,
+  status: 'TODO',
+  state: 'idle',
+  crew_member: m.id,
+  updated_at: '',
+  retry_count: 0,
+}));
 
 function taskToAgent(task: Task): PlaygroundAgent {
   return {
@@ -706,10 +740,10 @@ function renderOfficeStatus(): void {
   const agents = tracker.getAll();
   const working = agents.filter((agent) => agent.visualState === 'working').length;
   const waiting = agents.filter((agent) => agent.visualState === 'waiting').length;
-  const sleeping = agents.filter((agent) => agent.visualState === 'sleeping').length;
-  officeStatusEl.innerHTML = `<b>${agents.length}</b> agents <span class="dot working"></span>${working} working
-    <span class="dot waiting"></span>${waiting} waiting <span class="dot sleeping"></span>${sleeping} sleeping`;
-  emptyEl.hidden = agents.length > 0;
+  const ready = agents.length - working - waiting;
+  officeStatusEl.innerHTML = `<b>${agents.length}</b> crew aboard <span class="dot working"></span>${working} active
+    <span class="dot waiting"></span>${waiting} review <span class="dot idle"></span>${ready} ready`;
+  emptyEl.hidden = true; // Thousand Sunny crew is always on deck!
 
   const liveTask = state.tasks.find((task) => ACTIVE_STATUSES.includes(task.status)) ?? selectedTask();
   const lines = liveTask ? mergedLogs(liveTask) : [];
@@ -759,13 +793,55 @@ function showToast(message: string, kind: 'info' | 'error' = 'info'): void {
 // ── state application ──────────────────────────────────────────────────────
 
 function syncOffice(): void {
-  if (state.tasks.length > 0) {
-    tracker.setSnapshot(state.tasks.map(taskToAgent));
+  // Always maintain all 5 Straw Hat crew members at their Thousand Sunny stations!
+  const agents: PlaygroundAgent[] = CREW_MEMBERS.map((member) => {
+    // Find all tasks assigned or matched to this Straw Hat
+    const assignedTasks = state.tasks.filter((t) => {
+      if (t.crew_member) return t.crew_member.toLowerCase().includes(member.id);
+      return guessCrewMember(t) === member.id;
+    });
+
+    const activeTask = assignedTasks.find((t) => ACTIVE_STATUSES.includes(t.status))
+      ?? assignedTasks.find((t) => t.status === 'REVIEW')
+      ?? assignedTasks.find((t) => t.status === 'TODO')
+      ?? assignedTasks[0];
+
+    if (activeTask) {
+      return {
+        id: member.id,
+        name: member.name,
+        title: activeTask.title,
+        status: activeTask.status,
+        state: STATUS_VISUAL[activeTask.status] ?? 'idle',
+        crew_member: member.id,
+        updated_at: activeTask.updated_at,
+        retry_count: activeTask.retry_count,
+      };
+    }
+
+    return {
+      id: member.id,
+      name: member.name,
+      title: `${member.role} · On Standby`,
+      status: 'TODO',
+      state: 'idle',
+      crew_member: member.id,
+      updated_at: '',
+      retry_count: 0,
+    };
+  });
+
+  tracker.setSnapshot(agents);
+  renderer.setProject(state.project?.name ?? 'THOUSAND SUNNY');
+
+  // Highlight active or selected crew member on canvas
+  const task = selectedTask();
+  if (task) {
+    const member = task.crew_member ? task.crew_member.toLowerCase() : guessCrewMember(task);
+    renderer.setSelected(member);
   } else {
-    tracker.setSnapshot(DEFAULT_CREW);
+    renderer.setSelected(state.selectedId);
   }
-  renderer.setProject(state.project?.name ?? 'ZOU');
-  renderer.setSelected(state.selectedId);
 }
 
 function applySnapshot(snapshot: TasksResponse): void {
@@ -1052,12 +1128,36 @@ promptEl.addEventListener('keydown', (event) => {
   }
 });
 
+function selectDesk(crewId: string): void {
+  const memberKey = ['luffy', 'zoro', 'nami', 'usopp', 'sanji'].find((k) => crewId.toLowerCase().includes(k));
+  if (!memberKey) {
+    selectTask(crewId);
+    return;
+  }
+
+  const assigned = state.tasks.filter((t) => {
+    if (t.crew_member) return t.crew_member.toLowerCase().includes(memberKey);
+    return guessCrewMember(t) === memberKey;
+  });
+
+  const activeTask = assigned.find((t) => ACTIVE_STATUSES.includes(t.status))
+    ?? assigned.find((t) => t.status === 'REVIEW')
+    ?? assigned.find((t) => t.status === 'TODO')
+    ?? assigned[0];
+
+  if (activeTask) {
+    selectTask(activeTask.id);
+  } else {
+    selectTask(memberKey);
+  }
+}
+
 canvas.addEventListener('click', (event) => {
   const rect = canvas.getBoundingClientRect();
   const x = ((event.clientX - rect.left) / rect.width) * 360;
   const y = ((event.clientY - rect.top) / rect.height) * 280;
   const id = renderer.agentAt(x, y);
-  if (id) selectTask(id);
+  if (id) selectDesk(id);
 });
 
 modalCancelEl.addEventListener('click', closeReject);

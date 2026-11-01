@@ -58,15 +58,14 @@ export function agentColor(id: string): { color: string; secondary: string } {
   return COLOR_POOL[4 + (h % (COLOR_POOL.length - 4))];
 }
 
-// Canvas usable zone (logical px): x 10-350, y 24-255 (above status bar)
-const ZONE_X0 = 10;
-const ZONE_Y0 = 24;
-const ZONE_W  = 340;
-const ZONE_H  = 212;
-
-// Space each desk slot occupies (logical px)
-const SLOT_W = 50;
-const SLOT_H = 68;
+// Dedicated Thousand Sunny Deck Stations for the 5 Straw Hat Pirates
+export const SUNNY_STATIONS: Record<string, { deskX: number; deskY: number; label: string }> = {
+  luffy: { deskX: 168, deskY: 48, label: 'LUFFY' },  // Center helm / captain bridge
+  zoro:  { deskX: 60,  deskY: 65, label: 'ZORO' },   // Port side swords & training
+  nami:  { deskX: 268, deskY: 65, label: 'NAMI' },   // Starboard cartography & mikans
+  usopp: { deskX: 80,  deskY: 155, label: 'USOPP' }, // Port workshop & sniping bench
+  sanji: { deskX: 248, deskY: 155, label: 'SANJI' }, // Starboard galley bar & kitchen
+};
 
 export function computeLayout(
   agents: Array<{ id: string; name: string; crew_member?: string }>,
@@ -74,29 +73,28 @@ export function computeLayout(
   const n = agents.length;
   if (n === 0) return [];
 
-  // Grid dimensions
-  const maxCols = Math.floor(ZONE_W / SLOT_W);
-  const maxRows = Math.floor(ZONE_H / SLOT_H);
-
-  let cols = Math.min(Math.ceil(Math.sqrt(n * SLOT_W / SLOT_H)), maxCols);
-  let rows = Math.ceil(n / cols);
-  // If rows overflow, bump columns
-  while (rows > maxRows && cols < maxCols) { cols++; rows = Math.ceil(n / cols); }
-
-  // Center the grid
-  const gridW = cols * SLOT_W;
-  const gridH = rows * SLOT_H;
-  const startX = ZONE_X0 + Math.floor((ZONE_W - gridW) / 2);
-  const startY = ZONE_Y0 + Math.floor((ZONE_H - gridH) / 2);
-
   return agents.map((a, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const slotCX = startX + col * SLOT_W + Math.floor(SLOT_W / 2);
-    const slotTY = startY + row * SLOT_H;
-    // Character drawn at (deskX, deskY); desk is centered on character
-    const deskX = slotCX - 8; // half of CHAR_W=16
-    const deskY = slotTY;
+    const raw = (a.crew_member ?? a.id).toLowerCase();
+    const stationKey = ['luffy', 'zoro', 'nami', 'usopp', 'sanji'].find((k) => raw.includes(k));
+    const station = stationKey ? SUNNY_STATIONS[stationKey] : null;
+
+    let deskX: number;
+    let deskY: number;
+
+    if (station) {
+      deskX = station.deskX;
+      deskY = station.deskY;
+    } else {
+      // Fallback grid
+      const slotW = 55;
+      const slotH = 70;
+      const cols = 5;
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      deskX = 20 + col * slotW;
+      deskY = 50 + row * slotH;
+    }
+
     const lookupKey = a.crew_member ?? a.id;
     const { color, secondary: secondaryColor } = agentColor(lookupKey);
 
@@ -107,7 +105,7 @@ export function computeLayout(
       deskY,
       color,
       secondaryColor,
-      label: a.crew_member ? a.crew_member.toUpperCase() : a.name.toUpperCase().substring(0, 10),
+      label: station?.label ?? (a.crew_member ? a.crew_member.toUpperCase() : a.name.toUpperCase().substring(0, 10)),
       name: a.name,
       emoji: agentEmoji(lookupKey),
       crew_member: a.crew_member,

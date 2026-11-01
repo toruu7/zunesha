@@ -467,18 +467,13 @@ export function drawDesk(
   ctx.fillRect(dx + CHAR_W * s + 3 * s, dy + 12 * s, 2 * s, 8 * s);
 
   // Draw agent-specific desk props
-  switch (agentId) {
-    case 'luffy': drawLuffyDesk(ctx, dx, dy); break;
-    case 'zoro': drawZoroDesk(ctx, dx, dy); break;
-    case 'nami': drawNamiDesk(ctx, dx, dy); break;
-    case 'usopp': drawUsoppDesk(ctx, dx, dy); break;
-    case 'sanji': drawSanjiDesk(ctx, dx, dy); break;
-    case 'main': drawJarvisDesk(ctx, dx, dy); break;
-    case 'analista': drawAnalistaDesk(ctx, dx, dy); break;
-    case 'rafael': drawFelipeDesk(ctx, dx, dy); break;
-    case 'bibliotecario': drawBibliotecarioDesk(ctx, dx, dy); break;
-    default: drawGenericMonitor(ctx, dx, dy); break;
-  }
+  const raw = (agentId ?? '').toLowerCase();
+  if (raw.includes('luffy')) drawLuffyDesk(ctx, dx, dy);
+  else if (raw.includes('zoro')) drawZoroDesk(ctx, dx, dy);
+  else if (raw.includes('nami')) drawNamiDesk(ctx, dx, dy);
+  else if (raw.includes('usopp')) drawUsoppDesk(ctx, dx, dy);
+  else if (raw.includes('sanji')) drawSanjiDesk(ctx, dx, dy);
+  else drawLuffyDesk(ctx, dx, dy);
 
   // Name plate
   ctx.fillStyle = color;
@@ -913,365 +908,280 @@ function drawGenericMonitor(ctx: CanvasRenderingContext2D, dx: number, dy: numbe
   ctx.fillRect(dx + 7 * s, dy + 8 * s, 2 * s, 1 * s);
 }
 
-// ─── FURNITURE (for background scene) ─────────────────────────────────────────
+// ─── PIRATE SHIP PROPS (Thousand Sunny Deck Scene) ───────────────────────────
 
-export function drawServerRack(ctx: CanvasRenderingContext2D, x: number, y: number, frame: number): void {
+export function drawHelm(ctx: CanvasRenderingContext2D, x: number, y: number): void {
   const bx = x * s, by = y * s;
-  const w = 14 * s, h = 80 * s;
+  // Wooden helm wheel post
+  ctx.fillStyle = '#5A3815';
+  ctx.fillRect(bx + 7 * s, by + 12 * s, 6 * s, 14 * s);
+  ctx.fillStyle = '#3A2008';
+  ctx.fillRect(bx + 6 * s, by + 24 * s, 8 * s, 4 * s);
 
-  // Cabinet body
-  ctx.fillStyle = '#1A1A22';
-  ctx.fillRect(bx, by, w, h);
+  // Outer wheel ring
+  ctx.fillStyle = '#8B5A2B';
+  ctx.fillRect(bx + 3 * s, by + 2 * s, 14 * s, 2 * s);
+  ctx.fillRect(bx + 3 * s, by + 16 * s, 14 * s, 2 * s);
+  ctx.fillRect(bx + 1 * s, by + 4 * s, 2 * s, 12 * s);
+  ctx.fillRect(bx + 17 * s, by + 4 * s, 2 * s, 12 * s);
+
+  // 8 handles (spokes extending outward)
+  ctx.fillStyle = '#C89260';
+  ctx.fillRect(bx + 9 * s, by - 2 * s, 2 * s, 4 * s); // top
+  ctx.fillRect(bx + 9 * s, by + 18 * s, 2 * s, 4 * s); // bottom
+  ctx.fillRect(bx - 3 * s, by + 9 * s, 4 * s, 2 * s); // left
+  ctx.fillRect(bx + 19 * s, by + 9 * s, 4 * s, 2 * s); // right
+  ctx.fillRect(bx + 1 * s, by + 1 * s, 3 * s, 2 * s); // top-left
+  ctx.fillRect(bx + 16 * s, by + 1 * s, 3 * s, 2 * s); // top-right
+  ctx.fillRect(bx + 1 * s, by + 17 * s, 3 * s, 2 * s); // bottom-left
+  ctx.fillRect(bx + 16 * s, by + 17 * s, 3 * s, 2 * s); // bottom-right
+
+  // Inner spokes
+  ctx.fillStyle = '#6B4018';
+  ctx.fillRect(bx + 9 * s, by + 4 * s, 2 * s, 12 * s);
+  ctx.fillRect(bx + 3 * s, by + 9 * s, 14 * s, 2 * s);
+
+  // Center golden hub
+  ctx.fillStyle = '#F1C40F';
+  ctx.fillRect(bx + 8 * s, by + 8 * s, 4 * s, 4 * s);
+  ctx.fillStyle = '#D4AC0D';
+  ctx.fillRect(bx + 9 * s, by + 9 * s, 2 * s, 2 * s);
+}
+
+export function drawJollyRogerFlag(ctx: CanvasRenderingContext2D, x: number, y: number, frame: number): void {
+  const bx = x * s, by = y * s;
+  const wave = Math.sin(frame * 0.3) * 1 * s;
+
+  // Flag pole
+  ctx.fillStyle = '#8B5A2B';
+  ctx.fillRect(bx, by, 2 * s, 36 * s);
+  ctx.fillStyle = '#F1C40F';
+  ctx.fillRect(bx - 1 * s, by - 1 * s, 4 * s, 3 * s);
+
+  // Black banner
   ctx.fillStyle = '#111118';
-  ctx.fillRect(bx, by, 1 * s, h);
-  ctx.fillStyle = '#2A2A35';
-  ctx.fillRect(bx + w - 1 * s, by, 1 * s, h);
+  ctx.fillRect(bx + 2 * s, by + 2 * s + wave, 28 * s, 18 * s);
+  ctx.fillStyle = '#22222E';
+  ctx.fillRect(bx + 2 * s, by + 2 * s + wave, 28 * s, 1 * s);
 
-  // Rack units
-  for (let i = 0; i < 10; i++) {
-    const ry = by + i * 8 * s;
-    ctx.fillStyle = i % 2 === 0 ? '#1E1E28' : '#181820';
-    ctx.fillRect(bx + 1 * s, ry, w - 2 * s, 7 * s);
+  const fx = bx + 4 * s;
+  const fy = by + 3 * s + wave;
 
-    // LED indicators
-    const ledColor = i === 2 || i === 5 ? '#00FF66' : i === 7 ? (frame % 4 < 2 ? '#FFAA00' : '#885500') : '#00AA44';
-    ctx.fillStyle = ledColor;
-    ctx.fillRect(bx + 2 * s, ry + 3 * s, 2 * s, 1 * s);
+  // Crossed bones (white/bone)
+  ctx.fillStyle = '#EAEAEA';
+  // Bone \
+  ctx.fillRect(fx + 5 * s, fy + 4 * s, 2 * s, 2 * s);
+  ctx.fillRect(fx + 7 * s, fy + 6 * s, 2 * s, 2 * s);
+  ctx.fillRect(fx + 15 * s, fy + 12 * s, 2 * s, 2 * s);
+  ctx.fillRect(fx + 17 * s, fy + 14 * s, 2 * s, 2 * s);
+  // Bone /
+  ctx.fillRect(fx + 17 * s, fy + 4 * s, 2 * s, 2 * s);
+  ctx.fillRect(fx + 15 * s, fy + 6 * s, 2 * s, 2 * s);
+  ctx.fillRect(fx + 7 * s, fy + 12 * s, 2 * s, 2 * s);
+  ctx.fillRect(fx + 5 * s, fy + 14 * s, 2 * s, 2 * s);
 
-    // Vent slots
-    ctx.fillStyle = '#0A0A12';
-    for (let v = 0; v < 4; v++) {
-      ctx.fillRect(bx + 5 * s + v * 2 * s, ry + 2 * s, 1 * s, 3 * s);
-    }
-  }
+  // Skull
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(fx + 9 * s, fy + 5 * s, 6 * s, 5 * s);
+  ctx.fillRect(fx + 10 * s, fy + 10 * s, 4 * s, 3 * s);
 
-  // Cabinet handles
-  ctx.fillStyle = '#444';
-  ctx.fillRect(bx + w - 3 * s, by + 3 * s, 1 * s, h - 6 * s);
+  // Eye sockets
+  ctx.fillStyle = '#111118';
+  ctx.fillRect(fx + 10 * s, fy + 7 * s, 1 * s, 2 * s);
+  ctx.fillRect(fx + 13 * s, fy + 7 * s, 1 * s, 2 * s);
+
+  // Teeth
+  ctx.fillStyle = '#111118';
+  ctx.fillRect(fx + 11 * s, fy + 11 * s, 1 * s, 2 * s);
+  ctx.fillRect(fx + 12 * s, fy + 11 * s, 1 * s, 2 * s);
+
+  // Luffy's Straw Hat atop the skull!
+  ctx.fillStyle = '#F1C40F'; // Yellow brim
+  ctx.fillRect(fx + 6 * s, fy + 4 * s, 12 * s, 2 * s);
+  ctx.fillStyle = '#C0392B'; // Red ribbon
+  ctx.fillRect(fx + 8 * s, fy + 3 * s, 8 * s, 1 * s);
+  ctx.fillStyle = '#F1C40F'; // Hat crown
+  ctx.fillRect(fx + 9 * s, fy + 1 * s, 6 * s, 2 * s);
 }
 
-export function drawWhiteboard(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+export function drawTreasureChest(ctx: CanvasRenderingContext2D, x: number, y: number): void {
   const bx = x * s, by = y * s;
-  const w = 55 * s, h = 28 * s;
+  // Chest shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillRect(bx + 1 * s, by + 18 * s, 22 * s, 3 * s);
 
-  // Frame
-  ctx.fillStyle = '#555560';
-  ctx.fillRect(bx, by, w, h);
-  // Board
-  ctx.fillStyle = '#F0EEE8';
-  ctx.fillRect(bx + 2 * s, by + 2 * s, w - 4 * s, h - 4 * s);
+  // Open chest base
+  ctx.fillStyle = '#5A2A10';
+  ctx.fillRect(bx + 2 * s, by + 8 * s, 20 * s, 11 * s);
+  ctx.fillStyle = '#7A3A18';
+  ctx.fillRect(bx + 3 * s, by + 9 * s, 18 * s, 9 * s);
 
-  // Drawn content — schedule/diagram
-  ctx.fillStyle = '#3344AA';
-  ctx.font = `bold ${3 * s}px monospace`;
-  ctx.fillText('SYSTEM', bx + 4 * s, by + 8 * s);
-  ctx.fillStyle = '#888';
-  ctx.fillRect(bx + 4 * s, by + 10 * s, 30 * s, 1 * s);
-
-  // Flow diagram boxes
-  ctx.strokeStyle = '#3344AA';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(bx + 4 * s, by + 13 * s, 10 * s, 6 * s);
-  ctx.strokeRect(bx + 20 * s, by + 13 * s, 10 * s, 6 * s);
-  ctx.strokeRect(bx + 36 * s, by + 13 * s, 10 * s, 6 * s);
-  // Arrows
-  ctx.fillStyle = '#3344AA';
-  ctx.fillRect(bx + 14 * s, by + 16 * s, 6 * s, 1 * s);
-  ctx.fillRect(bx + 30 * s, by + 16 * s, 6 * s, 1 * s);
-  // Labels in boxes
-  ctx.font = `${2 * s}px monospace`;
-  ctx.fillStyle = '#333';
-  ctx.fillText('JRV', bx + 5 * s, by + 17 * s);
-  ctx.fillText('ANL', bx + 21 * s, by + 17 * s);
-  ctx.fillText('BIB', bx + 37 * s, by + 17 * s);
-
-  // Marker tray
-  ctx.fillStyle = '#888';
-  ctx.fillRect(bx + 2 * s, by + h - 4 * s, w - 4 * s, 3 * s);
-  // Markers
-  const markerColors = ['#FF4444', '#4444FF', '#444'];
-  for (let i = 0; i < 3; i++) {
-    ctx.fillStyle = markerColors[i];
-    ctx.fillRect(bx + 4 * s + i * 5 * s, by + h - 3 * s, 4 * s, 2 * s);
-  }
-}
-
-export function drawCorkboard(ctx: CanvasRenderingContext2D, x: number, y: number): void {
-  const bx = x * s, by = y * s;
-  const w = 65 * s, h = 30 * s;
-
-  // Frame
-  ctx.fillStyle = '#6B4A20';
-  ctx.fillRect(bx, by, w, h);
-  // Cork surface
-  ctx.fillStyle = '#C8A06A';
-  ctx.fillRect(bx + 2 * s, by + 2 * s, w - 4 * s, h - 4 * s);
-  // Cork texture
-  ctx.fillStyle = '#B89060';
-  for (let tx = 0; tx < 7; tx++) {
-    for (let ty = 0; ty < 4; ty++) {
-      if ((tx + ty) % 3 === 0) {
-        ctx.fillRect(bx + 2 * s + tx * 9 * s, by + 2 * s + ty * 7 * s, 4 * s, 3 * s);
-      }
-    }
-  }
-
-  // Pinned papers
-  const papers = [
-    { px: 4, py: 4, w: 16, h: 12, color: '#FFFFD0', rot: -2 },
-    { px: 24, py: 5, w: 14, h: 10, color: '#FFE0E0', rot: 1 },
-    { px: 42, py: 3, w: 18, h: 14, color: '#E0FFE0', rot: -1 },
-    { px: 8, py: 17, w: 12, h: 9, color: '#E0E0FF', rot: 2 },
-    { px: 30, py: 16, w: 16, h: 11, color: '#FFE8C0', rot: -1 },
-  ];
-  for (const p of papers) {
-    ctx.fillStyle = p.color;
-    ctx.fillRect(bx + (2 + p.px) * s, by + (2 + p.py) * s, p.w * s, p.h * s);
-    // Lines on paper
-    ctx.fillStyle = '#AAA';
-    ctx.globalAlpha = 0.5;
-    for (let l = 0; l < 3; l++) {
-      ctx.fillRect(bx + (4 + p.px) * s, by + (5 + p.py + l * 3) * s, (p.w - 4) * s, 1 * s);
-    }
-    ctx.globalAlpha = 1;
-    // Pin
-    ctx.fillStyle = '#FF4444';
-    ctx.fillRect(bx + (2 + p.px + p.w / 2) * s, by + (2 + p.py) * s, 2 * s, 2 * s);
-  }
-}
-
-export function drawBookshelf(ctx: CanvasRenderingContext2D, x: number, y: number): void {
-  const bx = x * s, by = y * s;
-  const w = 22 * s, h = 80 * s;
-
-  // Shelf frame
-  ctx.fillStyle = '#5A3A1A';
-  ctx.fillRect(bx, by, w, h);
-  ctx.fillStyle = '#4A2A0A';
-  ctx.fillRect(bx, by, 2 * s, h);
-  ctx.fillRect(bx + w - 2 * s, by, 2 * s, h);
-
-  // Shelves (4)
-  const allBooks = [
-    ['#8B0000', '#00558B', '#006B00', '#8B6B00', '#5A008B'],
-    ['#AA3300', '#0033AA', '#AA8800', '#007755', '#880044'],
-    ['#CC4400', '#004488', '#448800', '#AA6600', '#220099'],
-    ['#BB2200', '#002299', '#006622', '#CC8800', '#660088'],
-  ];
-  for (let shelf = 0; shelf < 4; shelf++) {
-    const sy = by + shelf * 20 * s;
-    // Shelf board
-    ctx.fillStyle = '#6A4A2A';
-    ctx.fillRect(bx + 2 * s, sy + 17 * s, w - 4 * s, 2 * s);
-    ctx.fillStyle = '#7A5A3A';
-    ctx.fillRect(bx + 2 * s, sy + 17 * s, w - 4 * s, 1 * s);
-
-    // Books
-    const books = allBooks[shelf];
-    let bkx = bx + 3 * s;
-    for (let b = 0; b < books.length; b++) {
-      const bw = (2 + (b % 2)) * s;
-      const bh = (10 + (b % 3) * 2) * s;
-      ctx.fillStyle = books[b];
-      ctx.fillRect(bkx, sy + 17 * s - bh, bw, bh);
-      ctx.fillStyle = lighten(books[b], 25);
-      ctx.fillRect(bkx, sy + 17 * s - bh, bw, 1 * s);
-      ctx.fillStyle = darken(books[b], 20);
-      ctx.fillRect(bkx, sy + 17 * s - bh, 1 * s, bh);
-      bkx += bw + 1 * s;
-    }
-  }
-}
-
-export function drawFilingCabinet(ctx: CanvasRenderingContext2D, x: number, y: number): void {
-  const bx = x * s, by = y * s;
-  ctx.fillStyle = '#2A2A35';
-  ctx.fillRect(bx, by, 14 * s, 40 * s);
-  ctx.fillStyle = '#1A1A25';
-  ctx.fillRect(bx, by, 1 * s, 40 * s);
-
-  for (let d = 0; d < 3; d++) {
-    const dy2 = by + d * 13 * s + 2 * s;
-    ctx.fillStyle = '#333340';
-    ctx.fillRect(bx + 1 * s, dy2, 12 * s, 11 * s);
-    // Drawer handle
-    ctx.fillStyle = '#888898';
-    ctx.fillRect(bx + 4 * s, dy2 + 4 * s, 6 * s, 2 * s);
-    ctx.fillStyle = '#AAAACC';
-    ctx.fillRect(bx + 4 * s, dy2 + 4 * s, 6 * s, 1 * s);
-    // Label
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(bx + 3 * s, dy2 + 7 * s, 8 * s, 3 * s);
-    ctx.fillStyle = '#666';
-    ctx.font = `${2 * s}px monospace`;
-    ctx.fillText('A-Z', bx + 5 * s, dy2 + 9 * s);
-  }
-}
-
-export function drawCoffeeStation(ctx: CanvasRenderingContext2D, x: number, y: number, frame: number): void {
-  const bx = x * s, by = y * s;
-
-  // Counter
-  ctx.fillStyle = '#4A3520';
-  ctx.fillRect(bx, by + 10 * s, 22 * s, 5 * s);
-  ctx.fillStyle = '#6A5540';
-  ctx.fillRect(bx, by + 10 * s, 22 * s, 1 * s);
-
-  // Coffee machine body
-  ctx.fillStyle = '#1A1A22';
-  ctx.fillRect(bx + 1 * s, by + 2 * s, 14 * s, 10 * s);
-  ctx.fillStyle = '#222230';
-  ctx.fillRect(bx + 2 * s, by + 3 * s, 12 * s, 8 * s);
-
-  // Display
-  ctx.fillStyle = '#002200';
-  ctx.fillRect(bx + 3 * s, by + 4 * s, 7 * s, 4 * s);
-  ctx.fillStyle = '#00AA00';
-  ctx.globalAlpha = 0.8;
-  ctx.font = `${2 * s}px monospace`;
-  ctx.fillText('READY', bx + 3 * s, by + 7 * s);
-  ctx.globalAlpha = 1;
-
-  // Buttons
-  ctx.fillStyle = '#333';
-  ctx.fillRect(bx + 11 * s, by + 5 * s, 2 * s, 2 * s);
-  ctx.fillStyle = '#AA0000';
-  ctx.fillRect(bx + 11 * s, by + 5 * s, 2 * s, 2 * s);
-
-  // Steam
-  if (frame % 4 < 2) {
-    ctx.fillStyle = 'rgba(200,200,200,0.3)';
-    ctx.fillRect(bx + 6 * s, by, 2 * s, 2 * s);
-    ctx.fillRect(bx + 8 * s, by - 1 * s, 2 * s, 2 * s);
-  }
-
-  // Cup tray
-  ctx.fillStyle = '#333';
-  ctx.fillRect(bx + 2 * s, by + 10 * s, 12 * s, 1 * s);
-
-  // Cup
-  ctx.fillStyle = '#F5F5F5';
-  ctx.fillRect(bx + 5 * s, by + 7 * s, 4 * s, 4 * s);
-  ctx.fillStyle = '#3A1A00';
-  ctx.fillRect(bx + 5 * s, by + 7 * s, 4 * s, 2 * s);
-
-  // Mugs on counter
-  const mugColors = ['#CC4400', '#004488', '#448800'];
-  for (let m = 0; m < 3; m++) {
-    ctx.fillStyle = mugColors[m];
-    ctx.fillRect(bx + (15 + m * 2) * s, by + 7 * s, 2 * s, 3 * s);
-    ctx.fillStyle = lighten(mugColors[m], 20);
-    ctx.fillRect(bx + (15 + m * 2) * s, by + 7 * s, 2 * s, 1 * s);
-  }
-}
-
-export function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number, large = false): void {
-  const bx = x * s, by = y * s;
-  const size = large ? 2 : 1;
-
-  // Pot
-  ctx.fillStyle = '#8B4513';
-  ctx.fillRect(bx + 2 * s, by + 8 * size * s, 6 * size * s, 6 * size * s);
-  ctx.fillStyle = '#6B3510';
-  ctx.fillRect(bx + 2 * s, by + 8 * size * s, 6 * size * s, 1 * s);
-  // Soil
-  ctx.fillStyle = '#3A2010';
-  ctx.fillRect(bx + 3 * s, by + 8 * size * s, 4 * size * s, 2 * s);
-
-  // Leaves
-  const leafColor = '#1A6A1A';
-  const leafLight = '#2A8A2A';
-  if (large) {
-    // Big leafy plant
-    ctx.fillStyle = leafColor;
-    ctx.fillRect(bx + 4 * s, by + 2 * s, 2 * s, 6 * s);
-    ctx.fillRect(bx, by + 2 * s, 10 * s, 4 * s);
-    ctx.fillRect(bx + 1 * s, by, 8 * s, 4 * s);
-    ctx.fillRect(bx - 2 * s, by + 4 * s, 6 * s, 3 * s);
-    ctx.fillRect(bx + 6 * s, by + 3 * s, 6 * s, 3 * s);
-    ctx.fillStyle = leafLight;
-    ctx.fillRect(bx + 4 * s, by + 2 * s, 1 * s, 4 * s);
-    ctx.fillRect(bx + 1 * s, by + 2 * s, 7 * s, 1 * s);
-  } else {
-    // Small cactus/succulent
-    ctx.fillStyle = '#2A7A2A';
-    ctx.fillRect(bx + 3 * s, by + 3 * s, 4 * s, 5 * s);
-    ctx.fillRect(bx + 1 * s, by + 5 * s, 3 * s, 3 * s);
-    ctx.fillRect(bx + 6 * s, by + 4 * s, 3 * s, 3 * s);
-    ctx.fillStyle = '#3A9A3A';
-    ctx.fillRect(bx + 4 * s, by + 3 * s, 1 * s, 5 * s);
-    // Spines
-    ctx.fillStyle = '#EEE';
-    ctx.fillRect(bx + 2 * s, by + 5 * s, 1 * s, 1 * s);
-    ctx.fillRect(bx + 7 * s, by + 4 * s, 1 * s, 1 * s);
-  }
-}
-
-export function drawMeetingTable(ctx: CanvasRenderingContext2D, x: number, y: number): void {
-  const bx = x * s, by = y * s;
-
-  // Table surface (rounded rect approximation)
-  ctx.fillStyle = '#5A4030';
-  ctx.fillRect(bx + 4 * s, by, 32 * s, 14 * s);
-  ctx.fillRect(bx, by + 3 * s, 40 * s, 8 * s);
-  ctx.fillRect(bx + 2 * s, by + 1 * s, 36 * s, 12 * s);
-  // Surface highlight
-  ctx.fillStyle = '#7A6050';
-  ctx.fillRect(bx + 4 * s, by, 32 * s, 1 * s);
-  ctx.fillRect(bx + 2 * s, by + 1 * s, 36 * s, 1 * s);
-  // Table legs
-  ctx.fillStyle = '#3A2010';
-  ctx.fillRect(bx + 4 * s, by + 12 * s, 3 * s, 4 * s);
-  ctx.fillRect(bx + 33 * s, by + 12 * s, 3 * s, 4 * s);
-
-  // Chairs around table
-  ctx.fillStyle = '#1A1A2E';
-  // Top chairs
-  ctx.fillRect(bx + 5 * s, by - 5 * s, 8 * s, 4 * s);
-  ctx.fillRect(bx + 27 * s, by - 5 * s, 8 * s, 4 * s);
-  // Bottom chairs
-  ctx.fillRect(bx + 5 * s, by + 14 * s, 8 * s, 4 * s);
-  ctx.fillRect(bx + 27 * s, by + 14 * s, 8 * s, 4 * s);
-
-  // Items on table
-  // Laptop
+  // Brass brackets
+  ctx.fillStyle = '#D4AF37';
+  ctx.fillRect(bx + 2 * s, by + 8 * s, 3 * s, 11 * s);
+  ctx.fillRect(bx + 19 * s, by + 8 * s, 3 * s, 11 * s);
+  ctx.fillRect(bx + 10 * s, by + 11 * s, 4 * s, 5 * s); // Lock plate
   ctx.fillStyle = '#222';
-  ctx.fillRect(bx + 8 * s, by + 3 * s, 8 * s, 5 * s);
-  ctx.fillStyle = '#001830';
-  ctx.fillRect(bx + 9 * s, by + 4 * s, 6 * s, 3 * s);
-  // Water glass
-  ctx.fillStyle = 'rgba(200,230,255,0.5)';
-  ctx.fillRect(bx + 20 * s, by + 4 * s, 3 * s, 5 * s);
-  ctx.strokeStyle = 'rgba(180,210,240,0.8)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(bx + 20 * s, by + 4 * s, 3 * s, 5 * s);
-  // Papers
-  ctx.fillStyle = '#F0EEE8';
-  ctx.fillRect(bx + 25 * s, by + 3 * s, 7 * s, 5 * s);
-  ctx.fillStyle = '#CCC';
-  ctx.fillRect(bx + 26 * s, by + 5 * s, 5 * s, 1 * s);
-  ctx.fillRect(bx + 26 * s, by + 7 * s, 3 * s, 1 * s);
+  ctx.fillRect(bx + 11 * s, by + 13 * s, 2 * s, 2 * s); // Keyhole
+
+  // Open lid (angled back)
+  ctx.fillStyle = '#5A2A10';
+  ctx.fillRect(bx + 2 * s, by + 1 * s, 20 * s, 6 * s);
+  ctx.fillStyle = '#3A1808';
+  ctx.fillRect(bx + 3 * s, by + 2 * s, 18 * s, 4 * s);
+  ctx.fillStyle = '#D4AF37';
+  ctx.fillRect(bx + 2 * s, by + 1 * s, 3 * s, 6 * s);
+  ctx.fillRect(bx + 19 * s, by + 1 * s, 3 * s, 6 * s);
+
+  // Glistening gold coins and gems overflowing!
+  ctx.fillStyle = '#F1C40F';
+  ctx.fillRect(bx + 4 * s, by + 6 * s, 16 * s, 3 * s);
+  ctx.fillRect(bx + 5 * s, by + 5 * s, 14 * s, 2 * s);
+  ctx.fillStyle = '#F39C12';
+  ctx.fillRect(bx + 6 * s, by + 7 * s, 4 * s, 2 * s);
+  ctx.fillRect(bx + 14 * s, by + 7 * s, 4 * s, 2 * s);
+  // Red ruby
+  ctx.fillStyle = '#E74C3C';
+  ctx.fillRect(bx + 9 * s, by + 5 * s, 2 * s, 2 * s);
+  // Blue sapphire
+  ctx.fillStyle = '#3498DB';
+  ctx.fillRect(bx + 13 * s, by + 5 * s, 2 * s, 2 * s);
+  // Green emerald
+  ctx.fillStyle = '#2ECC71';
+  ctx.fillRect(bx + 7 * s, by + 6 * s, 2 * s, 2 * s);
 }
 
-export function drawWaterCooler(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+export function drawRumBarrels(ctx: CanvasRenderingContext2D, x: number, y: number): void {
   const bx = x * s, by = y * s;
-  // Body
-  ctx.fillStyle = '#2A2A35';
-  ctx.fillRect(bx + 2 * s, by + 5 * s, 10 * s, 18 * s);
-  // Water bottle (blue tinted)
-  ctx.fillStyle = 'rgba(100,160,220,0.6)';
-  ctx.fillRect(bx + 3 * s, by, 8 * s, 8 * s);
-  ctx.strokeStyle = 'rgba(100,160,220,0.9)';
+
+  // Bottom barrel
+  drawSingleBarrel(ctx, bx, by + 10 * s, 'COLA');
+  // Top barrel
+  drawSingleBarrel(ctx, bx + 4 * s, by, 'SAKE');
+
+  function drawSingleBarrel(c: CanvasRenderingContext2D, px: number, py: number, label: string) {
+    // Barrel body
+    c.fillStyle = '#6E4720';
+    c.fillRect(px + 2 * s, py, 14 * s, 14 * s);
+    c.fillRect(px, py + 2 * s, 18 * s, 10 * s); // Bulge
+    // Iron hoops
+    c.fillStyle = '#2C3E50';
+    c.fillRect(px, py + 3 * s, 18 * s, 2 * s);
+    c.fillRect(px, py + 9 * s, 18 * s, 2 * s);
+    // Wood highlights
+    c.fillStyle = '#8B5A2B';
+    c.fillRect(px + 2 * s, py + 1 * s, 14 * s, 1 * s);
+    // Spigot bung
+    c.fillStyle = '#D4AF37';
+    c.fillRect(px + 8 * s, py + 6 * s, 2 * s, 2 * s);
+    // Stenciled text
+    c.fillStyle = '#EAEAEA';
+    c.font = `bold ${2 * s}px monospace`;
+    c.fillText(label, px + 4 * s, py + 8 * s);
+  }
+}
+
+export function drawShipCannon(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+  const bx = x * s, by = y * s;
+
+  // Wooden gun carriage
+  ctx.fillStyle = '#5A2A10';
+  ctx.fillRect(bx + 2 * s, by + 6 * s, 16 * s, 8 * s);
+  // 4 Truck wheels
+  ctx.fillStyle = '#2C1D11';
+  ctx.fillRect(bx + 1 * s, by + 12 * s, 4 * s, 4 * s);
+  ctx.fillRect(bx + 13 * s, by + 12 * s, 4 * s, 4 * s);
+
+  // Cast iron cannon barrel (pointing out left)
+  ctx.fillStyle = '#22222E';
+  ctx.fillRect(bx - 3 * s, by + 2 * s, 20 * s, 5 * s);
+  // Cannon muzzle ring
+  ctx.fillStyle = '#333344';
+  ctx.fillRect(bx - 4 * s, by + 1 * s, 2 * s, 7 * s);
+  // Cannon breech knob
+  ctx.fillStyle = '#1A1A24';
+  ctx.fillRect(bx + 16 * s, by + 3 * s, 3 * s, 3 * s);
+  // Brass reinforcement bands
+  ctx.fillStyle = '#D4AF37';
+  ctx.fillRect(bx + 2 * s, by + 2 * s, 2 * s, 5 * s);
+  ctx.fillRect(bx + 9 * s, by + 2 * s, 2 * s, 5 * s);
+}
+
+export function drawSunnyMast(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+  const bx = x * s, by = y * s;
+  // Mast timber
+  ctx.fillStyle = '#7A4518';
+  ctx.fillRect(bx + 8 * s, by, 8 * s, 40 * s);
+  ctx.fillStyle = '#5A3010';
+  ctx.fillRect(bx + 8 * s, by, 2 * s, 40 * s);
+  // Cross yardarm
+  ctx.fillStyle = '#8B5020';
+  ctx.fillRect(bx - 8 * s, by + 12 * s, 40 * s, 4 * s);
+  // Rigging ropes
+  ctx.strokeStyle = '#D4AF37';
   ctx.lineWidth = 1;
-  ctx.strokeRect(bx + 3 * s, by, 8 * s, 8 * s);
-  // Taps
-  ctx.fillStyle = '#0066CC';
-  ctx.fillRect(bx + 3 * s, by + 15 * s, 3 * s, 2 * s);
-  ctx.fillStyle = '#CC0000';
-  ctx.fillRect(bx + 8 * s, by + 15 * s, 3 * s, 2 * s);
-  // Base
-  ctx.fillStyle = '#1A1A22';
-  ctx.fillRect(bx + 1 * s, by + 22 * s, 12 * s, 3 * s);
+  ctx.beginPath();
+  ctx.moveTo(bx + 12 * s, by);
+  ctx.lineTo(bx - 8 * s, by + 40 * s);
+  ctx.moveTo(bx + 12 * s, by);
+  ctx.lineTo(bx + 32 * s, by + 40 * s);
+  ctx.stroke();
+}
+
+export function drawMikanTrees(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+  const bx = x * s, by = y * s;
+  // Wooden planter box
+  ctx.fillStyle = '#6E4720';
+  ctx.fillRect(bx + 2 * s, by + 14 * s, 16 * s, 10 * s);
+  ctx.fillStyle = '#4A2E12';
+  ctx.fillRect(bx + 1 * s, by + 14 * s, 18 * s, 2 * s);
+  ctx.fillStyle = '#3A2008';
+  ctx.fillRect(bx + 2 * s, by + 15 * s, 16 * s, 1 * s);
+
+  // Tree trunk
+  ctx.fillStyle = '#5A3815';
+  ctx.fillRect(bx + 8 * s, by + 8 * s, 4 * s, 7 * s);
+
+  // Lush green foliage
+  ctx.fillStyle = '#1E7E34';
+  ctx.fillRect(bx + 2 * s, by + 2 * s, 16 * s, 9 * s);
+  ctx.fillRect(bx + 4 * s, by - 1 * s, 12 * s, 4 * s);
+  ctx.fillRect(bx + 1 * s, by + 4 * s, 18 * s, 5 * s);
+  ctx.fillStyle = '#28A745';
+  ctx.fillRect(bx + 5 * s, by + 1 * s, 10 * s, 3 * s);
+
+  // Juicy bright orange Mikan fruits!
+  ctx.fillStyle = '#FF7700';
+  ctx.fillRect(bx + 4 * s, by + 3 * s, 3 * s, 3 * s);
+  ctx.fillRect(bx + 12 * s, by + 4 * s, 3 * s, 3 * s);
+  ctx.fillRect(bx + 8 * s, by + 7 * s, 3 * s, 3 * s);
+  ctx.fillRect(bx + 14 * s, by + 8 * s, 2 * s, 2 * s);
+  // Fruit shine
+  ctx.fillStyle = '#FFAA33';
+  ctx.fillRect(bx + 4 * s, by + 3 * s, 1 * s, 1 * s);
+  ctx.fillRect(bx + 12 * s, by + 4 * s, 1 * s, 1 * s);
+}
+
+export function drawAnchorAndRope(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+  const bx = x * s, by = y * s;
+  // Manila hemp rope coil
+  ctx.fillStyle = '#C8A06A';
+  ctx.fillRect(bx + 1 * s, by + 12 * s, 18 * s, 8 * s);
+  ctx.fillStyle = '#A8804A';
+  ctx.fillRect(bx + 3 * s, by + 14 * s, 14 * s, 4 * s);
+
+  // Iron anchor
+  ctx.fillStyle = '#2C3E50';
+  // Central shank
+  ctx.fillRect(bx + 8 * s, by, 4 * s, 18 * s);
+  // Cross stock
+  ctx.fillRect(bx + 3 * s, by + 3 * s, 14 * s, 2 * s);
+  // Top ring
+  ctx.fillRect(bx + 7 * s, by - 2 * s, 6 * s, 2 * s);
+  // Curved flukes / arms
+  ctx.fillRect(bx + 2 * s, by + 14 * s, 3 * s, 4 * s);
+  ctx.fillRect(bx + 15 * s, by + 14 * s, 3 * s, 4 * s);
+  ctx.fillRect(bx + 4 * s, by + 16 * s, 12 * s, 3 * s);
 }
 
 export function drawCeilingLight(ctx: CanvasRenderingContext2D, x: number, y: number, on: boolean, frame: number): void {
