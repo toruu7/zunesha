@@ -64,14 +64,34 @@ jobs:
       - name: Build
         run: cargo build --workspace
       - name: End-to-end sweep (git + daemon + WebSockets)
-        run: sh scripts/e2e.sh
+        run: |
+          set +e
+          sh scripts/e2e.sh > /tmp/zou-e2e.log 2>&1
+          rc=$?
+          cat /tmp/zou-e2e.log
+          if [ "$rc" -ne 0 ]; then
+            tail -n 30 /tmp/zou-e2e.log | while IFS= read -r line; do
+              printf '::error::%s\n' "$line"
+            done
+          fi
+          exit "$rc"
 
   installer:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Installer PATH integration
-        run: sh scripts/test-install.sh
+        run: |
+          set +e
+          sh scripts/test-install.sh > /tmp/zou-installer.log 2>&1
+          rc=$?
+          cat /tmp/zou-installer.log
+          if [ "$rc" -ne 0 ]; then
+            tail -n 30 /tmp/zou-installer.log | while IFS= read -r line; do
+              printf '::error::%s\n' "$line"
+            done
+          fi
+          exit "$rc"
 
   installer-windows:
     runs-on: windows-latest

@@ -41,7 +41,8 @@ pub struct ProjectConfig {
     /// reset). Zero means switch immediately.
     pub rate_limit_cooldown_secs: u64,
     /// Test/lint command run in the worktree after the agent exits 0. When
-    /// unset, `ZOU_EVAL_CMD` and then auto-detection are used.
+    /// unset, `ZOU_EVAL_CMD` and then auto-detection are used. Research, QA,
+    /// and report stages that leave the tree unchanged skip this gate.
     pub verify_cmd: Option<String>,
     /// Self-healing cycles after a failed `verify_cmd` before parking the task.
     pub max_verify_retries: u32,

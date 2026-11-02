@@ -1311,6 +1311,47 @@ async fn run_one(
                 "status_changed",
                 serde_json::json!({ "from": from.as_str(), "to": status.as_str() }),
             );
+
+            // Research, QA, and captain-report stages are expected to leave
+            // the tree untouched. Running the project-wide verify command on
+            // an unchanged baseline can park them before implementation ever
+            // starts (a bugfix plan often begins with failing tests), so skip
+            // validation when such a stage produced no diff. Implementation
+            // stages keep the old behaviour and are validated even when the
+            // agent claims success without changing files.
+            let unchanged_non_code = if validation_optional_without_changes(&task) {
+                let pool = pool.clone();
+                let diff_task_id = task_id.clone();
+                match tokio::task::spawn_blocking(move || -> Result<bool> {
+                    let db = pool.open_db()?;
+                    let mgr = WorkspaceManager::new(pool.paths.clone());
+                    Ok(mgr.generate_diff(&db, &diff_task_id)?.trim().is_empty())
+                })
+                .await
+                {
+                    Ok(Ok(empty)) => empty,
+                    Ok(Err(error)) => {
+                        eprintln!(
+                            "warning: could not inspect workspace diff for {task_id}: {error}"
+                        );
+                        false
+                    }
+                    Err(error) => {
+                        eprintln!("warning: diff inspection failed for {task_id}: {error}");
+                        false
+                    }
+                }
+            } else {
+                false
+            };
+            if unchanged_non_code {
+                journal.event(
+                    "validation_skipped",
+                    serde_json::json!({ "reason": "non_code_task_without_changes" }),
+                );
+                return Ok((TaskStatus::Review, true));
+            }
+
             let Some(argv) = eval_command.resolve(Path::new(&ws_dir)) else {
                 // Nothing to validate in this project: exit-0 is as good as
                 // a green test run, so go straight to human review.
@@ -1452,7 +1493,10 @@ async fn run_one(
         // — the diff would just show as empty in the dashboard.
         let pool = pool.clone();
         let diff_task_id = task_id.clone();
-        let acceptance_check = pool.project.acceptance_check;
+        // A research/report stage is *supposed* to leave the tree untouched;
+        // requiring a diff there would flag every query plan for attention.
+        let acceptance_check =
+            pool.project.acceptance_check && !validation_optional_without_changes(&task);
         let _ = tokio::task::spawn_blocking(move || -> Result<()> {
             let db = pool.open_db()?;
             let mgr = WorkspaceManager::new(pool.paths.clone());
@@ -1535,6 +1579,18 @@ async fn switch_to_fallback(
     ));
     *active_agent = fallback;
     true
+}
+
+/// Whether an empty diff is acceptable for this task without running the
+/// project-wide verify command. Nami researches/plans, Usopp runs QA, and the
+/// captain writes the final briefing; none of them should be blocked by a
+/// baseline that still fails. Implementation stages are validated normally.
+fn validation_optional_without_changes(task: &Task) -> bool {
+    let title = task.title.to_ascii_lowercase();
+    matches!(task.crew_member.as_deref(), Some("nami") | Some("usopp"))
+        || title.starts_with("captain briefing")
+        || title.starts_with("research &")
+        || title.starts_with("test & qa")
 }
 
 /// Persist a classified stop plus the current transcript tail and handoff
@@ -3507,6 +3563,37 @@ mod tests {
         );
         // Log seq stays dense ACROSS phases: 1 agent line + 1 eval line.
         assert_eq!(seqs, vec![0, 1], "one continuous sequence for the run");
+    }
+
+    #[tokio::test]
+    async fn research_task_without_changes_skips_a_failing_project_verify() {
+        // A bugfix plan may start with a red test suite. The research stage
+        // deliberately changes nothing, so running `verify_cmd` there would
+        // park the plan before the implementation stage can fix it.
+        let (_repo, paths) = scratch_install();
+        let db = Database::open(&paths.state_db()).unwrap();
+        ready_tasks(&db, 1);
+        db.set_crew_member("t0", Some("nami")).unwrap();
+        db.update_task("t0", Some("Research & investigate: quietly broken"), None)
+            .unwrap();
+
+        let pool = WorkerPool::new(paths.clone(), 1, AgentCommand::shell("true"))
+            .with_eval(EvalCommand::fixed("sh -c 'exit 1'"));
+
+        let success = pool
+            .spawn_task("t0".into())
+            .await
+            .unwrap()
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(success, "an unchanged research stage should reach REVIEW");
+
+        let db = Database::open(&paths.state_db()).unwrap();
+        let task = db.require_task("t0").unwrap();
+        assert_eq!(task.status, TaskStatus::Review);
+        assert_eq!(task.retry_count, 0, "verify_cmd should not have run");
+        assert!(task.stop_reason.is_none());
     }
 
     #[tokio::test]

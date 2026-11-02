@@ -111,19 +111,19 @@ case "$OUT" in
   *) fail "--follow output: $OUT";;
 esac
 [ "$(count_in REVIEW)" = "1" ] && pass "head task in REVIEW" || fail "expected exactly 1 REVIEW"
-[ "$(count_in BACKLOG)" = "2" ] && pass "dependents still gated in BACKLOG" || fail "dependents not gated"
+[ "$(count_in BACKLOG)" = "3" ] && pass "dependents still gated in BACKLOG" || fail "dependents not gated"
 RID0=$(id_in REVIEW)
 [ -f ".zou/ws/$RID0/CODEBASE_MAP.md" ] \
   && pass "workspace carries CODEBASE_MAP.md" || fail "codebase map missing from workspace"
 
 # Walk the whole chain the way a user does: run, approve, repeat.
-for _hop in 1 2 3; do
+for _hop in 1 2 3 4; do
   "$ZOU" run > /dev/null
   RID=$(id_in REVIEW)
   [ -n "$RID" ] || fail "hop $_hop: nothing in REVIEW to approve"
   "$ZOU" approve "$RID" > /dev/null
 done
-[ "$(count_in DONE)" = "3" ] && pass "all 3 chained tasks reached DONE" || fail "not all 3 DONE"
+[ "$(count_in DONE)" = "4" ] && pass "all 4 chained tasks reached DONE" || fail "not all 4 DONE"
 assert_contains "final content merged through the chain" "$(cat a.txt)" "from-task"
 grep -aq "prompt-has-map=1" .zou/state.db \
   && pass "agent prompts carried the codebase map" || fail "map missing from agent prompts"
@@ -155,8 +155,8 @@ export ZOU_AGENT_CMD="sh $AG/agent-heal.sh {workspace}"
 export ZOU_EVAL_CMD="sh -c 'test -f $EVAL_STATE/FIXED || { echo ASSERTION: FIXED missing; exit 1; }'"
 
 "$ZOU" run > /dev/null
-[ "$(count_in FAILED_NEEDS_HUMAN)" = "1" ] \
-  && pass "3 failed validations park the head task" || fail "expected exactly 1 FAILED_NEEDS_HUMAN"
+[ "$(count_in NEEDS_INTERACTION)" = "1" ] \
+  && pass "3 failed validations park the head task" || fail "expected exactly 1 NEEDS_INTERACTION"
 [ "$(count_in REVIEW)" = "0" ] && pass "nothing reaches REVIEW unvalidated" || fail "unvalidated task got to REVIEW"
 grep -aq "prompt-mentions-assertion=1" .zou/state.db \
   && pass "the retry attempt got the errors in its prompt" || fail "retry prompt lacked the errors"
@@ -173,7 +173,7 @@ i=0
 until curl -sf "http://127.0.0.1:$PORT2/health" > /dev/null 2>&1; do
   i=$((i+1)); [ "$i" -gt 60 ] && fail "second daemon did not start"; sleep 0.25
 done
-RID=$(id_in FAILED_NEEDS_HUMAN)
+RID=$(id_in NEEDS_INTERACTION)
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
   -d '{"feedback":"dependency installed"}' "http://127.0.0.1:$PORT2/api/tasks/$RID/reject")
 kill "$DPID2" 2>/dev/null || true; DPID2=
@@ -182,13 +182,13 @@ kill "$DPID2" 2>/dev/null || true; DPID2=
 
 # FIXED exists now, so validation passes and the human-gated chain completes.
 unset ZOU_EVAL_CMD
-for _hop in 1 2 3; do
+for _hop in 1 2 3 4; do
   "$ZOU" run > /dev/null
   RID=$(id_in REVIEW)
   [ -n "$RID" ] || fail "heal hop $_hop: nothing in REVIEW"
   "$ZOU" approve "$RID" > /dev/null
 done
-[ "$(count_in DONE)" = "3" ] && pass "chain completes after the human nudge" || fail "chain did not finish"
+[ "$(count_in DONE)" = "4" ] && pass "chain completes after the human nudge" || fail "chain did not finish"
 assert_contains "healed content merged" "$(cat a.txt)" "from-task"
 unset ZOU_AGENT_CMD ZOU_EVAL_STATE
 
@@ -355,8 +355,8 @@ start_daemon "" "$CRASH_LOG"
 
 # The dependency edges ride on /api/tasks for the dashboard's DAG view.
 DEPS=$(curl -s "http://127.0.0.1:$PORT/api/tasks")
-[ "$(printf '%s' "$DEPS" | grep -o depends_on | wc -l)" = "2" ] \
-  && pass "/api/tasks carries the 2 dependency edges" || fail "missing edges in /api/tasks: $DEPS"
+[ "$(printf '%s' "$DEPS" | grep -o depends_on | wc -l)" = "3" ] \
+  && pass "/api/tasks carries the 3 dependency edges" || fail "missing edges in /api/tasks: $DEPS"
 
 # Claim the head on the daemon, then wait until its agent is provably running.
 T=$(id_in TODO)

@@ -548,8 +548,12 @@ acceptance_check = false                # require a non-empty diff before REVIEW
 
 A failed `verify_cmd` is fed back into the same worktree for up to
 `max_verify_retries` cycles; exhausting the budget parks the task instead of
-returning it to `TODO`. Approved parent tasks also persist a bounded
-file/interface handoff summary that is injected into downstream task prompts.
+returning it to `TODO`. Research, QA, and captain-report stages that leave the
+tree unchanged skip the project-wide gate (and the optional empty-diff
+acceptance check), so a red baseline cannot block Nami's investigation before
+the implementation stage has a chance to fix it. Approved parent tasks also
+persist a bounded file/interface handoff summary that is injected into
+downstream task prompts.
 
 ### Environment variables
 
