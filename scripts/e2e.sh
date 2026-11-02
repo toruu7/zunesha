@@ -11,7 +11,8 @@ set -e
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 ZOU="${ZOU:-$ROOT/target/debug/zou}"
 HERE="$ROOT/scripts"
-AG=$(mktemp -d)                       # generated fake agents (volatile OK)
+tmpdir() { mktemp -d 2>/dev/null || mktemp -d /tmp/zou-e2e.XXXXXX; }
+AG=$(tmpdir)                          # generated fake agents (volatile OK)
 PORT=7435
 DAEMON_PID=
 DPID2=
@@ -27,7 +28,7 @@ trap cleanup EXIT
 
 # A fresh one-commit git repo with the orchestrator initialized.
 new_repo() {
-  D=$(mktemp -d); cd "$D"
+  D=$(tmpdir); cd "$D"
   git init -q .
   git config user.name T
   git config user.email t@t
@@ -45,7 +46,7 @@ count_in() {
 }
 
 say "init refuses a non-git directory without --force"
-NG=$(mktemp -d)
+NG=$(tmpdir)
 if OUT=$(cd "$NG" && "$ZOU" init 2>&1); then
   fail "init should refuse outside a git repo (got: $OUT)"
 fi
@@ -138,7 +139,7 @@ say "self-healing: eval failures retry, park for a human, then resume"
 new_repo
 "$ZOU" plan "chain through every task" > /dev/null
 # State lives OUTSIDE the workspace so marker files never enter the diff.
-EVAL_STATE=$(mktemp -d)
+EVAL_STATE=$(tmpdir)
 export ZOU_EVAL_STATE="$EVAL_STATE"
 # The agent NEVER fixes the code itself: validation fails 3× and the task
 # parks. The template uses {workspace}, so the prompt is the LAST argument —

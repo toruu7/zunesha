@@ -998,7 +998,10 @@ mod tests {
     #[test]
     fn refactor_intent_assigns_zoro() {
         let db = db();
-        let ids = mock_plan(&db, "refactor the database queries to reduce technical debt");
+        let ids = mock_plan(
+            &db,
+            "refactor the database queries to reduce technical debt",
+        );
         assert_eq!(ids.len(), 4);
         let impl_task = db.require_task(&ids[1]).unwrap();
         assert_eq!(impl_task.crew_member.as_deref(), Some("zoro"));

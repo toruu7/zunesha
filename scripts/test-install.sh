@@ -10,7 +10,7 @@
 set -eu
 
 REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-ROOT=$(mktemp -d 2>/dev/null || mktemp -d -t zou-install-test)
+ROOT=$(mktemp -d 2>/dev/null || mktemp -d /tmp/zou-install-test.XXXXXX)
 PASS=0
 FAIL=0
 

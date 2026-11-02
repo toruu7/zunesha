@@ -332,7 +332,7 @@ download() { # $1=url $2=dest
 }
 
 # --- workdir ---------------------------------------------------------------
-TMP=$(mktemp -d 2>/dev/null || mktemp -d -t zou-install)
+TMP=$(mktemp -d 2>/dev/null || mktemp -d /tmp/zou-install.XXXXXX)
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
