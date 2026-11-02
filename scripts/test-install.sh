@@ -52,8 +52,8 @@ TARBALL="file://$ROOT/zou.tar.gz"
 run_install() { # $1=home, extra args...
     home=$1
     shift
-    HOME="$home" SHELL="${TEST_SHELL:-/bin/bash}" sh "$REPO/install.sh" \
-        --tarball "$TARBALL" --prefix "$home/.local" "$@"
+    HOME="$home" SHELL="${TEST_SHELL:-/bin/bash}" XDG_CONFIG_HOME="$home/.config" \
+        sh "$REPO/install.sh" --tarball "$TARBALL" --prefix "$home/.local" "$@"
 }
 
 # --- 1. bash: adds both startup files, idempotent, sources cleanly ----------
@@ -137,7 +137,8 @@ TEST_SHELL=/usr/bin/fish run_install "$H" > "$ROOT/h5.out" 2>&1 || fail "fish in
 assert_file_has "$H/.config/fish/config.fish" "set -gx EDITOR vim" "fish preserves existing config"
 assert_file_has "$H/.config/fish/config.fish" "contains '$H/.local/bin' \$PATH" "fish config guards PATH"
 assert_file_has "$H/.config/fish/config.fish" "set -gx PATH '$H/.local/bin' \$PATH" "fish config prepends PATH"
-HOME="$H" SHELL=/usr/bin/fish sh "$REPO/install.sh" --uninstall --prefix "$H/.local" > "$ROOT/h5-un.out" 2>&1 || fail "fish uninstall failed"
+HOME="$H" SHELL=/usr/bin/fish XDG_CONFIG_HOME="$H/.config" \
+    sh "$REPO/install.sh" --uninstall --prefix "$H/.local" > "$ROOT/h5-un.out" 2>&1 || fail "fish uninstall failed"
 assert_file_lacks "$H/.config/fish/config.fish" "# zou: PATH entry" "fish uninstall cleans config.fish"
 assert_file_has "$H/.config/fish/config.fish" "set -gx EDITOR vim" "fish uninstall preserves existing config"
 
