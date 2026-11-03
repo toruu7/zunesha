@@ -179,6 +179,48 @@ code, pre, .mono, kbd {
 }
 .dashboard-link:hover { color: var(--ink); }
 
+.version-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.update-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  border-radius: 6px;
+  background: rgba(251, 191, 36, 0.15);
+  color: #FCD34D;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  animation: pulse-update 2s infinite;
+  transition: all 150ms ease;
+}
+.update-btn:hover {
+  background: rgba(251, 191, 36, 0.28);
+  border-color: #FCD34D;
+  transform: translateY(-1px);
+}
+
+@keyframes pulse-update {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
 /* ── error banner ────────────────────────────────────────────────────────── */
 
 .error-banner {

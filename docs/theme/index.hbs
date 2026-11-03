@@ -339,6 +339,70 @@
         <script src="{{ resource "highlight.js" }}"></script>
         <script src="{{ resource "book.js" }}"></script>
 
+        <script>
+        (function() {
+          function copySnippet(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+              return navigator.clipboard.writeText(text);
+            }
+            return new Promise(function(resolve, reject) {
+              var ta = document.createElement('textarea');
+              ta.value = text;
+              ta.style.position = 'fixed';
+              ta.style.left = '-9999px';
+              ta.style.top = '-9999px';
+              document.body.appendChild(ta);
+              ta.focus();
+              ta.select();
+              try {
+                var ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                ok ? resolve() : reject(new Error('execCommand failed'));
+              } catch(e) {
+                document.body.removeChild(ta);
+                reject(e);
+              }
+            });
+          }
+
+          function extractCode(pre) {
+            var code = pre.querySelector('code');
+            if (!code) return '';
+            var clone = code.cloneNode(true);
+            var boring = clone.querySelectorAll('.boring, .hide-boring');
+            boring.forEach(function(el) { el.remove(); });
+            return (clone.textContent || '').trim();
+          }
+
+          document.addEventListener('click', function(e) {
+            var btn = e.target.closest('.clip-button');
+            if (!btn) return;
+            e.preventDefault();
+            e.stopPropagation();
+
+            var pre = btn.closest('pre');
+            if (!pre) return;
+            var text = extractCode(pre);
+            if (!text) return;
+
+            copySnippet(text).then(function() {
+              btn.classList.add('tooltipped', 'copied');
+              btn.setAttribute('title', 'Copied!');
+              var tip = btn.querySelector('.tooltiptext');
+              if (tip) tip.textContent = 'Copied!';
+              setTimeout(function() {
+                btn.classList.remove('copied');
+                btn.setAttribute('title', 'Copy to clipboard');
+                if (tip) tip.textContent = '';
+              }, 2000);
+            }).catch(function(err) {
+              console.warn('[docs] copy failed:', err);
+              window.prompt('Copy to clipboard (Ctrl+C, Enter):', text);
+            });
+          }, true);
+        })();
+        </script>
+
         <!-- Custom JS scripts -->
         {{#each additional_js}}
         <script src="{{ resource this}}"></script>

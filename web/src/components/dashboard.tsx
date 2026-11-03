@@ -9,10 +9,11 @@ import LogViewer from "@/components/log-viewer";
 import PlanBar from "@/components/plan-bar";
 import ReviewModal from "@/components/review-modal";
 import Spinner from "@/components/spinner";
+import { api } from "@/lib/api";
 import { soundManager } from "@/lib/audio";
 import { isActive } from "@/lib/status";
 import { useZou } from "@/lib/store";
-import type { Task } from "@/lib/types";
+import type { Task, VersionResponse } from "@/lib/types";
 
 // reactflow measures the DOM (and needs `window`), so the graph view loads
 // client-side only. The code split also keeps it — and its stylesheet — out
@@ -349,8 +350,47 @@ export default function Dashboard() {
   const [lastActiveId, setLastActiveId] = useState<string | null>(null);
   const [sfxEnabled, setSfxEnabled] = useState(() => soundManager.isEnabled());
   const [crewModalMember, setCrewModalMember] = useState<string | null>(null);
+  const [versionInfo, setVersionInfo] = useState<VersionResponse | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const logTask = selectedTask ?? activeTask ?? null;
   const activeId = activeTask?.id ?? null;
+
+  useEffect(() => {
+    void api.version().then(setVersionInfo).catch(() => {});
+  }, []);
+
+  const handleUpdate = async () => {
+    if (!versionInfo?.latest_version) return;
+    if (
+      !window.confirm(
+        `Update sequentially to v${versionInfo.latest_version} and restart daemon?\nSteps: ${versionInfo.pending_updates.join(" → ")}`
+      )
+    ) {
+      return;
+    }
+    setUpdating(true);
+    setUpdateMsg("Updating step-by-step & restarting server…");
+    try {
+      await api.applyUpdate();
+      const poll = setInterval(async () => {
+        try {
+          const res = await api.status();
+          if (res.initialized) {
+            clearInterval(poll);
+            window.location.reload();
+          }
+        } catch {
+          // Restarting in background
+        }
+      }, 1500);
+    } catch (err: unknown) {
+      setUpdating(false);
+      setUpdateMsg(
+        "Update failed: " + (err instanceof Error ? err.message : String(err))
+      );
+    }
+  };
 
   const toggleSfx = () => {
     const next = soundManager.toggle();
@@ -390,6 +430,32 @@ export default function Dashboard() {
             <span className="hidden -rotate-2 border-2 border-ink bg-ink px-2 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-emphasis sm:inline">
               zunesha
             </span>
+            <span
+              title={`Zunesha Version ${versionInfo?.current_version ?? "0.17.0"}`}
+              className="border-2 border-ink bg-contrast px-2 py-1 text-[11px] font-black uppercase text-ink shadow-brutal-sm hidden sm:inline"
+            >
+              v{versionInfo?.current_version ?? "0.17.0"}
+            </span>
+            {versionInfo?.update_available && (
+              <button
+                onClick={() => void handleUpdate()}
+                disabled={updating}
+                title={`Sequential update available: ${versionInfo.pending_updates.join(" → ")}. Click to update and restart server.`}
+                className="flex items-center gap-1.5 border-2 border-ink bg-emphasis px-2.5 py-1 text-[11px] font-black uppercase tracking-wider text-ink shadow-brutal-sm hover:bg-contrast active:translate-y-0.5 cursor-pointer animate-pulse"
+              >
+                <span>⚡</span>
+                <span>
+                  {updating
+                    ? "Updating…"
+                    : `Update to v${versionInfo.latest_version}`}
+                </span>
+              </button>
+            )}
+            {updateMsg && (
+              <span className="text-[10px] font-bold text-ink bg-contrast px-2 py-0.5 border border-ink">
+                {updateMsg}
+              </span>
+            )}
             <div className="hidden items-center gap-1.5 border-2 border-ink bg-emphasis px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-ink shadow-brutal-sm md:flex">
               <span className="text-sm leading-none">👒</span>
               <span>straw hat crew</span>
@@ -408,15 +474,34 @@ export default function Dashboard() {
                 />
               </svg>
             </span>
-            <div className="grid w-full grid-cols-4 items-center gap-2 sm:ml-auto sm:flex sm:w-auto sm:justify-start sm:gap-3">
+            <div className="grid w-full grid-cols-4 items-center gap-2 sm:ml-auto sm:flex sm:w-auto sm:justify-start sm:gap-2">
+              <a
+                href={versionInfo?.docs_url ?? "https://zunesha-docs.vercel.app"}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Documentation (mdBook)"
+                className="flex h-10 w-full items-center justify-center gap-1.5 border-4 border-ink bg-contrast px-2 text-[11px] font-black uppercase tracking-[0.08em] shadow-brutal-sm hover:bg-emphasis hover:-translate-y-0.5 active:translate-y-0 active:shadow-brutal-sm focus-visible:outline-4 sm:w-auto sm:px-2.5"
+              >
+                <span className="text-sm leading-none">📖</span>
+                <span className="hidden sm:inline">docs</span>
+              </a>
+              <a
+                href={versionInfo?.repo_url ?? "https://github.com/toruu7/zunesha"}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="GitHub repository"
+                className="flex h-10 w-full items-center justify-center gap-1.5 border-4 border-ink bg-contrast px-2 text-[11px] font-black uppercase tracking-[0.08em] shadow-brutal-sm hover:bg-emphasis hover:-translate-y-0.5 active:translate-y-0 active:shadow-brutal-sm focus-visible:outline-4 sm:w-auto sm:px-2.5"
+              >
+                <span className="text-sm leading-none">🐙</span>
+                <span className="hidden sm:inline">github</span>
+              </a>
               <a
                 href="/playground/"
                 title="Step aboard Thousand Sunny — Straw Hat Pixel Office"
-                className="flex h-10 w-full items-center justify-center gap-1.5 border-4 border-ink bg-contrast px-2.5 text-[11px] font-black uppercase tracking-[0.08em] shadow-brutal-sm hover:bg-emphasis hover:-translate-y-0.5 active:translate-y-0 active:shadow-brutal-sm focus-visible:outline-4 sm:w-auto"
+                className="flex h-10 w-full items-center justify-center gap-1.5 border-4 border-ink bg-contrast px-2 text-[11px] font-black uppercase tracking-[0.08em] shadow-brutal-sm hover:bg-emphasis hover:-translate-y-0.5 active:translate-y-0 active:shadow-brutal-sm focus-visible:outline-4 sm:w-auto sm:px-2.5"
               >
                 <span className="text-sm leading-none">🏴‍☠️</span>
-                <span className="hidden sm:inline">sunny office</span>
-                <span className="sm:hidden">sunny</span>
+                <span className="hidden sm:inline">sunny</span>
               </a>
               <button
                 onClick={toggleSfx}

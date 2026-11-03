@@ -51,6 +51,7 @@ pub mod recovery;
 pub mod sandbox;
 pub mod skills;
 pub mod task;
+pub mod update;
 pub mod worker;
 pub mod workspace;
 
@@ -85,5 +86,8 @@ pub use skills::{
     SkillInfo, SkillSource,
 };
 pub use task::{StopReason, Task, TaskStatus, MAX_EVAL_RETRIES};
+pub use update::{
+    apply_sequential_updates, check_updates, newer_releases, UpdateCheck, UpdateOptions,
+};
 pub use worker::{AgentCommand, StreamKind, WorkerEvent, WorkerPool, DEFAULT_MAX_CONCURRENCY};
 pub use workspace::{branch_name, ConflictPrep, Workspace, WorkspaceManager};

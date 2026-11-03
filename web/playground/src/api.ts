@@ -69,6 +69,22 @@ export interface CrewResponse {
   crew: CrewMember[];
 }
 
+export interface VersionResponse {
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  pending_updates: string[];
+  docs_url: string;
+  repo_url: string;
+}
+
+export interface UpdateApplyResponse {
+  ok: boolean;
+  message: string;
+  steps: string[];
+  target_version: string;
+}
+
 export interface TasksResponse {
   project: ProjectInfo;
   tasks: Task[];
@@ -131,6 +147,7 @@ function post<T>(path: string, body?: unknown): Promise<T> {
 
 export const api = {
   tasks: () => request<TasksResponse>('/api/tasks'),
+  status: () => request<{ initialized: boolean }>('/api/status'),
   plan: (prompt: string, attachments: AttachmentPayload[] = []) =>
     post<{ task_ids: string[] }>('/api/plan', { prompt, attachments }),
   runAll: () => post<{ started: number }>('/api/run'),
@@ -171,6 +188,9 @@ export const api = {
       `/api/crew/${encodeURIComponent(member)}/skills/${encodeURIComponent(skill)}`,
       { method: 'DELETE' },
     ),
+  version: () => request<VersionResponse>('/api/version'),
+  applyUpdate: (repo?: string) =>
+    post<UpdateApplyResponse>('/api/update', { repo }),
 };
 
 export interface EventSocketHandlers {

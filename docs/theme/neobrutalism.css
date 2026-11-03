@@ -627,6 +627,19 @@ mark {
   filter: none;
 }
 
+.content main pre > .buttons button.clip-button.copied {
+  background: #4ade80 !important;
+  color: var(--nb-ink) !important;
+}
+
+.content main pre > .buttons button.clip-button.copied::before {
+  content: '✓' !important;
+  font-weight: 900 !important;
+  font-size: 13px !important;
+  line-height: 1 !important;
+  filter: none !important;
+}
+
 .content main pre:focus-within > .buttons {
   visibility: visible;
   opacity: 1;

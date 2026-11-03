@@ -225,3 +225,19 @@ export interface CrewMember {
   is_custom: boolean;
   skills: string[];
 }
+
+export interface VersionResponse {
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  pending_updates: string[];
+  docs_url: string;
+  repo_url: string;
+}
+
+export interface UpdateApplyResponse {
+  ok: boolean;
+  message: string;
+  steps: string[];
+  target_version: string;
+}

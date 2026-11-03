@@ -22,6 +22,7 @@ import {
   type Task,
   type TaskStatus,
   type TasksResponse,
+  type VersionResponse,
 } from './api';
 import {
   addAttachmentFiles,
@@ -111,6 +112,10 @@ const projectNameEl = document.getElementById('project-name') as HTMLElement;
 const projectRootEl = document.getElementById('project-root') as HTMLElement;
 const countsEl = document.getElementById('counts') as HTMLElement;
 const connectionEl = document.getElementById('connection') as HTMLElement;
+const zouVersionEl = document.getElementById('zou-version') as HTMLElement | null;
+const updateBtn = document.getElementById('update-btn') as HTMLButtonElement | null;
+const docsLink = document.getElementById('docs-link') as HTMLAnchorElement | null;
+const githubLink = document.getElementById('github-link') as HTMLAnchorElement | null;
 const officeStatusEl = document.getElementById('office-status') as HTMLElement;
 const emptyEl = document.getElementById('empty') as HTMLElement;
 const liveTitleEl = document.getElementById('live-title') as HTMLElement;
@@ -1052,6 +1057,63 @@ function showToast(message: string, kind: 'info' | 'error' = 'info'): void {
   }, 4500);
 }
 
+function applyVersion(info: VersionResponse): void {
+  if (zouVersionEl) {
+    zouVersionEl.textContent = `v${info.current_version}`;
+    zouVersionEl.title = `Zunesha Version ${info.current_version}`;
+  }
+  if (docsLink && info.docs_url) {
+    docsLink.href = info.docs_url;
+  }
+  if (githubLink && info.repo_url) {
+    githubLink.href = info.repo_url;
+  }
+  if (updateBtn) {
+    if (info.update_available) {
+      updateBtn.hidden = false;
+      updateBtn.textContent = `⚡ Update to v${info.latest_version}`;
+      updateBtn.title = `Sequential update available: ${info.pending_updates.join(' → ')}. Click to update and restart server.`;
+      updateBtn.onclick = () => void handleUpdate(info);
+    } else {
+      updateBtn.hidden = true;
+    }
+  }
+}
+
+async function handleUpdate(info: VersionResponse): Promise<void> {
+  const steps = info.pending_updates && info.pending_updates.length > 0
+    ? `\nSteps: ${info.pending_updates.join(' → ')}`
+    : '';
+  if (!confirm(`Update sequentially to v${info.latest_version} and restart daemon?${steps}`)) {
+    return;
+  }
+  if (updateBtn) {
+    updateBtn.disabled = true;
+    updateBtn.textContent = 'Updating…';
+  }
+  showToast('Updating step-by-step & restarting server…', 'info');
+  try {
+    await api.applyUpdate();
+    const poll = window.setInterval(async () => {
+      try {
+        const res = await api.status();
+        if (res.initialized) {
+          window.clearInterval(poll);
+          window.location.reload();
+        }
+      } catch {
+        // Server restarting in background
+      }
+    }, 1500);
+  } catch (err) {
+    if (updateBtn) {
+      updateBtn.disabled = false;
+      updateBtn.textContent = `⚡ Update to v${info.latest_version}`;
+    }
+    showToast(`Update failed: ${errorMessage(err)}`, 'error');
+  }
+}
+
 // ── state application ──────────────────────────────────────────────────────
 
 function syncOffice(): void {
@@ -1631,13 +1693,15 @@ function connect(): void {
 
 async function loadInitial(): Promise<void> {
   try {
-    const [snapshot, crew, skills] = await Promise.all([
+    const [snapshot, crew, skills, ver] = await Promise.all([
       api.tasks(),
       api.crew().catch(() => null),
       api.skills().catch(() => null),
+      api.version().catch(() => null),
     ]);
     if (crew) state.crewConfig = crew;
     if (skills) state.skillsList = skills.skills;
+    if (ver) applyVersion(ver);
     applySnapshot(snapshot);
   } catch (error) {
     state.connection = 'offline';

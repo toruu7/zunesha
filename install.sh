@@ -371,7 +371,7 @@ try_prebuilt() {
     [ -n "$cand" ] || { note "no 'zou' binary inside the tarball; skipping prebuilt"; return 1; }
 
     mkdir -p "$BIN_DIR"
-    cp "$cand" "$BIN" && chmod 0755 "$BIN"
+    cp "$cand" "$BIN.tmp.$$" && chmod 0755 "$BIN.tmp.$$" && mv -f "$BIN.tmp.$$" "$BIN"
     # A release tarball may ship the dashboard too.
     dash=$(find "$TMP/extract" -maxdepth 3 -type f -path '*/web/out/index.html' 2>/dev/null | head -n 1)
     if [ -n "$dash" ] && [ "$DASHBOARD" = 1 ]; then
@@ -424,7 +424,7 @@ else
     if [ "$PROFILE" = dev ]; then out=debug; else out=$PROFILE; fi
     target_dir="${CARGO_TARGET_DIR:-$TMP/src/target}"
     mkdir -p "$BIN_DIR"
-    cp "$target_dir/$out/zou" "$BIN" && chmod 0755 "$BIN"
+    cp "$target_dir/$out/zou" "$BIN.tmp.$$" && chmod 0755 "$BIN.tmp.$$" && mv -f "$BIN.tmp.$$" "$BIN"
     note "installed from source"
 fi
 

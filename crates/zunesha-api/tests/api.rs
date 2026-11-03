@@ -1316,3 +1316,23 @@ async fn skills_api_lists_installs_and_creates_skills() {
         std::env::remove_var("ZOU_CONFIG_FILE");
     }
 }
+
+#[tokio::test]
+async fn version_api_reports_version_and_update_state() {
+    let (_tmp, paths) = scratch();
+    let config = ServeConfig {
+        paths,
+        host: "127.0.0.1".into(),
+        port: 0,
+        max_concurrency: 1,
+        agent: zunesha_core::AgentCommand::shell("true"),
+        dashboard_dir: None,
+        resume: false,
+    };
+    let (app, _state) = build_app(config);
+
+    let (status, res) = json_req(&app, Method::GET, "/api/version", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(res["current_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(res["docs_url"], "https://zunesha-docs.vercel.app");
+}

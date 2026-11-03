@@ -101,6 +101,7 @@ async fn run_async(
     }
 
     let (tx, mut rx) = mpsc::unbounded_channel();
+    api.check_version(&tx);
     spawn_ws(api, tx.clone());
 
     install_panic_hook();
@@ -268,6 +269,20 @@ impl ApiClient {
         decode_json(response).await
     }
 
+    fn check_version(&self, tx: &mpsc::UnboundedSender<AppMsg>) {
+        let client = self.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            if let Ok(res) = client.http.get(client.endpoint("/api/version")).send().await {
+                if let Ok(check) = res.json::<zunesha_core::UpdateCheck>().await {
+                    if check.update_available {
+                        let _ = tx.send(AppMsg::UpdateAvailable(check.latest_version));
+                    }
+                }
+            }
+        });
+    }
+
     async fn post(&self, path: &str, body: Option<serde_json::Value>) -> Result<String, String> {
         let mut request = self.http.post(self.endpoint(path));
         if let Some(body) = body {
@@ -415,6 +430,7 @@ enum AppMsg {
         result: Result<String, String>,
     },
     Models(Result<Vec<String>, String>),
+    UpdateAvailable(String),
 }
 
 enum WsMsg {
@@ -1005,6 +1021,7 @@ struct App {
     follow_logs: bool,
     log_scroll: u16,
     tick: u64,
+    update_available: Option<String>,
     should_quit: bool,
 }
 
@@ -1049,6 +1066,7 @@ impl App {
             follow_logs,
             log_scroll: 0,
             tick: 0,
+            update_available: None,
             should_quit: false,
         }
     }
@@ -1894,6 +1912,9 @@ impl App {
                     self.model_picker = None;
                 }
             },
+            AppMsg::UpdateAvailable(version) => {
+                self.update_available = Some(version);
+            }
         }
     }
 }
@@ -2138,7 +2159,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         "·"
     };
 
-    let first = Line::from(vec![
+    let mut first_spans = vec![
         Span::styled(
             " zou ",
             Style::default()
@@ -2146,7 +2167,11 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
                 .bg(app.theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("  "),
+        Span::styled(
+            format!(" v{} ", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(app.theme.muted),
+        ),
+        Span::raw(" "),
         Span::styled(
             project,
             Style::default()
@@ -2162,7 +2187,20 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::raw("  "),
         Span::styled(connection, Style::default().fg(connection_color)),
-    ]);
+    ];
+
+    if let Some(new_ver) = &app.update_available {
+        first_spans.push(Span::raw("  "));
+        first_spans.push(Span::styled(
+            format!("⚡ v{new_ver} available"),
+            Style::default()
+                .fg(app.theme.highlight_fg)
+                .bg(app.theme.signal)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    let first = Line::from(first_spans);
 
     let mut counts = Vec::new();
     for status in TaskStatus::ALL {

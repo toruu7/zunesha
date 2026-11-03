@@ -1007,6 +1007,63 @@ pub async fn create_skill(
 }
 
 // ---------------------------------------------------------------------------
+// Version & Updates
+// ---------------------------------------------------------------------------
+
+/// `GET /api/version` – check running version and query remote release tags.
+pub async fn check_version(
+    State(state): State<AppState>,
+) -> Result<Json<zunesha_core::UpdateCheck>, ApiError> {
+    let check = zunesha_core::check_updates(None, Some(state.paths.root()))
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(check))
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ApplyUpdateRequest {
+    #[serde(default)]
+    pub repo: Option<String>,
+}
+
+/// `POST /api/update` – apply pending updates sequentially and restart the server.
+pub async fn apply_update(
+    State(state): State<AppState>,
+    body: Option<Json<ApplyUpdateRequest>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_override = body.and_then(|b| b.0.repo);
+    let options = zunesha_core::UpdateOptions {
+        repo: repo_override,
+        prefix: Some(state.paths.root().to_path_buf()),
+        no_dashboard: false,
+    };
+
+    let completed_steps = zunesha_core::apply_sequential_updates(&options)
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("update failed: {e}")))?;
+
+    // Spawn automatic server restart in the background after answering response
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        if let Ok(exe) = std::env::current_exe() {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            let _ = std::process::Command::new(exe).args(&args).spawn();
+        }
+        std::process::exit(0);
+    });
+
+    let target_version = completed_steps
+        .last()
+        .cloned()
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+
+    Ok(Json(json!({
+        "ok": true,
+        "message": format!("Updated step-by-step to {target_version}. Server restarting..."),
+        "steps": completed_steps,
+        "target_version": target_version,
+    })))
+}
+
+// ---------------------------------------------------------------------------
 // Static dashboard fallback
 // ---------------------------------------------------------------------------
 

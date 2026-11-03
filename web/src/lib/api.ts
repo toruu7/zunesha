@@ -23,6 +23,8 @@ import type {
   StatusResponse,
   Task,
   TasksResponse,
+  UpdateApplyResponse,
+  VersionResponse,
 } from "./types";
 import { ApiError } from "./types";
 
@@ -161,6 +163,11 @@ export const api = {
     description: string;
     instructions: string;
   }) => post<{ id: string; path: string }>("/api/skills", payload),
+  /** Check current running version and query update availability. */
+  version: () => request<VersionResponse>("/api/version"),
+  /** Execute sequential update and restart daemon. */
+  applyUpdate: (repo?: string) =>
+    post<UpdateApplyResponse>("/api/update", { repo }),
 };
 
 /**
