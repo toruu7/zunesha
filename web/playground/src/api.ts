@@ -136,6 +136,11 @@ export const api = {
     ),
   reject: (id: string, feedback: string, attachments: AttachmentPayload[] = []) =>
     post<Task>(`/api/tasks/${encodeURIComponent(id)}/reject`, { feedback, attachments }),
+  retry: (id: string, mode: 'continue' | 'feedback' | 'hard_reset' = 'continue', message?: string) =>
+    post<{ task: Task }>(`/api/tasks/${encodeURIComponent(id)}/retry`, { mode, message }),
+  rebase: (id: string) => post<{ task: Task }>(`/api/tasks/${encodeURIComponent(id)}/rebase`),
+  deleteTask: (id: string) =>
+    request<{ deleted: string }>(`/api/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   recover: (id: string) => post<{ released: string[] }>('/api/recover', { task_id: id }),
   crew: () => request<CrewResponse>('/api/crew'),
   updateCrew: (

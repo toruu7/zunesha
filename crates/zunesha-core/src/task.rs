@@ -365,6 +365,11 @@ impl Task {
             Some("nami") => "🗺️",
             Some("usopp") => "🎯",
             Some("sanji") => "🍳",
+            Some("chopper") => "🩺",
+            Some("robin") => "📜",
+            Some("franky") => "⚙️",
+            Some("brook") => "🎻",
+            Some("jinbe") => "🌊",
             _ => "🏴‍☠️",
         }
     }

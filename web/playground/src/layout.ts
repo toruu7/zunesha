@@ -39,11 +39,16 @@ const RESERVED: Record<string, number> = {
 };
 
 const CREW_COLORS: Record<string, { color: string; secondary: string }> = {
-  luffy: { color: '#E74C3C', secondary: '#24488A' }, // Red vest, denim shorts
-  zoro: { color: '#27AE60', secondary: '#143820' },  // Moss green, dark coat
-  nami: { color: '#E67E22', secondary: '#2980B9' },  // Orange hair, ocean blue
-  usopp: { color: '#8B5A2B', secondary: '#556B2F' }, // Brown satchel, olive bandana
-  sanji: { color: '#2C3E50', secondary: '#F1C40F' }, // Midnight suit, gold hair
+  luffy:   { color: '#E74C3C', secondary: '#24488A' }, // Red vest, denim shorts
+  zoro:    { color: '#27AE60', secondary: '#143820' }, // Moss green, dark coat
+  nami:    { color: '#E67E22', secondary: '#2980B9' }, // Orange hair, ocean blue
+  usopp:   { color: '#8B5A2B', secondary: '#556B2F' }, // Brown satchel, olive bandana
+  sanji:   { color: '#2C3E50', secondary: '#F1C40F' }, // Midnight suit, gold hair
+  chopper: { color: '#E84393', secondary: '#00CEC9' }, // Cherry pink hat, medical cyan
+  robin:   { color: '#8E44AD', secondary: '#2C3E50' }, // Purple dress, dark indigo
+  franky:  { color: '#0984E3', secondary: '#D63031' }, // Cyan hair, flame red Hawaiian
+  brook:   { color: '#2D3436', secondary: '#F39C12' }, // Soul black coat, golden cravat
+  jinbe:   { color: '#0984E3', secondary: '#F39C12' }, // Whale shark blue, sun orange kimono
 };
 
 export function agentColor(id: string): { color: string; secondary: string } {
@@ -58,13 +63,18 @@ export function agentColor(id: string): { color: string; secondary: string } {
   return COLOR_POOL[4 + (h % (COLOR_POOL.length - 4))];
 }
 
-// Dedicated Thousand Sunny Deck Stations for the 5 Straw Hat Pirates
+// Dedicated Thousand Sunny Deck Stations for all 10 Straw Hat Pirates
 export const SUNNY_STATIONS: Record<string, { deskX: number; deskY: number; label: string }> = {
-  luffy: { deskX: 168, deskY: 48, label: 'LUFFY' },  // Center helm / captain bridge
-  zoro:  { deskX: 60,  deskY: 65, label: 'ZORO' },   // Port side swords & training
-  nami:  { deskX: 268, deskY: 65, label: 'NAMI' },   // Starboard cartography & mikans
-  usopp: { deskX: 80,  deskY: 155, label: 'USOPP' }, // Port workshop & sniping bench
-  sanji: { deskX: 248, deskY: 155, label: 'SANJI' }, // Starboard galley bar & kitchen
+  luffy:   { deskX: 168, deskY: 48,  label: 'LUFFY' },   // Center helm / captain bridge
+  jinbe:   { deskX: 168, deskY: 120, label: 'JINBE' },   // Helm steering wheel & helm currents
+  zoro:    { deskX: 60,  deskY: 65,  label: 'ZORO' },    // Port side swords & training
+  usopp:   { deskX: 60,  deskY: 140, label: 'USOPP' },   // Port workshop & sniping bench
+  chopper: { deskX: 60,  deskY: 215, label: 'CHOPPER' }, // Port infirmary & apothecary
+  nami:    { deskX: 268, deskY: 65,  label: 'NAMI' },    // Starboard cartography & mikans
+  sanji:   { deskX: 268, deskY: 140, label: 'SANJI' },   // Starboard galley bar & kitchen
+  robin:   { deskX: 268, deskY: 215, label: 'ROBIN' },   // Starboard archaeology library
+  franky:  { deskX: 115, deskY: 180, label: 'FRANKY' },  // Mid deck engineering & cola forge
+  brook:   { deskX: 215, deskY: 180, label: 'BROOK' },   // Mid deck music stage & cadence
 };
 
 export function computeLayout(
@@ -73,9 +83,14 @@ export function computeLayout(
   const n = agents.length;
   if (n === 0) return [];
 
+  const crewList = [
+    'luffy', 'zoro', 'nami', 'usopp', 'sanji',
+    'chopper', 'robin', 'franky', 'brook', 'jinbe',
+  ];
+
   return agents.map((a, i) => {
     const raw = (a.crew_member ?? a.id).toLowerCase();
-    const stationKey = ['luffy', 'zoro', 'nami', 'usopp', 'sanji'].find((k) => raw.includes(k));
+    const stationKey = crewList.find((k) => raw.includes(k));
     const station = stationKey ? SUNNY_STATIONS[stationKey] : null;
 
     let deskX: number;
@@ -120,6 +135,11 @@ export function agentEmoji(id: string): string {
   if (lower.includes('nami')) return '🗺️';
   if (lower.includes('usopp')) return '🎯';
   if (lower.includes('sanji')) return '🍳';
+  if (lower.includes('chopper')) return '🩺';
+  if (lower.includes('robin')) return '📜';
+  if (lower.includes('franky')) return '⚙️';
+  if (lower.includes('brook')) return '🎻';
+  if (lower.includes('jinbe')) return '🌊';
   const map: Record<string, string> = {
     main: '🤖', analista: '🔍', rafael: '📱', bibliotecario: '📚',
   };

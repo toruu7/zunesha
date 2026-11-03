@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 
 import Board from "@/components/board";
+import CrewModal from "@/components/crew-modal";
 import LogViewer from "@/components/log-viewer";
 import PlanBar from "@/components/plan-bar";
 import ReviewModal from "@/components/review-modal";
 import Spinner from "@/components/spinner";
+import { soundManager } from "@/lib/audio";
 import { isActive } from "@/lib/status";
 import { useZou } from "@/lib/store";
 import type { Task } from "@/lib/types";
@@ -243,11 +245,16 @@ const CREW_MEMBERS = [
   { id: "luffy", name: "Luffy", role: "Captain", title: "Strategic Lead", emoji: "👒" },
   { id: "zoro", name: "Zoro", role: "Combatant", title: "Core Logic", emoji: "⚔️" },
   { id: "nami", name: "Nami", role: "Navigator", title: "Planner", emoji: "🗺️" },
-  { id: "usopp", name: "Usopp", role: "Sniper", title: "Bugfixes", emoji: "🎯" },
-  { id: "sanji", name: "Sanji", role: "Cook", title: "UI & Docs", emoji: "🍳" },
+  { id: "usopp", name: "Usopp", role: "Sniper", title: "QA Scout", emoji: "🎯" },
+  { id: "sanji", name: "Sanji", role: "Cook", title: "UI & Polish", emoji: "🍳" },
+  { id: "chopper", name: "Chopper", role: "Doctor", title: "Crash Triage", emoji: "🩺" },
+  { id: "robin", name: "Robin", role: "Archaeologist", title: "Architecture Docs", emoji: "📜" },
+  { id: "franky", name: "Franky", role: "Shipwright", title: "Dev Tooling", emoji: "⚙️" },
+  { id: "brook", name: "Brook", role: "Musician", title: "Performance", emoji: "🎻" },
+  { id: "jinbe", name: "Jinbe", role: "Helmsman", title: "Rebase & Release", emoji: "🌊" },
 ];
 
-function CrewRoster() {
+function CrewRoster({ onSelectMember }: { onSelectMember: (id: string) => void }) {
   const tasks = useZou((s) => s.tasks);
 
   const memberTasks = useMemo(() => {
@@ -281,14 +288,16 @@ function CrewRoster() {
         const isLive = running.length > 0;
 
         return (
-          <div
+          <button
             key={member.id}
-            title={`${member.name} (${member.role} · ${member.title})${
+            type="button"
+            onClick={() => onSelectMember(member.id)}
+            title={`${member.name} (${member.role} · ${member.title}) — Click to configure agent model/provider${
               assigned.length > 0
-                ? ` — ${assigned.length} assigned task(s)`
-                : " — ready on standby"
+                ? ` · ${assigned.length} assigned task(s)`
+                : " · ready on standby"
             }`}
-            className={`flex items-center gap-1.5 border-2 border-ink px-2 py-0.5 text-[10px] font-bold transition-all ${
+            className={`flex items-center gap-1.5 border-2 border-ink px-2 py-0.5 text-[10px] font-bold transition-all hover:bg-emphasis focus-visible:outline-4 ${
               isLive
                 ? "bg-emphasis text-ink animate-pulse"
                 : hasWork
@@ -313,7 +322,7 @@ function CrewRoster() {
             ) : (
               <span className="text-[8px] font-bold text-ink/40 uppercase">idle</span>
             )}
-          </div>
+          </button>
         );
       })}
     </div>
@@ -338,8 +347,19 @@ export default function Dashboard() {
   });
   const [logsOpen, setLogsOpen] = useState(false);
   const [lastActiveId, setLastActiveId] = useState<string | null>(null);
+  const [sfxEnabled, setSfxEnabled] = useState(false);
+  const [crewModalMember, setCrewModalMember] = useState<string | null>(null);
   const logTask = selectedTask ?? activeTask ?? null;
   const activeId = activeTask?.id ?? null;
+
+  useEffect(() => {
+    setSfxEnabled(soundManager.isEnabled());
+  }, []);
+
+  const toggleSfx = () => {
+    const next = soundManager.toggle();
+    setSfxEnabled(next);
+  };
 
   // Open the dock when a new task is claimed, but never force it open on a
   // mere selection: the review modal already owns that interaction. Adjusting
@@ -403,6 +423,19 @@ export default function Dashboard() {
                 <span className="sm:hidden">sunny</span>
               </a>
               <button
+                onClick={toggleSfx}
+                type="button"
+                title="Toggle 8-bit Pirate Sound Effects & Ocean Ambience"
+                className={`flex h-10 w-full items-center justify-center gap-1.5 border-4 border-ink px-2 text-[10px] font-black uppercase tracking-[0.08em] shadow-brutal-sm hover:bg-emphasis focus-visible:outline-4 sm:w-auto sm:px-2.5 ${
+                  sfxEnabled
+                    ? "bg-emphasis text-ink"
+                    : "bg-contrast text-ink"
+                }`}
+              >
+                <span>{sfxEnabled ? "🔊" : "🔇"}</span>
+                <span className="hidden sm:inline">SFX</span>
+              </button>
+              <button
                 onClick={toggleLogs}
                 disabled={!logTask}
                 aria-pressed={logsOpen}
@@ -438,7 +471,7 @@ export default function Dashboard() {
               <RunningNow />
               <DiskMeter />
               <div className="w-full sm:w-auto sm:ml-auto">
-                <CrewRoster />
+                <CrewRoster onSelectMember={setCrewModalMember} />
               </div>
             </div>
             <PlanBar />
@@ -467,6 +500,13 @@ export default function Dashboard() {
 
       {selectedId && selectedTask && (
         <ReviewModal key={selectedTask.id} task={selectedTask} />
+      )}
+
+      {crewModalMember && (
+        <CrewModal
+          memberId={crewModalMember}
+          onClose={() => setCrewModalMember(null)}
+        />
       )}
     </div>
   );

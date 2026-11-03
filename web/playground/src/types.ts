@@ -27,7 +27,7 @@ export interface AgentAppearance {
   hairColor: string;      // hex, e.g. '#2A1A0A'
   outfitColor: string;    // hex — overrides the character's shirt/body color
   skinTone: string;       // hex, e.g. '#D4A870'
-  accessory: 'none' | 'glasses' | 'headset' | 'hat' | 'cap' | 'strawhat' | 'earrings' | 'logpose' | 'goggles' | 'cigarette';
+  accessory: 'none' | 'glasses' | 'headset' | 'hat' | 'cap' | 'strawhat' | 'earrings' | 'logpose' | 'goggles' | 'cigarette' | 'chopper_hat' | 'robin_shades' | 'cyborg_shoulders' | 'soul_cane' | 'jinbe_tusks';
 }
 
 export interface CronJobState {

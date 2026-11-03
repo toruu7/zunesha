@@ -123,6 +123,36 @@ export const api = {
     post<RebaseResponse>(`/api/tasks/${encodeURIComponent(id)}/rebase`),
   /** Remove completed/orphaned worktrees and report the new footprint. */
   prune: () => post<PruneResponse>("/api/prune"),
+  /** List Straw Hat crew members and their configured models. */
+  crew: () =>
+    request<{
+      default_provider: string;
+      default_model: string | null;
+      crew: Array<{
+        id: string;
+        name: string;
+        role: string;
+        provider: string;
+        model: string | null;
+        is_custom: boolean;
+      }>;
+    }>("/api/crew"),
+  /** Update or reset a crew member's model / provider. */
+  updateCrew: (
+    member: string,
+    payload: { provider?: string; model?: string; reset?: boolean },
+  ) =>
+    request<{
+      id: string;
+      name: string;
+      role: string;
+      provider: string;
+      model: string | null;
+      is_custom: boolean;
+    }>(`/api/crew/${encodeURIComponent(member)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
 };
 
 /**

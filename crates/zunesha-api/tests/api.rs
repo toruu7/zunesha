@@ -1193,9 +1193,11 @@ async fn crew_api_lists_and_updates_members() {
     let (status, res) = json_req(&app, Method::GET, "/api/crew", None).await;
     assert_eq!(status, StatusCode::OK);
     let crew = res["crew"].as_array().expect("crew array");
-    assert_eq!(crew.len(), 5);
+    assert_eq!(crew.len(), 10);
     assert_eq!(crew[0]["id"], "luffy");
     assert_eq!(crew[1]["id"], "zoro");
+    assert_eq!(crew[5]["id"], "chopper");
+    assert_eq!(crew[7]["id"], "franky");
 
     // Update Zoro to Claude via OpenCode
     let (status, res) = json_req(

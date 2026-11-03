@@ -204,13 +204,21 @@ pub fn plan_with(
 pub enum TaskIntent {
     /// Pure query, explanation, research, audit, inspection - no code changes needed.
     Query,
-    /// Refactoring, performance, dead code cleanup, compiler cleanliness.
+    /// Refactoring, dead code cleanup, compiler cleanliness (Zoro).
     Refactor,
-    /// UI/UX styling, frontend components, CSS, documentation polish.
+    /// UI/UX styling, frontend components, CSS (Sanji).
     UiOrDocs,
-    /// Bug fix, panic, crash, regression fix.
+    /// Bug fix, panic, crash, regression fix, diagnostics (Chopper).
     Bugfix,
-    /// Core feature, new functional logic, greenfield addition.
+    /// Historical context, architectural docs, ADRs, documentation (Robin).
+    DocsOrHistory,
+    /// Infrastructure, build tooling, Docker/containers, CI/CD, cargo/scripts (Franky).
+    Infrastructure,
+    /// Telemetry, performance profiling, latency tuning, benchmarks (Brook).
+    Performance,
+    /// Git rebase, merge conflicts, branch steering, release management (Jinbe).
+    MergeOrRelease,
+    /// Core feature, new functional logic, greenfield addition (Luffy).
     Feature,
 }
 
@@ -265,17 +273,84 @@ pub fn detect_intent(prompt: &str) -> TaskIntent {
         }
     }
 
-    if lower.contains("refactor")
-        || lower.contains("optimize")
-        || lower.contains("optimization")
+    if lower.contains("rebase")
+        || lower.contains("merge")
+        || lower.contains("conflict")
+        || lower.contains("cherry-pick")
+        || lower.contains("release cut")
+        || lower.contains("version bump")
+    {
+        return TaskIntent::MergeOrRelease;
+    }
+
+    if lower.contains("docker")
+        || lower.contains("dockerfile")
+        || lower.contains("container")
+        || lower.contains("ci/cd")
+        || lower.contains("workflow")
+        || lower.contains("build script")
+        || lower.contains("cargo.toml")
+        || lower.contains("toolchain")
+        || lower.contains("infra")
+        || lower.contains("devcontainer")
+        || lower.contains("makefile")
+    {
+        return TaskIntent::Infrastructure;
+    }
+
+    if lower.contains("perf")
         || lower.contains("performance")
-        || lower.contains("perf")
-        || lower.contains("dead code")
+        || lower.contains("profil")
+        || lower.contains("benchmark")
+        || lower.contains("latency")
+        || lower.contains("throughput")
+        || lower.contains("memory leak")
+        || lower.contains("allocations")
+        || lower.contains("hot path")
+        || lower.contains("bottleneck")
+    {
+        return TaskIntent::Performance;
+    }
+
+    if lower.contains("readme")
+        || lower.contains("documentation")
+        || lower.contains("docs")
+        || lower.contains("markdown")
+        || lower.contains("adr")
+        || lower.contains("history")
+        || lower.contains("changelog")
+        || lower.contains("archaeolog")
+        || lower.contains("git log")
+        || lower.contains("blame")
+    {
+        return TaskIntent::DocsOrHistory;
+    }
+
+    if lower.contains("fix")
+        || lower.contains("bug")
+        || lower.contains("crash")
+        || lower.contains("panic")
+        || lower.contains("error")
+        || lower.contains("fails")
+        || lower.contains("failing")
+        || lower.contains("broken")
+        || lower.contains("issue")
+        || lower.contains("heal")
+        || lower.contains("diagnos")
+        || lower.contains("triage")
+        || lower.contains("flaky")
+    {
+        return TaskIntent::Bugfix;
+    }
+
+    if lower.contains("refactor")
         || lower.contains("clean up")
         || lower.contains("cleanup")
+        || lower.contains("dead code")
         || lower.contains("warnings")
         || lower.contains("clippy")
         || lower.contains("tech debt")
+        || lower.contains("restructure")
     {
         return TaskIntent::Refactor;
     }
@@ -288,28 +363,15 @@ pub fn detect_intent(prompt: &str) -> TaskIntent {
         || lower.contains("theme")
         || lower.contains("frontend")
         || lower.contains("component")
-        || lower.contains("readme")
-        || lower.contains("docs")
-        || lower.contains("documentation")
         || lower.contains("color")
         || lower.contains("layout")
         || lower.contains("button")
         || lower.contains("modal")
+        || lower.contains("tui")
+        || lower.contains("canvas")
+        || lower.contains("tailwind")
     {
         return TaskIntent::UiOrDocs;
-    }
-
-    if lower.contains("fix")
-        || lower.contains("bug")
-        || lower.contains("crash")
-        || lower.contains("panic")
-        || lower.contains("error")
-        || lower.contains("fails")
-        || lower.contains("failing")
-        || lower.contains("broken")
-        || lower.contains("issue")
-    {
-        return TaskIntent::Bugfix;
     }
 
     TaskIntent::Feature
@@ -320,7 +382,15 @@ pub fn detect_intent(prompt: &str) -> TaskIntent {
 ///   No code modifications, no implementation agent, no test runner!
 /// - Code modifications: 4-stage Straw Hat crew pipeline:
 ///   1. Nami (Research & Route): Blueprints the changes and contracts.
-///   2. Specialist Implementation (Luffy for features, Zoro for refactor/bugfix, Sanji for UI/docs).
+///   2. Specialist Implementation:
+///      - Luffy (Feature)
+///      - Zoro (Refactor)
+///      - Sanji (UI/UX)
+///      - Chopper (Bugfix / Healing)
+///      - Robin (Docs & Architecture)
+///      - Franky (Infrastructure & Tooling)
+///      - Brook (Performance & Profiling)
+///      - Jinbe (Merge Currents & Rebasing)
 ///   3. Usopp (Testing & QA): Runs test suites and verifies edge-case regressions.
 ///   4. Luffy (Captain Report): Summarizes outcomes and defines next steps for the user.
 fn mock_draft(prompt: &str) -> PlanDraft {
@@ -365,15 +435,43 @@ fn mock_draft(prompt: &str) -> PlanDraft {
                     "sanji",
                     format!("UI aesthetics & polish: {prompt}"),
                     format!(
-                        "Implement the UI/UX styling, component ergonomics, layout, or documentation polish for: {prompt}."
+                        "Implement the UI/UX styling, component ergonomics, layout, or design polish for: {prompt}."
                     ),
                 ),
                 TaskIntent::Bugfix => (
-                    "zoro",
-                    format!("Implement bugfix: {prompt}"),
+                    "chopper",
+                    format!("Diagnose & heal bug: {prompt}"),
                     format!(
-                        "Diagnose and apply a surgical bugfix addressing: {prompt}. \
+                        "Diagnose the root cause, heal crashes or panics, and apply a surgical bugfix for: {prompt}. \
                          Ensure clean error handling and stability."
+                    ),
+                ),
+                TaskIntent::DocsOrHistory => (
+                    "robin",
+                    format!("Architectural docs & history: {prompt}"),
+                    format!(
+                        "Synthesize architectural context, document design decisions, or trace historical git archaeology for: {prompt}."
+                    ),
+                ),
+                TaskIntent::Infrastructure => (
+                    "franky",
+                    format!("Superbuild tooling & infra: {prompt}"),
+                    format!(
+                        "Construct and harden the build system, CI/CD pipelines, containerization, or workspace infrastructure for: {prompt}."
+                    ),
+                ),
+                TaskIntent::Performance => (
+                    "brook",
+                    format!("Performance & cadence tuning: {prompt}"),
+                    format!(
+                        "Profile bottlenecks, optimize allocations, reduce latency, and tune telemetry cadence for: {prompt}."
+                    ),
+                ),
+                TaskIntent::MergeOrRelease => (
+                    "jinbe",
+                    format!("Helm merge currents & rebase: {prompt}"),
+                    format!(
+                        "Steer merge conflicts, execute clean git rebases, and stabilize release cuts for: {prompt}."
                     ),
                 ),
                 TaskIntent::Feature | TaskIntent::Query => (
@@ -1016,6 +1114,56 @@ mod tests {
         let impl_task = db.require_task(&ids[1]).unwrap();
         assert_eq!(impl_task.crew_member.as_deref(), Some("sanji"));
         assert!(impl_task.title.contains("UI aesthetics"));
+    }
+
+    #[test]
+    fn bugfix_intent_assigns_chopper() {
+        let db = db();
+        let ids = mock_plan(&db, "fix crashing panic when loading corrupted config");
+        assert_eq!(ids.len(), 4);
+        let impl_task = db.require_task(&ids[1]).unwrap();
+        assert_eq!(impl_task.crew_member.as_deref(), Some("chopper"));
+        assert!(impl_task.title.contains("Diagnose & heal"));
+    }
+
+    #[test]
+    fn docs_intent_assigns_robin() {
+        let db = db();
+        let ids = mock_plan(&db, "write comprehensive architecture documentation in README");
+        assert_eq!(ids.len(), 4);
+        let impl_task = db.require_task(&ids[1]).unwrap();
+        assert_eq!(impl_task.crew_member.as_deref(), Some("robin"));
+        assert!(impl_task.title.contains("Architectural docs"));
+    }
+
+    #[test]
+    fn infra_intent_assigns_franky() {
+        let db = db();
+        let ids = mock_plan(&db, "build a new Dockerfile and CI/CD workflow");
+        assert_eq!(ids.len(), 4);
+        let impl_task = db.require_task(&ids[1]).unwrap();
+        assert_eq!(impl_task.crew_member.as_deref(), Some("franky"));
+        assert!(impl_task.title.contains("Superbuild tooling"));
+    }
+
+    #[test]
+    fn perf_intent_assigns_brook() {
+        let db = db();
+        let ids = mock_plan(&db, "optimize throughput latency and benchmark hot path");
+        assert_eq!(ids.len(), 4);
+        let impl_task = db.require_task(&ids[1]).unwrap();
+        assert_eq!(impl_task.crew_member.as_deref(), Some("brook"));
+        assert!(impl_task.title.contains("Performance & cadence"));
+    }
+
+    #[test]
+    fn rebase_intent_assigns_jinbe() {
+        let db = db();
+        let ids = mock_plan(&db, "rebase onto master and resolve merge conflicts");
+        assert_eq!(ids.len(), 4);
+        let impl_task = db.require_task(&ids[1]).unwrap();
+        assert_eq!(impl_task.crew_member.as_deref(), Some("jinbe"));
+        assert!(impl_task.title.contains("Helm merge currents"));
     }
 
     #[test]

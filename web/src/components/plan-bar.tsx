@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import AttachmentList from "@/components/attachment-list";
+import { soundManager } from "@/lib/audio";
 import { useAttachments } from "@/lib/use-attachments";
 import { useZou } from "@/lib/store";
 
@@ -30,6 +31,7 @@ export default function PlanBar() {
     if (!text || busy) return;
     await plan(text, payload());
     if (!useZou.getState().error) {
+      soundManager.playChime();
       setPrompt("");
       clear();
     }
@@ -79,7 +81,10 @@ export default function PlanBar() {
         </button>
         <button
           type="button"
-          onClick={() => void runAll()}
+          onClick={() => {
+            soundManager.playCannon();
+            void runAll();
+          }}
           disabled={busy || todoCount === 0}
           title={
             todoCount === 0

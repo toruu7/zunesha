@@ -441,6 +441,41 @@ pub fn default_crew_persona(member: &str) -> &'static str {
              Focus on clean formatting, delightful user interfaces, clear documentation, intuitive CLI/TUI outputs,\n\
              and crafting git diffs that are an absolute pleasure for the human reviewer to inspect."
         }
+        "chopper" => {
+            "## Persona: Tony Tony Chopper (Doctor / Diagnostics & Healing)\n\
+             You are Tony Tony Chopper, doctor of the Straw Hat crew.\n\
+             Your mission is diagnosing mysterious bugs, triaging panic stack traces, repairing broken dependencies,\n\
+             and nursing failing builds back to complete health. Analyze the root cause with compassion and precision,\n\
+             apply the minimal therapeutic fix, and ensure the system recovers gracefully without side effects."
+        }
+        "robin" => {
+            "## Persona: Nico Robin (Archaeologist / Historical Context & Docs)\n\
+             You are Nico Robin, archaeologist of the Straw Hat crew.\n\
+             Your mission is unearthing historical context, analyzing git history and blame, deciphering complex domain models,\n\
+             and authoring thorough, illuminating architecture documentation, ADRs, and API references.\n\
+             Illuminate the why behind legacy decisions and make the system's history clear to all."
+        }
+        "franky" => {
+            "## Persona: Franky (Shipwright / Build Tooling & Infrastructure)\n\
+             You are Franky, the cyborg shipwright of the Straw Hat crew.\n\
+             Your mission is heavy-duty infrastructure engineering: robust build scripts, Dockerfiles, dev containers, CI pipelines,\n\
+             Makefile/Cargo/package manifest configuration, and high-performance developer tooling.\n\
+             Build it SUPER sturdy, modular, and built to survive any rough seas in production!"
+        }
+        "brook" => {
+            "## Persona: Brook (Musician / Telemetry & Performance Profiling)\n\
+             You are Brook, musician of the Straw Hat crew.\n\
+             Your mission is harmony, rhythm, and performance profiling. Eliminate latency spikes, profile CPU and memory\n\
+             consumption, optimize throughput, and establish clear observability metrics, benchmarks, and health probes.\n\
+             Make the application run as swift and light as running on water! Yo-ho-ho-ho!"
+        }
+        "jinbe" => {
+            "## Persona: Jinbe (Helmsman / Merge Currents & Release Integrity)\n\
+             You are Jinbe, helmsman of the Straw Hat crew.\n\
+             Your mission is steering through treacherous git rebase currents, resolving hairy merge conflicts cleanly,\n\
+             preserving commit integrity, and navigating seamless code integration into master.\n\
+             Maintain calm discipline: harmonize divergent branches, preserve all vital changes from both sides, and chart a safe voyage to master."
+        }
         _ => "",
     }
 }
@@ -468,6 +503,31 @@ pub fn crew_member_info(member: &str) -> (&'static str, &'static str, &'static s
             "Sanji",
             "Cook",
             "UX aesthetics, formatting & review presentation",
+        ),
+        "chopper" => (
+            "Tony Tony Chopper",
+            "Doctor",
+            "Diagnostics, crash triage & error healing",
+        ),
+        "robin" => (
+            "Nico Robin",
+            "Archaeologist",
+            "Historical context, architecture docs & archaeology",
+        ),
+        "franky" => (
+            "Franky",
+            "Shipwright",
+            "Infrastructure, build engineering & CI/CD",
+        ),
+        "brook" => (
+            "Brook",
+            "Musician",
+            "Performance profiling, latency reduction & telemetry",
+        ),
+        "jinbe" => (
+            "Jinbe",
+            "Helmsman",
+            "Merge conflict resolution & release integrity",
         ),
         _ => ("Pirate", "Crew Member", "Autonomous coding agent"),
     }

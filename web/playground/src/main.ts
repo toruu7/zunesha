@@ -271,34 +271,101 @@ const CREW_PROFILES: Record<string, CrewProfile> = {
     quote: 'Only the finest, well-crafted interfaces and documentation for our users!',
     description: 'Black Leg master chef. Refuses to let sloppy UI or stale documentation leave the kitchen, serving only five-star presentation.',
   },
+  chopper: {
+    name: 'Tony Tony Chopper',
+    role: 'Doctor & Crash Diagnostics',
+    specialty: 'Error healing, panic diagnosis, bug triage & test repairs',
+    emoji: '🩺',
+    bounty: '1,000 ฿',
+    quote: 'Calling me a genius doctor won’t make me happy, you bastard! 💕 I will heal this crash!',
+    description: 'Doctor and master of Rumble Balls. Diagnoses stack traces, recovers crashed states, and heals panics with surgical accuracy.',
+  },
+  robin: {
+    name: 'Nico Robin',
+    role: 'Archaeologist & Architecture Historian',
+    specialty: 'Codebase context synthesis, ADRs, documentation & git archaeology',
+    emoji: '📜',
+    bounty: '930,000,000 ฿',
+    quote: 'History holds the secrets of why this was built. I shall uncover the truth.',
+    description: 'Archaeologist of Ohara. Reads ancient commits, deciphers complex systems architecture, and writes pristine living documentation.',
+  },
+  franky: {
+    name: 'Franky (Cutty Flam)',
+    role: 'Shipwright & Dev Tools Engineer',
+    specialty: 'Infrastructure, build pipelines, Docker containers, toolchain & CI/CD',
+    emoji: '⚙️',
+    bounty: '394,000,000 ฿',
+    quote: 'SUUUPER! This build pipeline is fueled by pure cola and unstoppable iron!',
+    description: 'Cyborg shipwright of the Thousand Sunny. Forges blazing fast build workflows, hardens containers, and optimizes project infrastructure.',
+  },
+  brook: {
+    name: 'Brook (Soul King)',
+    role: 'Musician & Performance Virtuoso',
+    specialty: 'Latency profiling, memory benchmarks, allocations & telemetry cadence',
+    emoji: '🎻',
+    bounty: '383,000,000 ฿',
+    quote: 'Yo-ho-ho-ho! This hot-path gives me chills down to the bone — even though I have no skin!',
+    description: 'Soul King virtuoso. Listens to execution harmonics, shaves milliseconds off latency, and tunes memory allocation cadence to perfection.',
+  },
+  jinbe: {
+    name: 'Jinbe (Knight of the Sea)',
+    role: 'Helmsman & Release Navigator',
+    specialty: 'Git rebasing, merge currents, conflict resolution & stable release steering',
+    emoji: '🌊',
+    bounty: '1,100,000,000 ฿',
+    quote: 'Steer through the roughest merge waves with unwavering resolve. I hold the helm.',
+    description: 'First Son of the Sea. Navigates treacherous git merge conflicts, steers turbulent rebases, and docks flawless stable releases.',
+  },
 };
 
 const CREW_MEMBERS = [
   { id: 'luffy', name: 'Luffy', role: 'Captain', title: 'Strategic Lead', emoji: '👒' },
   { id: 'zoro', name: 'Zoro', role: 'Combatant', title: 'Core Logic', emoji: '⚔️' },
   { id: 'nami', name: 'Nami', role: 'Navigator', title: 'Planner', emoji: '🗺️' },
-  { id: 'usopp', name: 'Usopp', role: 'Sniper', title: 'Bugfixes', emoji: '🎯' },
-  { id: 'sanji', name: 'Sanji', role: 'Cook', title: 'UI & Docs', emoji: '🍳' },
+  { id: 'usopp', name: 'Usopp', role: 'Sniper', title: 'QA Scout', emoji: '🎯' },
+  { id: 'sanji', name: 'Sanji', role: 'Cook', title: 'UI & Polish', emoji: '🍳' },
+  { id: 'chopper', name: 'Chopper', role: 'Doctor', title: 'Crash Triage', emoji: '🩺' },
+  { id: 'robin', name: 'Robin', role: 'Archaeologist', title: 'Architecture Docs', emoji: '📜' },
+  { id: 'franky', name: 'Franky', role: 'Shipwright', title: 'Dev Tooling', emoji: '⚙️' },
+  { id: 'brook', name: 'Brook', role: 'Musician', title: 'Performance', emoji: '🎻' },
+  { id: 'jinbe', name: 'Jinbe', role: 'Helmsman', title: 'Rebase & Release', emoji: '🌊' },
 ] as const;
 
-function guessCrewMember(task: Task): 'luffy' | 'zoro' | 'nami' | 'usopp' | 'sanji' {
+type CrewId = (typeof CREW_MEMBERS)[number]['id'];
+
+function guessCrewMember(task: Task): CrewId {
   if (task.crew_member) {
     const lower = task.crew_member.toLowerCase();
-    for (const m of ['luffy', 'zoro', 'nami', 'usopp', 'sanji'] as const) {
-      if (lower.includes(m)) return m;
+    for (const m of CREW_MEMBERS) {
+      if (lower.includes(m.id)) return m.id;
     }
   }
   const text = `${task.title} ${task.description}`.toLowerCase();
-  if (text.includes('test') || text.includes('fix') || text.includes('bug') || text.includes('patch') || text.includes('snipe')) {
+  if (text.includes('rebase') || text.includes('merge') || text.includes('conflict') || text.includes('release')) {
+    return 'jinbe';
+  }
+  if (text.includes('docker') || text.includes('ci') || text.includes('build') || text.includes('tooling') || text.includes('infra')) {
+    return 'franky';
+  }
+  if (text.includes('perf') || text.includes('latency') || text.includes('benchmark') || text.includes('throughput') || text.includes('profile')) {
+    return 'brook';
+  }
+  if (text.includes('doc') || text.includes('readme') || text.includes('history') || text.includes('archaeolog') || text.includes('adr')) {
+    return 'robin';
+  }
+  if (text.includes('panic') || text.includes('crash') || text.includes('heal') || text.includes('diagnos') || text.includes('triage')) {
+    return 'chopper';
+  }
+  if (text.includes('test') || text.includes('qa') || text.includes('edge') || text.includes('verify')) {
     return 'usopp';
   }
-  if (text.includes('refactor') || text.includes('core') || text.includes('perf') || text.includes('slice') || text.includes('db') || text.includes('engine')) {
+  if (text.includes('refactor') || text.includes('debt') || text.includes('clean') || text.includes('clippy')) {
     return 'zoro';
   }
-  if (text.includes('ui') || text.includes('ux') || text.includes('doc') || text.includes('style') || text.includes('css') || text.includes('cook') || text.includes('readme')) {
+  if (text.includes('ui') || text.includes('ux') || text.includes('style') || text.includes('css') || text.includes('component')) {
     return 'sanji';
   }
-  if (text.includes('plan') || text.includes('dag') || text.includes('route') || text.includes('navigate') || text.includes('chart')) {
+  if (text.includes('plan') || text.includes('dag') || text.includes('route') || text.includes('navigate')) {
     return 'nami';
   }
   return 'luffy';
@@ -637,6 +704,9 @@ function actionButtons(task: Task): string {
   const canReject = task.status === 'REVIEW' || task.status === 'FAILED_NEEDS_HUMAN';
   const canCancel = task.status === 'IN_PROGRESS' || task.status === 'EVALUATING' || task.status === 'RESOLVING_CONFLICTS';
   const canRecover = canCancel;
+  const canRetry = task.status === 'FAILED_NEEDS_HUMAN' || task.status === 'REVIEW' || task.status === 'DONE';
+  const canRebase = task.status === 'REVIEW' || task.status === 'RESOLVING_CONFLICTS';
+  const canDelete = !canCancel;
   const button = (action: string, label: string, enabled: boolean, className: string, title: string) =>
     `<button class="btn ${className}" data-action="${action}" type="button" ${enabled && !busy ? '' : 'disabled'} title="${escapeHtml(title)}">${label}</button>`;
 
@@ -644,8 +714,11 @@ function actionButtons(task: Task): string {
     button('run', '▶ Run', canRun, 'primary', canRun ? 'Run this ready task' : 'Only ready tasks can start'),
     button('approve', '✓ Approve', canApprove, 'success', canApprove ? 'Merge this reviewed diff' : 'Only REVIEW tasks can be approved'),
     button('reject', '✕ Reject', canReject, 'danger', canReject ? 'Send this task back with feedback' : 'Only REVIEW or needs-human tasks can be rejected'),
+    button('retry', '↺ Retry', canRetry, 'ghost', canRetry ? 'Retry this task' : 'Only failed or completed tasks can be retried'),
+    button('rebase', '⇄ Rebase', canRebase, 'ghost', canRebase ? 'Rebase this task workspace onto updated master' : 'Only review tasks can be rebased'),
     button('cancel', '■ Cancel', canCancel, 'danger', canCancel ? 'Stop this agent and release the task' : 'Only running tasks can be cancelled'),
     button('recover', '↻ Recover', canRecover, 'ghost', canRecover ? 'Release this stuck task back to ready' : 'Only running tasks can be recovered'),
+    button('delete', '🗑 Delete', canDelete, 'ghost', canDelete ? 'Delete this task' : 'Running tasks cannot be deleted'),
     button('refresh', 'Refresh', true, 'ghost', 'Refresh from the daemon'),
   ].join('');
 }
@@ -659,7 +732,7 @@ function renderInspector(): void {
   const task = selectedTask();
   if (!task) {
     const rawId = (state.selectedId ?? '').toLowerCase();
-    const profileKey = ['luffy', 'zoro', 'nami', 'usopp', 'sanji'].find((k) => rawId.includes(k));
+    const profileKey = CREW_MEMBERS.map((m) => m.id).find((k) => rawId.includes(k));
     const profile = profileKey ? CREW_PROFILES[profileKey] : null;
 
     if (profile && profileKey) {
@@ -1193,6 +1266,35 @@ async function recover(id: string): Promise<void> {
   });
 }
 
+async function retryTask(id: string): Promise<void> {
+  if (!window.confirm('Retry this task now?')) return;
+  await withBusy('starting', async () => {
+    soundManager.playCannon();
+    await api.retry(id);
+    await refresh();
+    showToast('Task resumed and restarted.');
+  });
+}
+
+async function rebaseTask(id: string): Promise<void> {
+  if (!window.confirm('Rebase this task workspace onto updated master?')) return;
+  await withBusy('starting', async () => {
+    await api.rebase(id);
+    await refresh();
+    showToast('Workspace rebased successfully.');
+  });
+}
+
+async function deleteTask(id: string): Promise<void> {
+  if (!window.confirm('Delete this task and delete its workspace? This cannot be undone.')) return;
+  await withBusy('starting', async () => {
+    await api.deleteTask(id);
+    if (state.selectedId === id) state.selectedId = null;
+    await refresh();
+    showToast('Task deleted.');
+  });
+}
+
 function openReject(task: Task): void {
   rejectTaskId = task.id;
   modalTitleEl.textContent = `Reject “${task.title}”`;
@@ -1233,6 +1335,9 @@ function handleInspectorAction(action: string): void {
   else if (action === 'reject') openReject(task);
   else if (action === 'cancel') void cancel(task.id);
   else if (action === 'recover') void recover(task.id);
+  else if (action === 'retry') void retryTask(task.id);
+  else if (action === 'rebase') void rebaseTask(task.id);
+  else if (action === 'delete') void deleteTask(task.id);
 }
 
 // ── events ─────────────────────────────────────────────────────────────────

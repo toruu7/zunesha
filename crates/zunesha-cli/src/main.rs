@@ -228,13 +228,13 @@ enum Commands {
         #[arg(long)]
         clear: bool,
     },
-    /// View or configure Straw Hat crew members (Luffy, Zoro, Nami, Usopp, Sanji).
+    /// View or configure Straw Hat crew members (Luffy, Zoro, Nami, Usopp, Sanji, Chopper, Robin, Franky, Brook, Jinbe).
     ///
-    /// With no arguments, lists all 5 crew members with their specialty, configured provider,
+    /// With no arguments, lists all 10 crew members with their specialty, configured provider,
     /// and model. Specify a member to configure their model/provider:
     /// `zou crew zoro --model claude-3-7-sonnet --provider opencode`
     Crew {
-        /// Crew member name (luffy, zoro, nami, usopp, sanji).
+        /// Crew member name (luffy, zoro, nami, usopp, sanji, chopper, robin, franky, brook, jinbe).
         member: Option<String>,
         /// Model to assign to this crew member.
         #[arg(long)]
@@ -864,14 +864,16 @@ fn choose_model(
     }
 }
 
-/// `zou crew` – view or configure Straw Hat crew members (Luffy, Zoro, Nami, Usopp, Sanji).
+/// `zou crew` – view or configure Straw Hat crew members (Luffy, Zoro, Nami, Usopp, Sanji, Chopper, Robin, Franky, Brook, Jinbe).
 fn cmd_crew(
     member: Option<&str>,
     model: Option<&str>,
     provider: Option<&str>,
     reset: bool,
 ) -> zunesha_core::Result<()> {
-    let crew_keys = ["luffy", "zoro", "nami", "usopp", "sanji"];
+    let crew_keys = [
+        "luffy", "zoro", "nami", "usopp", "sanji", "chopper", "robin", "franky", "brook", "jinbe",
+    ];
 
     if let Some(member) = member {
         let member_lower = member.to_ascii_lowercase();
@@ -1884,13 +1886,16 @@ mod tests {
     #[test]
     fn cmd_crew_validates_known_members_and_lists() {
         // Unknown member fails
-        let err = super::cmd_crew(Some("chopper"), None, None, false).unwrap_err();
-        assert!(err.to_string().contains("unknown crew member `chopper`"));
+        let err = super::cmd_crew(Some("kaido"), None, None, false).unwrap_err();
+        assert!(err.to_string().contains("unknown crew member `kaido`"));
+        assert!(err.to_string().contains("chopper"));
 
         // Listing all crew members succeeds
         assert!(super::cmd_crew(None, None, None, false).is_ok());
 
-        // Inspecting a specific known member succeeds
+        // Inspecting known members succeeds
         assert!(super::cmd_crew(Some("zoro"), None, None, false).is_ok());
+        assert!(super::cmd_crew(Some("chopper"), None, None, false).is_ok());
+        assert!(super::cmd_crew(Some("jinbe"), None, None, false).is_ok());
     }
 }

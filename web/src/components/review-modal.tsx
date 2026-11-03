@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { useZou } from "@/lib/store";
+import { soundManager } from "@/lib/audio";
 import { isActive } from "@/lib/status";
 import type { Task } from "@/lib/types";
 import { useAttachments } from "@/lib/use-attachments";
@@ -30,6 +31,11 @@ function crewEmoji(member?: string): string {
   if (lower.includes("nami")) return "🗺️";
   if (lower.includes("usopp")) return "🎯";
   if (lower.includes("sanji")) return "🍳";
+  if (lower.includes("chopper")) return "🩺";
+  if (lower.includes("robin")) return "📜";
+  if (lower.includes("franky")) return "⚙️";
+  if (lower.includes("brook")) return "🎻";
+  if (lower.includes("jinbe")) return "🌊";
   return "🏴‍☠️";
 }
 
@@ -349,7 +355,10 @@ export default function ReviewModal({ task }: { task: Task }) {
           {isReview ? (
             <>
               <button
-                onClick={() => void approve(task.id)}
+                onClick={() => {
+                  soundManager.playChime();
+                  void approve(task.id);
+                }}
                 disabled={busy}
                 className={`${ACTION} bg-emphasis`}
               >
@@ -357,6 +366,7 @@ export default function ReviewModal({ task }: { task: Task }) {
               </button>
               <button
                 onClick={async () => {
+                  soundManager.playAlert();
                   await reject(task.id, feedback, payload());
                   if (!useZou.getState().error) {
                     setFeedback("");
@@ -369,7 +379,10 @@ export default function ReviewModal({ task }: { task: Task }) {
                 Reject
               </button>
               <button
-                onClick={() => void retry(task.id, "continue")}
+                onClick={() => {
+                  soundManager.playCannon();
+                  void retry(task.id, "continue");
+                }}
                 disabled={busy}
                 title="Keep the worktree and run the agent again from its current state."
                 className={`${ACTION} bg-field`}
@@ -377,7 +390,10 @@ export default function ReviewModal({ task }: { task: Task }) {
                 Continue
               </button>
               <button
-                onClick={() => void retryWithFeedback()}
+                onClick={() => {
+                  soundManager.playCannon();
+                  void retryWithFeedback();
+                }}
                 disabled={busy || !feedback.trim()}
                 title="Resume in the existing worktree with the feedback above."
                 className={`${ACTION} bg-contrast`}
@@ -385,7 +401,10 @@ export default function ReviewModal({ task }: { task: Task }) {
                 Retry with feedback
               </button>
               <button
-                onClick={() => void hardReset()}
+                onClick={() => {
+                  soundManager.playCannon();
+                  void hardReset();
+                }}
                 disabled={busy}
                 title="Discard the worktree and start from a fresh snapshot."
                 className={`${ACTION} bg-contrast`}
@@ -403,7 +422,10 @@ export default function ReviewModal({ task }: { task: Task }) {
             </>
           ) : isTodo ? (
             <button
-              onClick={() => void runOne(task.id)}
+              onClick={() => {
+                soundManager.playCannon();
+                void runOne(task.id);
+              }}
               disabled={busy}
               className={`${ACTION} bg-signal`}
             >
@@ -412,7 +434,10 @@ export default function ReviewModal({ task }: { task: Task }) {
           ) : isParked ? (
             <>
               <button
-                onClick={() => void retry(task.id, "continue")}
+                onClick={() => {
+                  soundManager.playCannon();
+                  void retry(task.id, "continue");
+                }}
                 disabled={busy}
                 title="Keep the worktree and continue from the preserved partial work."
                 className={`${ACTION} bg-field`}
@@ -420,7 +445,10 @@ export default function ReviewModal({ task }: { task: Task }) {
                 Continue
               </button>
               <button
-                onClick={() => void retryWithFeedback()}
+                onClick={() => {
+                  soundManager.playCannon();
+                  void retryWithFeedback();
+                }}
                 disabled={busy || !feedback.trim()}
                 title="Resume in the existing worktree with the feedback above."
                 className={`${ACTION} bg-contrast`}
@@ -428,7 +456,10 @@ export default function ReviewModal({ task }: { task: Task }) {
                 Retry with feedback
               </button>
               <button
-                onClick={() => void hardReset()}
+                onClick={() => {
+                  soundManager.playCannon();
+                  void hardReset();
+                }}
                 disabled={busy}
                 title="Delete the worktree and all partial work, then start from scratch."
                 className={`${ACTION} bg-signal`}

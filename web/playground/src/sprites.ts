@@ -29,6 +29,11 @@ export function drawCharacter(
   const isNami = rawId.includes('nami');
   const isUsopp = rawId.includes('usopp');
   const isSanji = rawId.includes('sanji');
+  const isChopper = rawId.includes('chopper');
+  const isRobin = rawId.includes('robin');
+  const isFranky = rawId.includes('franky');
+  const isBrook = rawId.includes('brook');
+  const isJinbe = rawId.includes('jinbe');
 
   // Resolve colors — use appearance overrides if provided, or Straw Hat character defaults
   const skinColor  = appearance?.skinTone
@@ -37,22 +42,37 @@ export function drawCharacter(
       : isNami ? '#F7D0B2'
       : isUsopp ? '#C89260'
       : isSanji ? '#F4C8A0'
+      : isChopper ? '#8D6E63'
+      : isRobin ? '#F5D6BA'
+      : isFranky ? '#F2C290'
+      : isBrook ? '#F5F6FA'
+      : isJinbe ? '#3498DB'
       : '#D4A870');
 
   const outfitColor = appearance?.outfitColor
-    ?? (isLuffy ? '#D92020' // Red vest
-      : isZoro ? '#1E5830'  // Deep green coat
-      : isNami ? '#2A82BE'  // Blue & white
-      : isUsopp ? '#8B5A2B' // Brown dungarees
-      : isSanji ? '#181822' // Midnight suit
+    ?? (isLuffy ? '#D92020'   // Red vest
+      : isZoro ? '#1E5830'    // Deep green coat
+      : isNami ? '#2A82BE'    // Blue & white
+      : isUsopp ? '#8B5A2B'   // Brown dungarees
+      : isSanji ? '#181822'   // Midnight suit
+      : isChopper ? '#E84393' // Cherry pink
+      : isRobin ? '#6C3483'   // Royal purple sarong
+      : isFranky ? '#D63031'  // Hawaiian flame red
+      : isBrook ? '#2D3436'   // Black gentleman coat
+      : isJinbe ? '#E67E22'   // Sun orange kimono
       : color);
 
   const hairColor  = appearance?.hairColor
-    ?? (isLuffy ? '#111111' // Black
+    ?? (isLuffy ? '#111111'
       : isZoro ? '#3CB371'  // Marimo green
       : isNami ? '#E65100'  // Vibrant orange
       : isUsopp ? '#1A1A1A' // Dark curly
       : isSanji ? '#F4D03F' // Golden blonde
+      : isChopper ? '#4E342E'
+      : isRobin ? '#111827' // Glossy black
+      : isFranky ? '#00CEC9' // Bright cyan pompadour
+      : isBrook ? '#111111' // Afro black
+      : isJinbe ? '#1E272E'
       : agentId === 'analista' ? '#2A4A2A'
       : agentId === 'bibliotecario' ? '#3A2060'
       : agentId === 'rafael' ? '#A05010'
@@ -64,6 +84,11 @@ export function drawCharacter(
       : isNami ? 'logpose'
       : isUsopp ? 'goggles'
       : isSanji ? 'cigarette'
+      : isChopper ? 'chopper_hat'
+      : isRobin ? 'robin_shades'
+      : isFranky ? 'cyborg_shoulders'
+      : isBrook ? 'soul_cane'
+      : isJinbe ? 'jinbe_tusks'
       : agentId === 'main' ? 'headset'
       : agentId === 'analista' ? 'glasses'
       : 'none');
@@ -150,6 +175,38 @@ export function drawCharacter(
     ctx.fillRect(cx + 7 * s, by + 10 * s, 3 * s, 3 * s);
     ctx.fillStyle = '#0F172A';
     ctx.fillRect(cx + 8 * s, by + 11 * s, 1 * s, 5 * s);
+  } else if (isChopper) {
+    // Medical blue backpack strap & shorts
+    ctx.fillStyle = '#00CEC9';
+    ctx.fillRect(cx + 5 * s, by + 10 * s, 1 * s, 8 * s);
+    ctx.fillRect(cx + 11 * s, by + 10 * s, 1 * s, 8 * s);
+    ctx.fillStyle = '#881337';
+    ctx.fillRect(cx + 4 * s, by + 16 * s, 9 * s, 2 * s);
+  } else if (isRobin) {
+    // Elegant deep purple sarong and golden buckle
+    ctx.fillStyle = '#4A235A';
+    ctx.fillRect(cx + 6 * s, by + 10 * s, 5 * s, 4 * s);
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(cx + 8 * s, by + 15 * s, 1 * s, 2 * s);
+  } else if (isFranky) {
+    // Red Hawaiian shirt with yellow palm stars & thick neck chain
+    ctx.fillStyle = '#F1C40F';
+    ctx.fillRect(cx + 6 * s, by + 12 * s, 2 * s, 2 * s);
+    ctx.fillRect(cx + 10 * s, by + 14 * s, 2 * s, 2 * s);
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(cx + 6 * s, by + 10 * s, 5 * s, 1 * s);
+  } else if (isBrook) {
+    // Fluffy golden cravat & soul jewel
+    ctx.fillStyle = '#F39C12';
+    ctx.fillRect(cx + 7 * s, by + 10 * s, 3 * s, 5 * s);
+    ctx.fillStyle = '#2ECC71';
+    ctx.fillRect(cx + 8 * s, by + 11 * s, 1 * s, 2 * s);
+  } else if (isJinbe) {
+    // Sun Pirates tattoo on chest & sun crest kimono
+    ctx.fillStyle = '#C0392B';
+    ctx.fillRect(cx + 7 * s, by + 11 * s, 3 * s, 3 * s);
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(cx + 4 * s, by + 16 * s, 9 * s, 2 * s);
   } else {
     // Collar/shirt detail
     ctx.fillStyle = lighten(outfitColor, 30);
@@ -204,6 +261,24 @@ export function drawCharacter(
     ctx.fillRect(cx + 4 * s, by + 1 * s, 9 * s, 4 * s);
     ctx.fillRect(cx + 4 * s, by + 2 * s, 1 * s, 6 * s);
     ctx.fillRect(cx + 9 * s, by + 2 * s, 4 * s, 7 * s); // Covers right eye
+  } else if (isRobin) {
+    // Long straight glossy black hair
+    ctx.fillRect(cx + 4 * s, by + 1 * s, 9 * s, 3 * s);
+    ctx.fillRect(cx + 3 * s, by + 2 * s, 2 * s, 15 * s);
+    ctx.fillRect(cx + 12 * s, by + 2 * s, 2 * s, 15 * s);
+  } else if (isFranky) {
+    // Cyan sweeping pompadour
+    ctx.fillRect(cx + 5 * s, by - 3 * s, 6 * s, 4 * s);
+    ctx.fillRect(cx + 4 * s, by + 1 * s, 9 * s, 3 * s);
+  } else if (isBrook) {
+    // Huge black spherical afro
+    ctx.fillRect(cx + 2 * s, by - 6 * s, 13 * s, 9 * s);
+    ctx.fillRect(cx + 1 * s, by - 4 * s, 15 * s, 6 * s);
+  } else if (isJinbe) {
+    // Samurai topknot and sideburn tufts
+    ctx.fillRect(cx + 7 * s, by - 3 * s, 3 * s, 4 * s);
+    ctx.fillRect(cx + 3 * s, by + 3 * s, 2 * s, 5 * s);
+    ctx.fillRect(cx + 12 * s, by + 3 * s, 2 * s, 5 * s);
   } else {
     ctx.fillRect(cx + 4 * s, by + 1 * s, 9 * s, 3 * s);
     ctx.fillRect(cx + 4 * s, by + 2 * s, 1 * s, 5 * s);
@@ -253,6 +328,51 @@ export function drawCharacter(
     // Rising smoke
     ctx.fillStyle = 'rgba(220, 220, 220, 0.7)';
     ctx.fillRect(cx + 14 * s, by + 5 * s, 1 * s, 2 * s);
+  } else if (accessory === 'chopper_hat') {
+    // Chopper's tall pink hat with medical cross & antlers
+    ctx.fillStyle = '#E84393';
+    ctx.fillRect(cx + 2 * s, by + 1 * s, 13 * s, 2 * s); // brim
+    ctx.fillRect(cx + 4 * s, by - 4 * s, 9 * s, 5 * s);  // crown
+    // White medical cross
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(cx + 8 * s, by - 3 * s, 1 * s, 3 * s);
+    ctx.fillRect(cx + 7 * s, by - 2 * s, 3 * s, 1 * s);
+    // Antlers
+    ctx.fillStyle = '#5D4037';
+    ctx.fillRect(cx + 1 * s, by - 3 * s, 2 * s, 2 * s);
+    ctx.fillRect(cx + 2 * s, by - 6 * s, 1 * s, 4 * s);
+    ctx.fillRect(cx + 14 * s, by - 3 * s, 2 * s, 2 * s);
+    ctx.fillRect(cx + 14 * s, by - 6 * s, 1 * s, 4 * s);
+    // Blue reindeer nose
+    ctx.fillStyle = '#00CEC9';
+    ctx.fillRect(cx + 8 * s, by + 6 * s, 2 * s, 2 * s);
+  } else if (accessory === 'robin_shades') {
+    // Chic orange sunglasses resting on head
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(cx + 4 * s, by + 1 * s, 9 * s, 1 * s);
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(cx + 5 * s, by, 3 * s, 2 * s);
+    ctx.fillRect(cx + 9 * s, by, 3 * s, 2 * s);
+  } else if (accessory === 'cyborg_shoulders') {
+    // Massive steel cyborg shoulders and steel nose
+    ctx.fillStyle = '#BDC3C7';
+    ctx.fillRect(cx + 1 * s, by + 10 * s, 3 * s, 3 * s);
+    ctx.fillRect(cx + 13 * s, by + 10 * s, 3 * s, 3 * s);
+    ctx.fillStyle = '#7F8C8D';
+    ctx.fillRect(cx + 8 * s, by + 5 * s, 2 * s, 2 * s);
+  } else if (accessory === 'soul_cane') {
+    // Purple walking cane / sword
+    ctx.fillStyle = '#8E44AD';
+    ctx.fillRect(cx + 14 * s, by + 11 * s, 1 * s, 11 * s);
+    ctx.fillRect(cx + 13 * s, by + 10 * s, 2 * s, 1 * s);
+  } else if (accessory === 'jinbe_tusks') {
+    // White tusks curving up from lower jaw
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(cx + 5 * s, by + 7 * s, 1 * s, 2 * s);
+    ctx.fillRect(cx + 11 * s, by + 7 * s, 1 * s, 2 * s);
+    // Lightning scar over left eye
+    ctx.fillStyle = '#C0392B';
+    ctx.fillRect(cx + 6 * s, by + 3 * s, 1 * s, 3 * s);
   } else if (accessory === 'headset') {
     ctx.fillStyle = '#444';
     ctx.fillRect(cx + 3 * s, by + 2 * s, 11 * s, 1 * s);

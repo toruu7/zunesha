@@ -791,6 +791,11 @@ pub async fn list_crew() -> Result<Json<serde_json::Value>, ApiError> {
         ("nami", "Nami", "Navigator / Architect & Planner"),
         ("usopp", "Usopp", "Sniper / Edge-Case & QA Scout"),
         ("sanji", "Sanji", "Cook / UI Aesthetics & Polish"),
+        ("chopper", "Tony Tony Chopper", "Doctor / Diagnostics & Healing"),
+        ("robin", "Nico Robin", "Archaeologist / Docs & History"),
+        ("franky", "Franky", "Shipwright / Infrastructure & CI/CD"),
+        ("brook", "Brook", "Musician / Profiling & Telemetry"),
+        ("jinbe", "Jinbe", "Helmsman / Merge Currents & Releases"),
     ];
 
     let crew: Vec<CrewMemberResponse> = members
@@ -822,7 +827,9 @@ pub async fn update_crew_member(
     Path(member): Path<String>,
     body: Result<Json<UpdateCrewMemberRequest>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let crew_keys = ["luffy", "zoro", "nami", "usopp", "sanji"];
+    let crew_keys = [
+        "luffy", "zoro", "nami", "usopp", "sanji", "chopper", "robin", "franky", "brook", "jinbe",
+    ];
     let member_lower = member.to_ascii_lowercase();
     if !crew_keys.contains(&member_lower.as_str()) {
         return Err(ApiError::new(
