@@ -1242,3 +1242,77 @@ async fn crew_api_lists_and_updates_members() {
         std::env::remove_var("ZOU_CONFIG_FILE");
     }
 }
+
+#[tokio::test]
+async fn skills_api_lists_installs_and_creates_skills() {
+    let (tmp, paths) = scratch();
+    let config_path = tmp.path().join("config.json");
+    unsafe {
+        std::env::set_var("ZOU_CONFIG_FILE", &config_path);
+    }
+    let app = app_for(&paths);
+
+    // 1. List skills - builtins must be present
+    let (status, res) = json_req(&app, Method::GET, "/api/skills", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let skills = res["skills"].as_array().expect("skills array");
+    assert!(skills.len() >= 10);
+    assert!(skills.iter().any(|s| s["id"] == "tdd-scout"));
+    assert!(skills.iter().any(|s| s["id"] == "debt-slayer"));
+
+    // 2. Install "debt-slayer" to Zoro
+    let (status, res) = json_req(
+        &app,
+        Method::POST,
+        "/api/crew/zoro/skills",
+        Some(json!({ "skill": "debt-slayer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(res["member"], "zoro");
+    assert_eq!(res["skills"][0], "debt-slayer");
+
+    // 3. GET /api/crew should now show Zoro with debt-slayer installed
+    let (status, res) = json_req(&app, Method::GET, "/api/crew", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let crew = res["crew"].as_array().unwrap();
+    let zoro = crew.iter().find(|m| m["id"] == "zoro").unwrap();
+    let zoro_skills = zoro["skills"].as_array().unwrap();
+    assert_eq!(zoro_skills[0], "debt-slayer");
+
+    // 4. Create custom project skill
+    let (status, res) = json_req(
+        &app,
+        Method::POST,
+        "/api/skills",
+        Some(json!({
+            "id": "graphql-ninja",
+            "name": "GraphQL Ninja",
+            "description": "Schema design and resolver optimization",
+            "instructions": "Enforce strong typing on all GraphQL inputs."
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(res["id"], "graphql-ninja");
+
+    // Verify it appears in /api/skills
+    let (_, res) = json_req(&app, Method::GET, "/api/skills", None).await;
+    let skills = res["skills"].as_array().unwrap();
+    assert!(skills.iter().any(|s| s["id"] == "graphql-ninja"));
+
+    // 5. Remove "debt-slayer" from Zoro
+    let (status, res) = json_req(
+        &app,
+        Method::DELETE,
+        "/api/crew/zoro/skills/debt-slayer",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(res["skills"].as_array().unwrap().is_empty());
+
+    unsafe {
+        std::env::remove_var("ZOU_CONFIG_FILE");
+    }
+}

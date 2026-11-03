@@ -52,6 +52,15 @@ export interface CrewMember {
   provider: string;
   model: string | null;
   is_custom: boolean;
+  skills: string[];
+}
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  source: 'builtin' | 'project' | 'user';
 }
 
 export interface CrewResponse {
@@ -145,12 +154,23 @@ export const api = {
   crew: () => request<CrewResponse>('/api/crew'),
   updateCrew: (
     member: string,
-    payload: { provider?: string; model?: string; reset?: boolean },
+    payload: { provider?: string; model?: string; reset?: boolean; skills?: string[] },
   ) =>
     request<CrewMember>(`/api/crew/${encodeURIComponent(member)}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+  skills: () => request<{ skills: Skill[] }>('/api/skills'),
+  addCrewSkill: (member: string, skill: string) =>
+    post<{ crew_member: string; skill: string; skills: string[] }>(
+      `/api/crew/${encodeURIComponent(member)}/skills`,
+      { skill },
+    ),
+  removeCrewSkill: (member: string, skill: string) =>
+    request<{ crew_member: string; removed: string; skills: string[] }>(
+      `/api/crew/${encodeURIComponent(member)}/skills/${encodeURIComponent(skill)}`,
+      { method: 'DELETE' },
+    ),
 };
 
 export interface EventSocketHandlers {

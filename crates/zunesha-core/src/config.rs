@@ -57,6 +57,9 @@ pub struct CrewMemberConfig {
     /// Optional custom system prompt / persona instructions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
+    /// Installed skills for this crew member.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
 }
 
 /// Which coding-agent CLI Zunesha should launch.
@@ -399,6 +402,54 @@ impl Config {
             }
         }
         default_crew_persona(member).to_string()
+    }
+
+    /// Resolve the list of installed skills for a crew member.
+    pub fn resolve_crew_skills(&self, member: &str) -> Vec<String> {
+        let key = member.to_ascii_lowercase();
+        if let Some(c) = self.crew.get(&key) {
+            c.skills.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Install a skill to a specific crew member.
+    pub fn add_crew_skill(member: &str, skill: &str) -> Result<PathBuf> {
+        let path = Self::path()?;
+        let mut config = Self::load_from(&path).unwrap_or_default();
+        let key = member.to_ascii_lowercase();
+        let skill_id = skill.trim().to_ascii_lowercase();
+        let entry = config.crew.entry(key).or_default();
+        if !entry.skills.contains(&skill_id) {
+            entry.skills.push(skill_id);
+        }
+        config.save_to(&path)?;
+        Ok(path)
+    }
+
+    /// Remove a skill from a specific crew member.
+    pub fn remove_crew_skill(member: &str, skill: &str) -> Result<PathBuf> {
+        let path = Self::path()?;
+        let mut config = Self::load_from(&path).unwrap_or_default();
+        let key = member.to_ascii_lowercase();
+        let skill_id = skill.trim().to_ascii_lowercase();
+        if let Some(entry) = config.crew.get_mut(&key) {
+            entry.skills.retain(|s| s != &skill_id);
+        }
+        config.save_to(&path)?;
+        Ok(path)
+    }
+
+    /// Overwrite the installed skills for a crew member.
+    pub fn set_crew_skills(member: &str, skills: Vec<String>) -> Result<PathBuf> {
+        let path = Self::path()?;
+        let mut config = Self::load_from(&path).unwrap_or_default();
+        let key = member.to_ascii_lowercase();
+        let entry = config.crew.entry(key).or_default();
+        entry.skills = skills.into_iter().map(|s| s.trim().to_ascii_lowercase()).collect();
+        config.save_to(&path)?;
+        Ok(path)
     }
 }
 
@@ -747,6 +798,7 @@ mod tests {
                 provider: Some(AgentProvider::Antigravity),
                 model: Some("custom-zoro-slug".to_string()),
                 prompt: Some("Custom Zoro prompt".to_string()),
+                skills: vec!["debt-slayer".to_string()],
             },
         );
 

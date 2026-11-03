@@ -3,8 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useZou } from "@/lib/store";
-import { isActive } from "@/lib/status";
-import type { Task } from "@/lib/types";
+import type { Skill } from "@/lib/types";
 
 export interface CrewProfile {
   id: string;
@@ -142,19 +141,32 @@ export default function CrewModal({ memberId, onClose }: CrewModalProps) {
   const [provider, setProvider] = useState("opencode");
   const [model, setModel] = useState("");
   const [isCustom, setIsCustom] = useState(false);
+  const [installedSkills, setInstalledSkills] = useState<string[]>([]);
+  const [allSkills, setAllSkills] = useState<Skill[]>([]);
+  const [selectedSkillToAdd, setSelectedSkillToAdd] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [skillLoading, setSkillLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    void api.crew().then((res) => {
+    Promise.all([
+      api.crew().catch(() => null),
+      api.skills().catch(() => null),
+    ]).then(([crewRes, skillsRes]) => {
       if (!active) return;
-      const entry = res.crew.find((c) => c.id === memberId);
-      if (entry) {
-        setProvider(entry.provider);
-        setModel(entry.model ?? "");
-        setIsCustom(entry.is_custom);
+      if (crewRes) {
+        const entry = crewRes.crew.find((c) => c.id === memberId);
+        if (entry) {
+          setProvider(entry.provider);
+          setModel(entry.model ?? "");
+          setIsCustom(entry.is_custom);
+          setInstalledSkills(entry.skills ?? []);
+        }
+      }
+      if (skillsRes) {
+        setAllSkills(skillsRes.skills ?? []);
       }
       setLoading(false);
     }).catch(() => {
@@ -179,6 +191,7 @@ export default function CrewModal({ memberId, onClose }: CrewModalProps) {
         model: model.trim() || undefined,
       });
       setIsCustom(updated.is_custom);
+      setInstalledSkills(updated.skills ?? []);
       setMsg("Saved! Model assigned to " + profile.name);
     } catch (e: unknown) {
       setMsg("Error: " + (e instanceof Error ? e.message : String(e)));
@@ -195,11 +208,42 @@ export default function CrewModal({ memberId, onClose }: CrewModalProps) {
       setIsCustom(false);
       setModel("");
       setProvider(updated.provider);
-      setMsg("Reset to default agent model");
+      setInstalledSkills(updated.skills ?? []);
+      setMsg("Reset to default agent model and cleared skills");
     } catch (e: unknown) {
       setMsg("Error: " + (e instanceof Error ? e.message : String(e)));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleInstallSkill = async (skillId: string) => {
+    if (!skillId) return;
+    setSkillLoading(true);
+    setMsg(null);
+    try {
+      const res = await api.addCrewSkill(memberId, skillId);
+      setInstalledSkills(res.skills);
+      setSelectedSkillToAdd("");
+      setMsg(`Installed skill '${skillId}'`);
+    } catch (e: unknown) {
+      setMsg("Failed to install skill: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setSkillLoading(false);
+    }
+  };
+
+  const handleUninstallSkill = async (skillId: string) => {
+    setSkillLoading(true);
+    setMsg(null);
+    try {
+      const res = await api.removeCrewSkill(memberId, skillId);
+      setInstalledSkills(res.skills);
+      setMsg(`Uninstalled skill '${skillId}'`);
+    } catch (e: unknown) {
+      setMsg("Failed to remove skill: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setSkillLoading(false);
     }
   };
 
@@ -324,6 +368,68 @@ export default function CrewModal({ memberId, onClose }: CrewModalProps) {
                 </button>
               )}
               {msg && <span className="text-[11px] font-bold text-ink">{msg}</span>}
+            </div>
+          </div>
+
+          {/* Installed Skills Section */}
+          <div className="border-2 border-ink bg-ground p-3 shadow-brutal-sm">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[11px] font-black uppercase tracking-wider">
+                Installed Skills ({installedSkills.length})
+              </span>
+              {skillLoading && <span className="text-[10px] font-bold text-ink/50">updating…</span>}
+            </div>
+
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {installedSkills.length === 0 ? (
+                <span className="text-xs italic text-ink/60">No specific skills installed yet.</span>
+              ) : (
+                installedSkills.map((sk) => {
+                  const info = allSkills.find((s) => s.id.toLowerCase() === sk.toLowerCase());
+                  return (
+                    <span
+                      key={sk}
+                      title={info?.description ?? sk}
+                      className="inline-flex items-center gap-1.5 border-2 border-ink bg-contrast px-2 py-0.5 text-xs font-mono font-bold shadow-brutal-sm"
+                    >
+                      <span>⚡ {info?.name ?? sk}</span>
+                      <button
+                        onClick={() => void handleUninstallSkill(sk)}
+                        disabled={skillLoading}
+                        title={`Remove ${sk}`}
+                        className="font-black hover:text-signal disabled:opacity-50"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={selectedSkillToAdd}
+                onChange={(e) => setSelectedSkillToAdd(e.target.value)}
+                disabled={skillLoading}
+                className="border-2 border-ink bg-contrast px-2 py-1 text-xs font-bold shadow-brutal-sm flex-1 min-w-[200px]"
+              >
+                <option value="">-- Choose skill to install --</option>
+                {allSkills
+                  .filter((s) => !installedSkills.some((k) => k.toLowerCase() === s.id.toLowerCase()))
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>
+                      [{s.source}] {s.name} ({s.id})
+                    </option>
+                  ))}
+              </select>
+              <button
+                onClick={() => void handleInstallSkill(selectedSkillToAdd)}
+                disabled={skillLoading || !selectedSkillToAdd}
+                className="border-2 border-ink bg-emphasis px-3 py-1 text-xs font-black uppercase tracking-wider shadow-brutal-sm hover:bg-contrast disabled:opacity-50"
+              >
+                + Install Skill
+              </button>
             </div>
           </div>
 

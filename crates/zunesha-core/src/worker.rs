@@ -1087,14 +1087,30 @@ async fn run_one(
                 RunMode::Normal => render_prompt(&task.title, &description),
                 RunMode::ResolveConflicts => render_conflict_prompt(&task.title, &description),
             };
-            // Pre-made crew member persona (Straw Hat crew or custom):
+            // Pre-made crew member persona (Straw Hat crew or custom) & installed skills:
             if let Some(crew) = &task.crew_member {
-                if let Ok(config) = Config::load() {
-                    let persona = config.resolve_crew_persona(crew);
-                    if !persona.trim().is_empty() {
-                        prompt.push_str("\n\n");
-                        prompt.push_str(&persona);
-                    }
+                let project_cfg = pool.paths.dir().join("config.json");
+                let config = if project_cfg.is_file() {
+                    Config::load_from(&project_cfg).or_else(|_| Config::load()).unwrap_or_default()
+                } else {
+                    Config::load().unwrap_or_default()
+                };
+                let persona = config.resolve_crew_persona(crew);
+                if !persona.trim().is_empty() {
+                    prompt.push_str("\n\n");
+                    prompt.push_str(&persona);
+                }
+                let installed_skills = crate::skills::resolve_skills_for_member(
+                    &config,
+                    crew,
+                    Some(pool.paths.root()),
+                );
+                for skill in installed_skills {
+                    prompt.push_str("\n\n");
+                    prompt.push_str(&format!(
+                        "## Installed Skill: {}\n{}\n\n{}",
+                        skill.name, skill.description, skill.instructions
+                    ));
                 }
             }
             // Macro feature roadmap: when part of a multi-task plan, give the
@@ -3065,6 +3081,48 @@ mod tests {
         assert!(
             logs.contains("debt-in-prompt=1"),
             "missing Zoro technical debt focus in prompt: {logs}"
+        );
+        assert_eq!(task.status, TaskStatus::Review);
+    }
+
+    #[tokio::test]
+    async fn agent_prompts_carry_installed_skills() {
+        let (_repo, paths) = scratch_install();
+        let db = Database::open(&paths.state_db()).unwrap();
+        let task = Task::new("t0", "Audit security", "check boundaries").with_crew("robin");
+        db.insert_task(&task).unwrap();
+        crate::dag::promote_ready(&db).unwrap(); // t0 -> TODO
+
+        // Install "security-sentinel" to Robin in project config:
+        let config_path = paths.dir().join("config.json");
+        let mut config = Config::load_from(&config_path).unwrap_or_default();
+        config.crew.entry("robin".to_string()).or_default().skills = vec!["security-sentinel".to_string()];
+        config.save_to(&config_path).unwrap();
+
+        let pool = WorkerPool::new(
+            paths.clone(),
+            1,
+            AgentCommand::shell(
+                "P=\"$0\"; \
+                 echo \"skill-in-prompt=$(printf '%s' \"$P\" | grep -c 'Security & Secret Sentinel')\"; \
+                 echo \"audit-in-prompt=$(printf '%s' \"$P\" | grep -c 'injection, traversal')\"; \
+                 printf 'fn audited() {}\n' > audited.rs",
+            ),
+        );
+
+        let handle = pool.spawn_task("t0".into()).await.unwrap();
+        assert!(handle.await.unwrap().unwrap(), "agent exit 0 => success");
+
+        let db = Database::open(&paths.state_db()).unwrap();
+        let task = db.get_task("t0").unwrap().unwrap();
+        let logs = &task.worker_logs;
+        assert!(
+            !logs.contains("skill-in-prompt=0"),
+            "missing Security Sentinel skill in prompt: {logs}"
+        );
+        assert!(
+            logs.contains("audit-in-prompt=1"),
+            "missing skill instructions in prompt: {logs}"
         );
         assert_eq!(task.status, TaskStatus::Review);
     }

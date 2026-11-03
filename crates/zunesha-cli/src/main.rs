@@ -29,10 +29,10 @@ use std::sync::{Arc, Mutex};
 use clap::{Parser, Subcommand};
 
 use zunesha_core::{
-    approve_task, crew_member_info, disk_usage, init_project, normalize_agent_model,
-    prune_workspaces, rebase_task, recover_stuck, resume_task, AgentCommand, AgentProvider, Config,
-    Database, Error, MergeOutcome, ResumeMode, StreamKind, TaskStatus, WorkerEvent, WorkerPool,
-    WorkspaceManager, ZuneshaPaths,
+    approve_task, create_project_skill, crew_member_info, disk_usage, init_project,
+    list_all_skills, normalize_agent_model, prune_workspaces, rebase_task, recover_stuck,
+    resume_task, AgentCommand, AgentProvider, Config, Database, Error, MergeOutcome, ResumeMode,
+    SkillSource, StreamKind, TaskStatus, WorkerEvent, WorkerPool, WorkspaceManager, ZuneshaPaths,
 };
 
 #[derive(Parser, Debug)]
@@ -242,9 +242,20 @@ enum Commands {
         /// Provider for this crew member (opencode or antigravity).
         #[arg(long)]
         provider: Option<String>,
+        /// Install a skill to this crew member.
+        #[arg(long)]
+        add_skill: Option<String>,
+        /// Remove an installed skill from this crew member.
+        #[arg(long)]
+        remove_skill: Option<String>,
         /// Reset this crew member back to the default agent model.
         #[arg(long)]
         reset: bool,
+    },
+    /// Manage skills for autonomous agents (built-in and project-specific).
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
     },
     /// Check for a newer release and update this installation.
     ///
@@ -292,6 +303,45 @@ enum Commands {
         /// those claims; a manual `zou recover` still works either way.
         #[arg(long)]
         no_resume: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SkillAction {
+    /// List all available built-in and project skills, along with assigned crew members.
+    List,
+    /// Show a skill's details, instructions, and source.
+    Show {
+        /// Skill identifier (e.g. `tdd-scout`, `debt-slayer`, etc.).
+        skill: String,
+    },
+    /// Install a skill to a specific crew member.
+    Install {
+        /// Target crew member (e.g. `zoro`, `sanji`, `chopper`).
+        member: String,
+        /// Skill identifier to install.
+        skill: String,
+    },
+    /// Uninstall a skill from a specific crew member.
+    Uninstall {
+        /// Target crew member (e.g. `zoro`, `sanji`, `chopper`).
+        member: String,
+        /// Skill identifier to uninstall.
+        skill: String,
+    },
+    /// Create a new project-specific skill under `.zou/skills/<ID>/SKILL.md`.
+    Create {
+        /// Skill identifier slug (e.g. `api-validator`).
+        id: String,
+        /// Human-readable skill name.
+        #[arg(long)]
+        name: Option<String>,
+        /// Short description of what the skill does.
+        #[arg(short = 'd', long)]
+        desc: Option<String>,
+        /// Instructions markdown for the agent prompt.
+        #[arg(long)]
+        instructions: Option<String>,
     },
 }
 
@@ -351,13 +401,18 @@ fn main() -> ExitCode {
             member,
             model,
             provider,
+            add_skill,
+            remove_skill,
             reset,
         } => cmd_crew(
             member.as_deref(),
             model.as_deref(),
             provider.as_deref(),
+            add_skill.as_deref(),
+            remove_skill.as_deref(),
             reset,
         ),
+        Commands::Skill { action } => cmd_skill(&target, action),
         Commands::Update {
             repo,
             prefix,
@@ -869,6 +924,8 @@ fn cmd_crew(
     member: Option<&str>,
     model: Option<&str>,
     provider: Option<&str>,
+    add_skill: Option<&str>,
+    remove_skill: Option<&str>,
     reset: bool,
 ) -> zunesha_core::Result<()> {
     let crew_keys = [
@@ -886,8 +943,31 @@ fn cmd_crew(
 
         if reset {
             let path = Config::clear_crew_member(&member_lower)?;
-            println!("✔ reset crew member `{member_lower}` to default agent model");
+            println!("✔ reset crew member `{member_lower}` to default agent model and cleared skills");
             println!("  config : {}", path.display());
+            return Ok(());
+        }
+
+        if let Some(skill) = add_skill {
+            let path = Config::add_crew_skill(&member_lower, skill)?;
+            let config = Config::load_from(&path).unwrap_or_default();
+            println!("✔ installed skill `{skill}` to `{member_lower}`");
+            println!("  config : {}", path.display());
+            println!("  skills : {}", config.resolve_crew_skills(&member_lower).join(", "));
+            return Ok(());
+        }
+
+        if let Some(skill) = remove_skill {
+            let path = Config::remove_crew_skill(&member_lower, skill)?;
+            let config = Config::load_from(&path).unwrap_or_default();
+            println!("✔ uninstalled skill `{skill}` from `{member_lower}`");
+            println!("  config : {}", path.display());
+            let skills = config.resolve_crew_skills(&member_lower);
+            if skills.is_empty() {
+                println!("  skills : (none)");
+            } else {
+                println!("  skills : {}", skills.join(", "));
+            }
             return Ok(());
         }
 
@@ -911,6 +991,10 @@ fn cmd_crew(
                     .as_deref()
                     .unwrap_or("(default)")
             );
+            let skills = config.resolve_crew_skills(&member_lower);
+            if !skills.is_empty() {
+                println!("  skills   : {}", skills.join(", "));
+            }
             return Ok(());
         }
 
@@ -931,10 +1015,16 @@ fn cmd_crew(
                 .as_deref()
                 .unwrap_or("(default)")
         );
+        let skills = config.resolve_crew_skills(&member_lower);
+        if skills.is_empty() {
+            println!("  skills   : (none)");
+        } else {
+            println!("  skills   : {}", skills.join(", "));
+        }
         return Ok(());
     }
 
-    // List all 5 crew members
+    // List all crew members
     let config = Config::load().unwrap_or_default();
     println!("Straw Hat Pirates Crew — Autonomous Agent Roster");
     println!("===============================================");
@@ -942,6 +1032,7 @@ fn cmd_crew(
         let (name, role, specialty) = crew_member_info(key);
         let resolved_prov = config.resolve_crew_provider(key);
         let resolved_model = config.resolve_crew_model(key);
+        let skills = config.resolve_crew_skills(key);
         println!(
             "  {:<8} {:<24} {:<12} model: {}",
             key,
@@ -950,12 +1041,136 @@ fn cmd_crew(
             resolved_model.as_deref().unwrap_or("(default)")
         );
         println!("           Role: {role} | Specialty: {specialty}");
+        if !skills.is_empty() {
+            println!("           Skills: {}", skills.join(", "));
+        }
     }
     println!();
     println!(
         "Configure a crew member: `zou crew <member> --model <model> [--provider <provider>]`"
     );
+    println!("Install a skill:         `zou crew <member> --add-skill <skill>`");
+    println!("Uninstall a skill:       `zou crew <member> --remove-skill <skill>`");
     println!("Reset a crew member:     `zou crew <member> --reset`");
+    Ok(())
+}
+
+/// `zou skill` – manage skills for autonomous agents (built-in and project-specific).
+fn cmd_skill(target: &Path, action: SkillAction) -> zunesha_core::Result<()> {
+    let crew_keys = [
+        "luffy", "zoro", "nami", "usopp", "sanji", "chopper", "robin", "franky", "brook", "jinbe",
+    ];
+
+    match action {
+        SkillAction::List => {
+            let skills = list_all_skills(Some(target));
+            let config = Config::load().unwrap_or_default();
+
+            println!("Available Autonomous Agent Skills (Built-in & Project)");
+            println!("======================================================");
+            for s in skills {
+                let source_label = match s.source {
+                    SkillSource::Builtin => "builtin",
+                    SkillSource::Project => "project",
+                    SkillSource::User => "user",
+                };
+                let mut assigned_members = Vec::new();
+                for member in crew_keys {
+                    let member_skills = config.resolve_crew_skills(member);
+                    if member_skills.iter().any(|k| k.eq_ignore_ascii_case(&s.id)) {
+                        assigned_members.push(member);
+                    }
+                }
+
+                println!("• {:<20} [{}] {}", s.id, source_label, s.name);
+                println!("  Description: {}", s.description);
+                if !assigned_members.is_empty() {
+                    println!("  Installed on: {}", assigned_members.join(", "));
+                }
+            }
+            println!();
+            println!("Install skill to crew member: `zou skill install <member> <skill-id>`");
+            println!("Inspect skill instructions:   `zou skill show <skill-id>`");
+            println!("Create custom project skill:  `zou skill create <id> --name <name>`");
+        }
+        SkillAction::Show { skill } => {
+            let skills = list_all_skills(Some(target));
+            let found = skills.into_iter().find(|s| s.id.eq_ignore_ascii_case(&skill));
+            match found {
+                Some(s) => {
+                    let source_label = match s.source {
+                        SkillSource::Builtin => "builtin",
+                        SkillSource::Project => "project",
+                        SkillSource::User => "user",
+                    };
+                    println!("Skill: {} [{}]", s.name, source_label);
+                    println!("ID:          {}", s.id);
+                    println!("Description: {}", s.description);
+                    println!("\n--- Instructions ---\n{}", s.instructions);
+                }
+                None => {
+                    return Err(Error::Config(format!(
+                        "skill `{skill}` not found in built-in or project skills"
+                    )));
+                }
+            }
+        }
+        SkillAction::Install { member, skill } => {
+            let member_lower = member.to_ascii_lowercase();
+            if !crew_keys.contains(&member_lower.as_str()) {
+                return Err(Error::Config(format!(
+                    "unknown crew member `{member}`; choose from: {}",
+                    crew_keys.join(", ")
+                )));
+            }
+
+            let path = Config::add_crew_skill(&member_lower, &skill)?;
+            let config = Config::load_from(&path).unwrap_or_default();
+            println!("✔ installed skill `{skill}` to crew member `{member_lower}`");
+            println!("  config: {}", path.display());
+            println!("  skills: {}", config.resolve_crew_skills(&member_lower).join(", "));
+        }
+        SkillAction::Uninstall { member, skill } => {
+            let member_lower = member.to_ascii_lowercase();
+            if !crew_keys.contains(&member_lower.as_str()) {
+                return Err(Error::Config(format!(
+                    "unknown crew member `{member}`; choose from: {}",
+                    crew_keys.join(", ")
+                )));
+            }
+
+            let path = Config::remove_crew_skill(&member_lower, &skill)?;
+            let config = Config::load_from(&path).unwrap_or_default();
+            println!("✔ uninstalled skill `{skill}` from crew member `{member_lower}`");
+            println!("  config: {}", path.display());
+            let skills = config.resolve_crew_skills(&member_lower);
+            if skills.is_empty() {
+                println!("  skills: (none)");
+            } else {
+                println!("  skills: {}", skills.join(", "));
+            }
+        }
+        SkillAction::Create {
+            id,
+            name,
+            desc,
+            instructions,
+        } => {
+            let name = name.unwrap_or_else(|| id.replace('-', " "));
+            let desc = desc.unwrap_or_else(|| format!("{name} skill"));
+            let instructions = instructions.unwrap_or_else(|| {
+                format!(
+                    "Follow domain best practices when applying {name}. Check constraints and test thoroughly."
+                )
+            });
+
+            let path = create_project_skill(target, &id, &name, &desc, &instructions)?;
+            println!("✔ created project skill `{id}`");
+            println!("  file: {}", path.display());
+            println!("  instructions may be edited directly in the file.");
+        }
+    }
+
     Ok(())
 }
 
@@ -1886,16 +2101,54 @@ mod tests {
     #[test]
     fn cmd_crew_validates_known_members_and_lists() {
         // Unknown member fails
-        let err = super::cmd_crew(Some("kaido"), None, None, false).unwrap_err();
+        let err = super::cmd_crew(Some("kaido"), None, None, None, None, false).unwrap_err();
         assert!(err.to_string().contains("unknown crew member `kaido`"));
         assert!(err.to_string().contains("chopper"));
 
         // Listing all crew members succeeds
-        assert!(super::cmd_crew(None, None, None, false).is_ok());
+        assert!(super::cmd_crew(None, None, None, None, None, false).is_ok());
 
         // Inspecting known members succeeds
-        assert!(super::cmd_crew(Some("zoro"), None, None, false).is_ok());
-        assert!(super::cmd_crew(Some("chopper"), None, None, false).is_ok());
-        assert!(super::cmd_crew(Some("jinbe"), None, None, false).is_ok());
+        assert!(super::cmd_crew(Some("zoro"), None, None, None, None, false).is_ok());
+        assert!(super::cmd_crew(Some("chopper"), None, None, None, None, false).is_ok());
+        assert!(super::cmd_crew(Some("jinbe"), None, None, None, None, false).is_ok());
+    }
+
+    #[test]
+    fn cmd_skill_list_show_and_create() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Listing skills works
+        assert!(super::cmd_skill(tmp.path(), super::SkillAction::List).is_ok());
+
+        // Showing a builtin skill works
+        assert!(super::cmd_skill(
+            tmp.path(),
+            super::SkillAction::Show {
+                skill: "tdd-scout".to_string()
+            }
+        )
+        .is_ok());
+
+        // Creating a project skill works
+        assert!(super::cmd_skill(
+            tmp.path(),
+            super::SkillAction::Create {
+                id: "custom-agent-skill".to_string(),
+                name: Some("Custom Agent Skill".to_string()),
+                desc: Some("Custom Description".to_string()),
+                instructions: Some("Do things safely.".to_string()),
+            }
+        )
+        .is_ok());
+
+        // Showing the created skill works
+        assert!(super::cmd_skill(
+            tmp.path(),
+            super::SkillAction::Show {
+                skill: "custom-agent-skill".to_string()
+            }
+        )
+        .is_ok());
     }
 }

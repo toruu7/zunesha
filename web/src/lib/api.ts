@@ -12,12 +12,14 @@ import type {
   ApiEvent,
   ApproveResponse,
   CancelResponse,
+  CrewMember,
   DeleteResponse,
   PruneResponse,
   RebaseResponse,
   RecoverResponse,
   RetryMode,
   RetryResponse,
+  Skill,
   StatusResponse,
   Task,
   TasksResponse,
@@ -128,31 +130,37 @@ export const api = {
     request<{
       default_provider: string;
       default_model: string | null;
-      crew: Array<{
-        id: string;
-        name: string;
-        role: string;
-        provider: string;
-        model: string | null;
-        is_custom: boolean;
-      }>;
+      crew: CrewMember[];
     }>("/api/crew"),
-  /** Update or reset a crew member's model / provider. */
+  /** Update or reset a crew member's model / provider / skills. */
   updateCrew: (
     member: string,
-    payload: { provider?: string; model?: string; reset?: boolean },
+    payload: { provider?: string; model?: string; reset?: boolean; skills?: string[] },
   ) =>
-    request<{
-      id: string;
-      name: string;
-      role: string;
-      provider: string;
-      model: string | null;
-      is_custom: boolean;
-    }>(`/api/crew/${encodeURIComponent(member)}`, {
+    request<CrewMember>(`/api/crew/${encodeURIComponent(member)}`, {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+  /** List all available agent skills (built-in and project-specific). */
+  skills: () => request<{ skills: Skill[] }>("/api/skills"),
+  /** Install a specific skill to a crew member. */
+  addCrewSkill: (member: string, skill: string) =>
+    post<{ crew_member: string; skill: string; skills: string[] }>(
+      `/api/crew/${encodeURIComponent(member)}/skills`,
+      { skill },
+    ),
+  /** Uninstall a specific skill from a crew member. */
+  removeCrewSkill: (member: string, skill: string) =>
+    del<{ crew_member: string; removed: string; skills: string[] }>(
+      `/api/crew/${encodeURIComponent(member)}/skills/${encodeURIComponent(skill)}`,
+    ),
+  /** Create a new project skill under .zou/skills/<id>/SKILL.md. */
+  createSkill: (payload: {
+    id: string;
+    name: string;
+    description: string;
+    instructions: string;
+  }) => post<{ id: string; path: string }>("/api/skills", payload),
 };
 
 /**

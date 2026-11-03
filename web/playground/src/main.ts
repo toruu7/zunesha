@@ -13,11 +13,11 @@ import {
   api,
   eventSocket,
   type ApiEvent,
-  type CrewMember,
   type CrewResponse,
   type DependencyEdge,
   type LogEvent,
   type ProjectInfo,
+  type Skill,
   type StatusCount,
   type Task,
   type TaskStatus,
@@ -76,6 +76,7 @@ interface State {
   busy: string | null;
   error: string | null;
   crewConfig: CrewResponse | null;
+  skillsList: Skill[] | null;
   planAttachments: AttachmentDraft[];
   planAttachmentErrors: string[];
   rejectAttachments: AttachmentDraft[];
@@ -95,6 +96,7 @@ const state: State = {
   busy: null,
   error: null,
   crewConfig: null,
+  skillsList: null,
   planAttachments: [],
   planAttachmentErrors: [],
   rejectAttachments: [],
@@ -742,6 +744,12 @@ function renderInspector(): void {
           renderInspector();
         }).catch(() => {});
       }
+      if (!state.skillsList) {
+        void api.skills().then((s) => {
+          state.skillsList = s.skills;
+          renderInspector();
+        }).catch(() => {});
+      }
 
       const crewEntry = state.crewConfig?.crew.find((c) => c.id === profileKey);
       const activeProvider = crewEntry?.provider ?? state.crewConfig?.default_provider ?? 'opencode';
@@ -814,6 +822,32 @@ function renderInspector(): void {
           </div>
         </div>
 
+        <!-- Skills Card -->
+        <div class="crew-model-card">
+          <h4>
+            <span>Installed Skills (${(crewEntry?.skills ?? []).length})</span>
+          </h4>
+          <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">
+            ${(crewEntry?.skills ?? []).length === 0 ? '<span style="color: var(--muted); font-size: 11px; font-style: italic;">No specific skills installed yet.</span>' : (crewEntry?.skills ?? []).map((sk) => {
+              const skillObj = state.skillsList?.find((s) => s.id.toLowerCase() === sk.toLowerCase());
+              return `<span class="crew-pill" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; font-size: 11px;">
+                ⚡ ${escapeHtml(skillObj?.name ?? sk)}
+                <button class="crew-remove-skill-btn" data-skill="${escapeHtml(sk)}" style="background: none; border: none; cursor: pointer; color: var(--fg); font-weight: bold; padding: 0 2px;">✕</button>
+              </span>`;
+            }).join('')}
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <select id="crew-skill-select" style="flex: 1; padding: 4px; font-size: 11px; background: var(--bg); color: var(--fg); border: 1px solid var(--border);">
+              <option value="">-- Choose skill to install --</option>
+              ${(state.skillsList ?? [])
+                .filter((s) => !(crewEntry?.skills ?? []).some((k) => k.toLowerCase() === s.id.toLowerCase()))
+                .map((s) => `<option value="${escapeHtml(s.id)}">[${escapeHtml(s.source)}] ${escapeHtml(s.name)}</option>`)
+                .join('')}
+            </select>
+            <button id="crew-add-skill-btn" class="btn primary" style="padding: 4px 8px; font-size: 11px;" type="button">+ Install</button>
+          </div>
+        </div>
+
         <div class="dossier-section">
           <h3>Specialty & Role</h3>
           <p>${escapeHtml(profile.specialty)}</p>
@@ -858,6 +892,41 @@ function renderInspector(): void {
         } catch (err) {
           showToast(`Failed to reset: ${errorMessage(err)}`, 'error');
         }
+      });
+
+      document.getElementById('crew-add-skill-btn')?.addEventListener('click', async () => {
+        const select = document.getElementById('crew-skill-select') as HTMLSelectElement | null;
+        const skillId = select?.value;
+        if (!skillId) {
+          showToast('Please select a skill to install.', 'error');
+          return;
+        }
+        try {
+          showToast(`Installing skill ${skillId} to ${profile.name}...`);
+          await api.addCrewSkill(profileKey, skillId);
+          state.crewConfig = await api.crew();
+          showToast(`Installed ${skillId} to ${profile.name}!`);
+          renderInspector();
+        } catch (err) {
+          showToast(`Failed to install skill: ${errorMessage(err)}`, 'error');
+        }
+      });
+
+      inspectorEl.querySelectorAll('.crew-remove-skill-btn').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const skillId = (btn as HTMLElement).dataset.skill;
+          if (!skillId) return;
+          try {
+            showToast(`Removing skill ${skillId} from ${profile.name}...`);
+            await api.removeCrewSkill(profileKey, skillId);
+            state.crewConfig = await api.crew();
+            showToast(`Removed skill ${skillId}.`);
+            renderInspector();
+          } catch (err) {
+            showToast(`Failed to remove skill: ${errorMessage(err)}`, 'error');
+          }
+        });
       });
 
       inspectorEl.querySelectorAll('.crew-task-item').forEach((item) => {
@@ -1562,11 +1631,13 @@ function connect(): void {
 
 async function loadInitial(): Promise<void> {
   try {
-    const [snapshot, crew] = await Promise.all([
+    const [snapshot, crew, skills] = await Promise.all([
       api.tasks(),
       api.crew().catch(() => null),
+      api.skills().catch(() => null),
     ]);
     if (crew) state.crewConfig = crew;
+    if (skills) state.skillsList = skills.skills;
     applySnapshot(snapshot);
   } catch (error) {
     state.connection = 'offline';

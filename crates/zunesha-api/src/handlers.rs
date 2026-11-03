@@ -770,6 +770,7 @@ pub struct CrewMemberResponse {
     pub provider: String,
     pub model: Option<String>,
     pub is_custom: bool,
+    pub skills: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -780,6 +781,12 @@ pub struct UpdateCrewMemberRequest {
     pub model: Option<String>,
     #[serde(default)]
     pub reset: bool,
+    #[serde(default)]
+    pub skills: Option<Vec<String>>,
+    #[serde(default)]
+    pub add_skill: Option<String>,
+    #[serde(default)]
+    pub remove_skill: Option<String>,
 }
 
 /// `GET /api/crew` – list all Straw Hat crew members and their configured models.
@@ -804,6 +811,7 @@ pub async fn list_crew() -> Result<Json<serde_json::Value>, ApiError> {
             let provider = config.resolve_crew_provider(id);
             let model = config.resolve_crew_model(id);
             let is_custom = config.crew.contains_key(*id);
+            let skills = config.resolve_crew_skills(id);
             CrewMemberResponse {
                 id: id.to_string(),
                 name: name.to_string(),
@@ -811,6 +819,7 @@ pub async fn list_crew() -> Result<Json<serde_json::Value>, ApiError> {
                 provider: provider.as_str().to_string(),
                 model,
                 is_custom,
+                skills,
             }
         })
         .collect();
@@ -822,7 +831,7 @@ pub async fn list_crew() -> Result<Json<serde_json::Value>, ApiError> {
     })))
 }
 
-/// `PUT /api/crew/{member}` – configure a crew member's provider and model, or reset.
+/// `PUT /api/crew/{member}` – configure a crew member's provider, model, and skills, or reset.
 pub async fn update_crew_member(
     Path(member): Path<String>,
     body: Result<Json<UpdateCrewMemberRequest>, JsonRejection>,
@@ -857,20 +866,143 @@ pub async fn update_crew_member(
             _ => None,
         };
         let model = payload.model.as_deref().filter(|m| !m.trim().is_empty());
-        Config::set_crew_member(&member_lower, provider, model)
-            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
+        if provider.is_some() || model.is_some() {
+            Config::set_crew_member(&member_lower, provider, model)
+                .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
+        }
+        if let Some(skill) = &payload.add_skill {
+            Config::add_crew_skill(&member_lower, skill).map_err(ApiError::internal)?;
+        }
+        if let Some(skill) = &payload.remove_skill {
+            Config::remove_crew_skill(&member_lower, skill).map_err(ApiError::internal)?;
+        }
+        if let Some(skills) = payload.skills {
+            Config::set_crew_skills(&member_lower, skills).map_err(ApiError::internal)?;
+        }
     }
 
     let config = Config::load().unwrap_or_default();
     let provider = config.resolve_crew_provider(&member_lower);
     let model = config.resolve_crew_model(&member_lower);
     let is_custom = config.crew.contains_key(&member_lower);
+    let skills = config.resolve_crew_skills(&member_lower);
 
     Ok(Json(json!({
         "id": member_lower,
         "provider": provider.as_str(),
         "model": model,
         "is_custom": is_custom,
+        "skills": skills,
+    })))
+}
+
+/// `GET /api/skills` – list all available skills and which crew members have them installed.
+pub async fn list_skills(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_root = state.paths.root();
+    let all_skills = zunesha_core::list_all_skills(Some(repo_root));
+    let config = Config::load().unwrap_or_default();
+
+    let crew_keys = [
+        "luffy", "zoro", "nami", "usopp", "sanji", "chopper", "robin", "franky", "brook", "jinbe",
+    ];
+
+    let result: Vec<serde_json::Value> = all_skills
+        .into_iter()
+        .map(|skill| {
+            let mut installed_to = Vec::new();
+            for member in &crew_keys {
+                let member_skills = config.resolve_crew_skills(member);
+                if member_skills.contains(&skill.id) {
+                    installed_to.push(member.to_string());
+                }
+            }
+            json!({
+                "id": skill.id,
+                "name": skill.name,
+                "description": skill.description,
+                "instructions": skill.instructions,
+                "source": skill.source,
+                "installed_to": installed_to,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "skills": result })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddCrewSkillRequest {
+    pub skill: String,
+}
+
+/// `POST /api/crew/{member}/skills` – install a skill to a specific crew member.
+pub async fn add_crew_skill(
+    Path(member): Path<String>,
+    body: Result<Json<AddCrewSkillRequest>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let member_lower = member.to_ascii_lowercase();
+    let payload = match body {
+        Ok(Json(p)) => p,
+        Err(e) => return Err(ApiError::new(StatusCode::BAD_REQUEST, e.to_string())),
+    };
+
+    Config::add_crew_skill(&member_lower, &payload.skill).map_err(ApiError::internal)?;
+    let config = Config::load().unwrap_or_default();
+    let skills = config.resolve_crew_skills(&member_lower);
+
+    Ok(Json(json!({
+        "member": member_lower,
+        "skills": skills,
+    })))
+}
+
+/// `DELETE /api/crew/{member}/skills/{skill}` – remove a skill from a crew member.
+pub async fn remove_crew_skill(
+    Path((member, skill)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let member_lower = member.to_ascii_lowercase();
+    Config::remove_crew_skill(&member_lower, &skill).map_err(ApiError::internal)?;
+    let config = Config::load().unwrap_or_default();
+    let skills = config.resolve_crew_skills(&member_lower);
+
+    Ok(Json(json!({
+        "member": member_lower,
+        "skills": skills,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSkillRequest {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub instructions: String,
+}
+
+/// `POST /api/skills` – create a custom skill in `.zou/skills/<id>/SKILL.md`.
+pub async fn create_skill(
+    State(state): State<AppState>,
+    body: Result<Json<CreateSkillRequest>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let payload = match body {
+        Ok(Json(p)) => p,
+        Err(e) => return Err(ApiError::new(StatusCode::BAD_REQUEST, e.to_string())),
+    };
+
+    let path = zunesha_core::create_project_skill(
+        state.paths.root(),
+        &payload.id,
+        &payload.name,
+        &payload.description,
+        &payload.instructions,
+    )
+    .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    Ok(Json(json!({
+        "id": payload.id.to_ascii_lowercase(),
+        "path": path.display().to_string(),
     })))
 }
 

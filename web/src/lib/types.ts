@@ -198,3 +198,30 @@ export class ApiError extends Error {
     this.status = status;
   }
 }
+
+export type SkillSource = "builtin" | "project" | "user";
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  source: SkillSource;
+}
+
+export interface SkillInfo {
+  id: string;
+  name: string;
+  description: string;
+  source: SkillSource;
+}
+
+export interface CrewMember {
+  id: string;
+  name: string;
+  role: string;
+  provider: string;
+  model: string | null;
+  is_custom: boolean;
+  skills: string[];
+}

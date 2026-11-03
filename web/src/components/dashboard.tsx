@@ -347,14 +347,10 @@ export default function Dashboard() {
   });
   const [logsOpen, setLogsOpen] = useState(false);
   const [lastActiveId, setLastActiveId] = useState<string | null>(null);
-  const [sfxEnabled, setSfxEnabled] = useState(false);
+  const [sfxEnabled, setSfxEnabled] = useState(() => soundManager.isEnabled());
   const [crewModalMember, setCrewModalMember] = useState<string | null>(null);
   const logTask = selectedTask ?? activeTask ?? null;
   const activeId = activeTask?.id ?? null;
-
-  useEffect(() => {
-    setSfxEnabled(soundManager.isEnabled());
-  }, []);
 
   const toggleSfx = () => {
     const next = soundManager.toggle();

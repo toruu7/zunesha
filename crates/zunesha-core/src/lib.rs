@@ -49,6 +49,7 @@ pub mod prior_context;
 pub mod project_config;
 pub mod recovery;
 pub mod sandbox;
+pub mod skills;
 pub mod task;
 pub mod worker;
 pub mod workspace;
@@ -79,6 +80,10 @@ pub use recovery::{
     resume_task, ResumeMode, LOG_TAIL_CHARS,
 };
 pub use sandbox::{redact_secrets, SandboxMode, SandboxPolicy};
+pub use skills::{
+    builtin_skills, create_project_skill, list_all_skills, resolve_skills_for_member, Skill,
+    SkillInfo, SkillSource,
+};
 pub use task::{StopReason, Task, TaskStatus, MAX_EVAL_RETRIES};
 pub use worker::{AgentCommand, StreamKind, WorkerEvent, WorkerPool, DEFAULT_MAX_CONCURRENCY};
 pub use workspace::{branch_name, ConflictPrep, Workspace, WorkspaceManager};
