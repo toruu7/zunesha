@@ -60,8 +60,8 @@ pub use attachments::{
     MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, MAX_TOTAL_ATTACHMENT_BYTES,
 };
 pub use config::{
-    crew_member_info, default_crew_persona, normalize_agent_model, normalize_model, AgentConfig,
-    AgentProvider, Config,
+    available_models, crew_member_info, default_crew_persona, default_models,
+    normalize_agent_model, normalize_model, parse_models, AgentConfig, AgentProvider, Config,
 };
 pub use control::{RunControl, RunRegistry};
 pub use dag::{blocked_tasks, promote_ready, recover_stuck, remove_task, render_roadmap};

@@ -16,6 +16,7 @@ import {
   type CrewResponse,
   type DependencyEdge,
   type LogEvent,
+  type ModelsResponse,
   type ProjectInfo,
   type Skill,
   type StatusCount,
@@ -77,6 +78,7 @@ interface State {
   busy: string | null;
   error: string | null;
   crewConfig: CrewResponse | null;
+  availableModels: ModelsResponse | null;
   skillsList: Skill[] | null;
   planAttachments: AttachmentDraft[];
   planAttachmentErrors: string[];
@@ -97,6 +99,7 @@ const state: State = {
   busy: null,
   error: null,
   crewConfig: null,
+  availableModels: null,
   skillsList: null,
   planAttachments: [],
   planAttachmentErrors: [],
@@ -755,11 +758,22 @@ function renderInspector(): void {
           renderInspector();
         }).catch(() => {});
       }
+      if (!state.availableModels) {
+        void api.models().then((m) => {
+          state.availableModels = m;
+          renderInspector();
+        }).catch(() => {});
+      }
 
       const crewEntry = state.crewConfig?.crew.find((c) => c.id === profileKey);
       const activeProvider = crewEntry?.provider ?? state.crewConfig?.default_provider ?? 'opencode';
       const activeModel = crewEntry?.model ?? state.crewConfig?.default_model ?? '(default)';
       const isCustom = crewEntry?.is_custom ?? false;
+      const providerModels = (state.availableModels
+        ? state.availableModels[activeProvider as 'opencode' | 'antigravity']
+        : []) || [];
+      const currentSelectedModel = crewEntry?.model ?? '';
+      const isCustomModel = Boolean(currentSelectedModel && !providerModels.includes(currentSelectedModel));
 
       // Find all tasks assigned to this crew member
       const assigned = state.tasks.filter((t) => {
@@ -810,15 +824,14 @@ function renderInspector(): void {
             </select>
           </div>
           <div class="crew-field">
-            <label for="crew-model-input">Model ID</label>
-            <input id="crew-model-input" list="crew-model-list" placeholder="e.g. anthropic/claude-3.7-sonnet" value="${isCustom && crewEntry?.model ? escapeHtml(crewEntry.model) : ''}" />
-            <datalist id="crew-model-list">
-              <option value="anthropic/claude-3.7-sonnet" />
-              <option value="openai/gpt-4o" />
-              <option value="deepseek/deepseek-r1" />
-              <option value="gemini-3.8-flash-medium" />
-              <option value="gemini-3.8-pro-preview" />
-            </datalist>
+            <label for="crew-model-select">Model ID</label>
+            <select id="crew-model-select">
+              <option value="">(Default for ${activeProvider === 'antigravity' ? 'Antigravity' : 'OpenCode'})</option>
+              ${providerModels.map((m) => `<option value="${escapeHtml(m)}"${m === currentSelectedModel ? ' selected' : ''}>${escapeHtml(m)}</option>`).join('')}
+              ${isCustomModel ? `<option value="${escapeHtml(currentSelectedModel)}" selected>${escapeHtml(currentSelectedModel)} (custom)</option>` : ''}
+              <option value="__custom__">+ Custom model ID…</option>
+            </select>
+            <input id="crew-model-custom-input" style="display: none; margin-top: 6px;" placeholder="e.g. custom-model-id" value="${escapeHtml(currentSelectedModel)}" />
             <small style="color: var(--muted); font-size: 10px;">Active: <code>${escapeHtml(activeModel)}</code></small>
           </div>
           <div class="crew-card-actions">
@@ -869,18 +882,55 @@ function renderInspector(): void {
         </div>
       </div>`;
 
+      document.getElementById('crew-provider-select')?.addEventListener('change', (e) => {
+        const newProvider = (e.target as HTMLSelectElement).value;
+        const modelSelect = document.getElementById('crew-model-select') as HTMLSelectElement | null;
+        const customInput = document.getElementById('crew-model-custom-input') as HTMLInputElement | null;
+        if (!modelSelect) return;
+        const models = (state.availableModels ? state.availableModels[newProvider as 'opencode' | 'antigravity'] : []) || [];
+        modelSelect.innerHTML = `
+          <option value="">(Default for ${newProvider === 'antigravity' ? 'Antigravity' : 'OpenCode'})</option>
+          ${models.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')}
+          <option value="__custom__">+ Custom model ID…</option>
+        `;
+        if (models.length > 0) {
+          modelSelect.value = models[0];
+        } else {
+          modelSelect.value = '';
+        }
+        if (customInput) customInput.style.display = 'none';
+      });
+
+      document.getElementById('crew-model-select')?.addEventListener('change', (e) => {
+        const val = (e.target as HTMLSelectElement).value;
+        const customInput = document.getElementById('crew-model-custom-input') as HTMLInputElement | null;
+        if (customInput) {
+          if (val === '__custom__') {
+            customInput.style.display = 'block';
+            customInput.focus();
+          } else {
+            customInput.style.display = 'none';
+          }
+        }
+      });
+
       document.getElementById('crew-save-btn')?.addEventListener('click', async () => {
         const provider = (document.getElementById('crew-provider-select') as HTMLSelectElement)?.value;
-        const model = (document.getElementById('crew-model-input') as HTMLInputElement)?.value.trim();
-        if (!model) {
-          showToast('Please enter a model id or click Reset.', 'error');
-          return;
+        const modelSelect = document.getElementById('crew-model-select') as HTMLSelectElement | null;
+        const customInput = document.getElementById('crew-model-custom-input') as HTMLInputElement | null;
+        let model = modelSelect?.value.trim() ?? '';
+        if (model === '__custom__') {
+          model = customInput?.value.trim() ?? '';
+          if (!model) {
+            showToast('Please enter a custom model id.', 'error');
+            return;
+          }
         }
         try {
           showToast(`Updating model for ${profile.name}...`);
-          await api.updateCrew(profileKey, { provider, model });
+          await api.updateCrew(profileKey, { provider, model: model || undefined });
           state.crewConfig = await api.crew();
-          showToast(`Updated ${profile.name} to ${model}!`);
+          showToast(`Updated ${profile.name} to ${model || 'default'}!`);
           renderInspector();
         } catch (err) {
           showToast(`Failed to update model: ${errorMessage(err)}`, 'error');
@@ -1693,15 +1743,17 @@ function connect(): void {
 
 async function loadInitial(): Promise<void> {
   try {
-    const [snapshot, crew, skills, ver] = await Promise.all([
+    const [snapshot, crew, skills, ver, models] = await Promise.all([
       api.tasks(),
       api.crew().catch(() => null),
       api.skills().catch(() => null),
       api.version().catch(() => null),
+      api.models().catch(() => null),
     ]);
     if (crew) state.crewConfig = crew;
     if (skills) state.skillsList = skills.skills;
     if (ver) applyVersion(ver);
+    if (models) state.availableModels = models;
     applySnapshot(snapshot);
   } catch (error) {
     state.connection = 'offline';

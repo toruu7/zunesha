@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useZou } from "@/lib/store";
-import type { Skill } from "@/lib/types";
+import type { ModelsResponse, Skill } from "@/lib/types";
 
 export interface CrewProfile {
   id: string;
@@ -141,6 +141,8 @@ export default function CrewModal({ memberId, onClose }: CrewModalProps) {
   const [provider, setProvider] = useState("opencode");
   const [model, setModel] = useState("");
   const [isCustom, setIsCustom] = useState(false);
+  const [customMode, setCustomMode] = useState(false);
+  const [availableModels, setAvailableModels] = useState<ModelsResponse | null>(null);
   const [installedSkills, setInstalledSkills] = useState<string[]>([]);
   const [allSkills, setAllSkills] = useState<Skill[]>([]);
   const [selectedSkillToAdd, setSelectedSkillToAdd] = useState("");
@@ -154,8 +156,12 @@ export default function CrewModal({ memberId, onClose }: CrewModalProps) {
     Promise.all([
       api.crew().catch(() => null),
       api.skills().catch(() => null),
-    ]).then(([crewRes, skillsRes]) => {
+      api.models().catch(() => null),
+    ]).then(([crewRes, skillsRes, modelsRes]) => {
       if (!active) return;
+      if (modelsRes) {
+        setAvailableModels(modelsRes);
+      }
       if (crewRes) {
         const entry = crewRes.crew.find((c) => c.id === memberId);
         if (entry) {
@@ -176,6 +182,19 @@ export default function CrewModal({ memberId, onClose }: CrewModalProps) {
       active = false;
     };
   }, [memberId]);
+
+  const handleProviderChange = (newProvider: string) => {
+    setProvider(newProvider);
+    const list = availableModels
+      ? (availableModels[newProvider as "opencode" | "antigravity"] || [])
+      : [];
+    if (list.length > 0) {
+      setModel(list[0]);
+    } else {
+      setModel("");
+    }
+    setCustomMode(false);
+  };
 
   const assignedTasks = tasks.filter((t) => {
     if (t.crew_member) return t.crew_member.toLowerCase().includes(memberId);
@@ -207,6 +226,7 @@ export default function CrewModal({ memberId, onClose }: CrewModalProps) {
       const updated = await api.updateCrew(memberId, { reset: true });
       setIsCustom(false);
       setModel("");
+      setCustomMode(false);
       setProvider(updated.provider);
       setInstalledSkills(updated.skills ?? []);
       setMsg("Reset to default agent model and cleared skills");
@@ -246,6 +266,10 @@ export default function CrewModal({ memberId, onClose }: CrewModalProps) {
       setSkillLoading(false);
     }
   };
+
+  const currentModels = availableModels
+    ? (availableModels[provider as "opencode" | "antigravity"] || [])
+    : [];
 
   return (
     <div
@@ -314,12 +338,13 @@ export default function CrewModal({ memberId, onClose }: CrewModalProps) {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
               <div>
-                <label className="block text-[10px] font-black uppercase text-ink/70 mb-1">
+                <label htmlFor="crew-provider-select" className="block text-[10px] font-black uppercase text-ink/70 mb-1">
                   Provider
                 </label>
                 <select
+                  id="crew-provider-select"
                   value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
+                  onChange={(e) => handleProviderChange(e.target.value)}
                   disabled={saving}
                   className="w-full border-2 border-ink bg-contrast px-2 py-1 text-xs font-bold shadow-brutal-sm"
                 >
@@ -329,24 +354,47 @@ export default function CrewModal({ memberId, onClose }: CrewModalProps) {
               </div>
 
               <div>
-                <label className="block text-[10px] font-black uppercase text-ink/70 mb-1">
+                <label htmlFor="crew-model-select" className="block text-[10px] font-black uppercase text-ink/70 mb-1">
                   Model ID
                 </label>
-                <input
-                  list="crew-model-presets"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
+                <select
+                  id="crew-model-select"
+                  value={customMode ? "__custom__" : model}
+                  onChange={(e) => {
+                    if (e.target.value === "__custom__") {
+                      setCustomMode(true);
+                    } else {
+                      setCustomMode(false);
+                      setModel(e.target.value);
+                    }
+                  }}
                   disabled={saving}
-                  placeholder="e.g. anthropic/claude-3.7-sonnet"
                   className="w-full border-2 border-ink bg-contrast px-2 py-1 text-xs font-mono font-bold shadow-brutal-sm"
-                />
-                <datalist id="crew-model-presets">
-                  <option value="anthropic/claude-3.7-sonnet" />
-                  <option value="anthropic/claude-3.5-sonnet" />
-                  <option value="openai/gpt-4o" />
-                  <option value="google/gemini-2.5-pro" />
-                  <option value="meta-llama/llama-3.3-70b-instruct" />
-                </datalist>
+                >
+                  <option value="">
+                    (Default for {provider === "antigravity" ? "Antigravity" : "OpenCode"})
+                  </option>
+                  {currentModels.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                  {model && !currentModels.includes(model) && !customMode && (
+                    <option value={model}>{model} (configured)</option>
+                  )}
+                  <option value="__custom__">+ Custom model ID…</option>
+                </select>
+                {customMode && (
+                  <input
+                    type="text"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    disabled={saving}
+                    placeholder="e.g. anthropic/claude-3.7-sonnet"
+                    className="mt-1.5 w-full border-2 border-ink bg-contrast px-2 py-1 text-xs font-mono font-bold shadow-brutal-sm"
+                    autoFocus
+                  />
+                )}
               </div>
             </div>
 

@@ -1958,58 +1958,20 @@ fn spawn_models(tx: &mpsc::UnboundedSender<AppMsg>) {
             let provider = Config::load()
                 .map(|config| config.provider())
                 .unwrap_or(AgentProvider::Opencode);
-            let binary = provider.binary();
-            let output = std::process::Command::new(binary)
-                .arg("models")
-                .output()
-                .map_err(|error| {
-                    format!(
-                        "could not run `{binary} models`: {error}. Install {binary} or use ZOU_AGENT_CMD."
-                    )
-                })?;
-            if !output.status.success() {
-                let detail = String::from_utf8_lossy(&output.stderr);
-                let detail = detail.trim();
-                let detail = if detail.is_empty() {
-                    format!("exit status {}", output.status)
-                } else {
-                    detail.lines().next().unwrap_or(detail).to_string()
-                };
-                return Err(format!("`{binary} models` failed: {detail}"));
+            let models = zunesha_core::available_models(provider);
+            if models.is_empty() {
+                let binary = provider.binary();
+                return Err(format!(
+                    "`{binary} models` returned no models; check your provider setup"
+                ));
             }
-            Ok(parse_models(
-                provider,
-                &String::from_utf8_lossy(&output.stdout),
-            ))
+            Ok(models)
         })
         .await
         .map_err(|error| format!("model discovery task failed: {error}"))
         .and_then(|result| result);
         let _ = tx.send(AppMsg::Models(result));
     });
-}
-
-fn parse_models(provider: AgentProvider, output: &str) -> Vec<String> {
-    let mut models = Vec::new();
-    for line in output.lines() {
-        let line = line.trim();
-        let model = match provider {
-            AgentProvider::Opencode => {
-                if line.is_empty() || !line.contains('/') || line.chars().any(char::is_whitespace) {
-                    continue;
-                }
-                line
-            }
-            AgentProvider::Antigravity => match line.split_whitespace().next() {
-                Some(model) if !model.is_empty() => model,
-                _ => continue,
-            },
-        };
-        if !models.iter().any(|existing| existing == model) {
-            models.push(model.to_string());
-        }
-    }
-    models
 }
 
 fn split_logs(text: &str) -> Vec<LogLine> {

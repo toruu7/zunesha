@@ -177,6 +177,7 @@ pub fn router(state: AppState, dashboard_dir: Option<std::path::PathBuf>) -> Rou
             "/api/skills",
             get(handlers::list_skills).post(handlers::create_skill),
         )
+        .route("/api/models", get(handlers::list_models))
         .route("/api/version", get(handlers::check_version))
         .route("/api/update", post(handlers::apply_update))
         // Catch-all for unknown API paths: JSON 404 instead of the HTML

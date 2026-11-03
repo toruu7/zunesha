@@ -810,31 +810,14 @@ fn save_model(model: &str) -> zunesha_core::Result<()> {
 
 /// Ask the active provider's CLI for its model list.
 fn available_models(provider: AgentProvider) -> zunesha_core::Result<Vec<String>> {
-    let binary = provider.binary();
-    let output = std::process::Command::new(binary)
-        .arg("models")
-        .output()
-        .map_err(|e| {
-            Error::Config(format!(
-                "could not run `{binary} models`: {e}. Install {binary} or use ZOU_AGENT_CMD."
-            ))
-        })?;
-
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr);
-        let detail = detail.trim();
-        let detail = if detail.is_empty() {
-            format!("exit status {}", output.status)
-        } else {
-            detail.lines().next().unwrap_or(detail).to_string()
-        };
-        return Err(Error::Config(format!("`{binary} models` failed: {detail}")));
+    let models = zunesha_core::available_models(provider);
+    if models.is_empty() {
+        let binary = provider.binary();
+        return Err(Error::Config(format!(
+            "`{binary} models` returned no models; check your provider setup"
+        )));
     }
-
-    Ok(parse_models(
-        provider,
-        &String::from_utf8_lossy(&output.stdout),
-    ))
+    Ok(models)
 }
 
 /// Parse the newline-separated ids printed by `opencode models` / `agy models`.

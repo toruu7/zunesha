@@ -63,6 +63,12 @@ export interface Skill {
   source: 'builtin' | 'project' | 'user';
 }
 
+export interface ModelsResponse {
+  default_provider: string;
+  opencode: string[];
+  antigravity: string[];
+}
+
 export interface CrewResponse {
   default_provider: string;
   default_model: string | null;
@@ -191,6 +197,7 @@ export const api = {
   version: () => request<VersionResponse>('/api/version'),
   applyUpdate: (repo?: string) =>
     post<UpdateApplyResponse>('/api/update', { repo }),
+  models: () => request<ModelsResponse>('/api/models'),
 };
 
 export interface EventSocketHandlers {

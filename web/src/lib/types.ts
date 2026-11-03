@@ -241,3 +241,9 @@ export interface UpdateApplyResponse {
   steps: string[];
   target_version: string;
 }
+
+export interface ModelsResponse {
+  default_provider: string;
+  opencode: string[];
+  antigravity: string[];
+}

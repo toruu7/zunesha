@@ -896,6 +896,18 @@ pub async fn update_crew_member(
     })))
 }
 
+/// `GET /api/models` – list all available models grouped by provider.
+pub async fn list_models() -> Result<Json<serde_json::Value>, ApiError> {
+    let opencode = zunesha_core::available_models(AgentProvider::Opencode);
+    let antigravity = zunesha_core::available_models(AgentProvider::Antigravity);
+    let config = Config::load().unwrap_or_default();
+    Ok(Json(json!({
+        "default_provider": config.provider().as_str(),
+        "opencode": opencode,
+        "antigravity": antigravity,
+    })))
+}
+
 /// `GET /api/skills` – list all available skills and which crew members have them installed.
 pub async fn list_skills(
     State(state): State<AppState>,

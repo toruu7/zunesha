@@ -14,6 +14,7 @@ import type {
   CancelResponse,
   CrewMember,
   DeleteResponse,
+  ModelsResponse,
   PruneResponse,
   RebaseResponse,
   RecoverResponse,
@@ -163,6 +164,8 @@ export const api = {
     description: string;
     instructions: string;
   }) => post<{ id: string; path: string }>("/api/skills", payload),
+  /** List all available models grouped by provider. */
+  models: () => request<ModelsResponse>("/api/models"),
   /** Check current running version and query update availability. */
   version: () => request<VersionResponse>("/api/version"),
   /** Execute sequential update and restart daemon. */

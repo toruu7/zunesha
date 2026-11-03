@@ -369,7 +369,8 @@ impl Config {
                 return p;
             }
         }
-        if let Some(c) = self.crew.get(member) {
+        let key = member.to_ascii_lowercase();
+        if let Some(c) = self.crew.get(&key) {
             if let Some(p) = c.provider {
                 return p;
             }
@@ -386,22 +387,25 @@ impl Config {
                 return Some(val.to_string());
             }
         }
-        if let Some(c) = self.crew.get(member) {
+        let key = member.to_ascii_lowercase();
+        if let Some(c) = self.crew.get(&key) {
             if let Some(m) = &c.model {
                 return Some(m.clone());
             }
         }
-        self.model().map(|s| s.to_string())
+        self.model_for(self.resolve_crew_provider(member))
+            .map(|s| s.to_string())
     }
 
     /// Get persona instructions for a crew member, using custom config if set or default Straw Hat persona.
     pub fn resolve_crew_persona(&self, member: &str) -> String {
-        if let Some(c) = self.crew.get(member) {
+        let key = member.to_ascii_lowercase();
+        if let Some(c) = self.crew.get(&key) {
             if let Some(p) = &c.prompt {
                 return p.clone();
             }
         }
-        default_crew_persona(member).to_string()
+        default_crew_persona(&key).to_string()
     }
 
     /// Resolve the list of installed skills for a crew member.
@@ -624,6 +628,89 @@ pub fn normalize_agent_model(provider: AgentProvider, model: &str) -> Result<Str
         )));
     }
     Ok(model.to_string())
+}
+
+/// Curated list of known default models for each provider when CLI discovery is unavailable.
+pub fn default_models(provider: AgentProvider) -> Vec<String> {
+    match provider {
+        AgentProvider::Antigravity => vec![
+            "gemini-3.8-flash-medium".into(),
+            "gemini-3.8-pro-preview".into(),
+            "gemini-3.8-flash-high".into(),
+            "gemini-2.5-pro".into(),
+            "gemini-2.5-flash".into(),
+            "claude-3-7-sonnet".into(),
+            "claude-3-5-sonnet".into(),
+        ],
+        AgentProvider::Opencode => vec![
+            "opencode/deepseek-v4.1-flash-free".into(),
+            "anthropic/claude-3.7-sonnet".into(),
+            "anthropic/claude-3.5-sonnet".into(),
+            "openai/gpt-4o".into(),
+            "openai/gpt-4o-mini".into(),
+            "openai/o3-mini".into(),
+            "deepseek/deepseek-r1".into(),
+            "deepseek/deepseek-v3".into(),
+            "google/gemini-2.5-pro".into(),
+            "google/gemini-2.5-flash".into(),
+            "meta-llama/llama-3.3-70b-instruct".into(),
+            "qwen/qwen-2.5-coder-32b-instruct".into(),
+        ],
+    }
+}
+
+/// Parse the newline-separated output of `opencode models` or `agy models`.
+pub fn parse_models(provider: AgentProvider, output: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    output
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| match provider {
+            AgentProvider::Opencode => {
+                (!line.is_empty() && line.contains('/') && !line.chars().any(char::is_whitespace))
+                    .then_some(line.to_string())
+            }
+            AgentProvider::Antigravity => line
+                .split_whitespace()
+                .next()
+                .filter(|slug| !slug.is_empty())
+                .map(str::to_string),
+        })
+        .filter(|model| seen.insert(model.clone()))
+        .collect()
+}
+
+/// Ask the active provider's CLI for its model list, falling back to curated defaults.
+pub fn available_models(provider: AgentProvider) -> Vec<String> {
+    let mut models = Vec::new();
+    let binary = provider.binary();
+    if let Ok(output) = std::process::Command::new(binary).arg("models").output() {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            models = parse_models(provider, &stdout);
+        }
+    }
+    if models.is_empty() {
+        models = default_models(provider);
+    }
+    // Also include any currently configured model from Config so custom models are never lost
+    if let Ok(config) = Config::load() {
+        if let Some(m) = config.model_for(provider) {
+            if !models.contains(&m.to_string()) {
+                models.insert(0, m.to_string());
+            }
+        }
+        for crew in config.crew.values() {
+            if crew.provider == Some(provider) {
+                if let Some(m) = &crew.model {
+                    if !models.contains(m) {
+                        models.push(m.clone());
+                    }
+                }
+            }
+        }
+    }
+    models
 }
 
 #[cfg(test)]

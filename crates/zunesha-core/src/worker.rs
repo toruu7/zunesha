@@ -282,6 +282,12 @@ impl AgentCommand {
             && !self.args.contains(&"--auto".to_string())
     }
 
+    /// Whether this command represents a standard provider invocation (`opencode` or `agy`),
+    /// as opposed to a custom test harness or shell command (`sh`).
+    pub fn is_default_or_provider(&self) -> bool {
+        self.program == "opencode" || self.program == "agy"
+    }
+
     /// Build an agent invocation for a specific crew member (or fallback).
     pub fn for_crew_member(config: &Config, crew_member: Option<&str>) -> Self {
         if let Some(member) = crew_member {
@@ -976,15 +982,24 @@ impl AgentOutcome {
 /// and the task DAG's feature roadmap precedes them; all are read once during setup.
 ///
 /// Resolve the primary agent command for a task, honouring a crew member's
-/// provider/model override before the saved provider configuration.
+/// provider/model override before falling back to default provider configuration.
 fn primary_agent(pool: &WorkerHandle, task: &Task) -> AgentCommand {
-    // A custom command always wins. For the built-in provider, honour a crew
-    // member's provider/model override before falling back to the saved
-    // provider configuration.
-    if pool.agent.is_builtin() {
-        if let Ok(config) = Config::load() {
-            return AgentCommand::for_crew_member(&config, task.crew_member.as_deref());
+    // If pool.agent is a custom harness/test command (e.g. `sh -c ...`), honour it
+    // unless an explicit crew command override is provided in the environment.
+    if !pool.agent.is_default_or_provider() {
+        if let Some(member) = task.crew_member.as_deref() {
+            let env_crew = format!("ZOU_CREW_{}_CMD", member.to_ascii_uppercase());
+            if std::env::var_os(&env_crew).is_some() {
+                if let Ok(config) = Config::load() {
+                    return AgentCommand::for_crew_member(&config, Some(member));
+                }
+            }
         }
+        return pool.agent.clone();
+    }
+
+    if let Ok(config) = Config::load() {
+        return AgentCommand::for_crew_member(&config, task.crew_member.as_deref());
     }
     pool.agent.clone()
 }
@@ -2752,6 +2767,64 @@ mod tests {
         let cmd = AgentCommand::from_config(&config).expect("provider default");
         assert_eq!(cmd.program, "agy");
         assert!(!cmd.args.contains(&"--model".to_string()));
+    }
+
+    #[test]
+    fn crew_member_antigravity_overrides_global_opencode_agent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.json");
+        let mut config = Config::default();
+        config.agent.provider = AgentProvider::Opencode;
+        config.agent.model = Some("opencode/deepseek-v4.1-flash-free".into());
+        config.crew.insert(
+            "nami".to_string(),
+            crate::config::CrewMemberConfig {
+                provider: Some(AgentProvider::Antigravity),
+                model: Some("gemini-3.8-flash-medium".into()),
+                prompt: None,
+                skills: Vec::new(),
+            },
+        );
+        config.save_to(&config_path).unwrap();
+
+        unsafe {
+            std::env::set_var("ZOU_CONFIG_FILE", &config_path);
+        }
+
+        let task = Task::new("t0", "Research contracts", "").with_crew("nami");
+        let pool_handle = WorkerHandle {
+            db_path: PathBuf::new(),
+            paths: ZuneshaPaths::new("/tmp"),
+            agent: AgentCommand {
+                program: "opencode".into(),
+                args: vec![
+                    "run".into(),
+                    "--auto".into(),
+                    "--format".into(),
+                    "json".into(),
+                    "--model".into(),
+                    "opencode/deepseek-v4.1-flash-free".into(),
+                    "{prompt}".into(),
+                ],
+            },
+            fallbacks: Vec::new(),
+            project: ProjectConfig::default(),
+            eval: EvalCommand::default(),
+            eval_timeout: Duration::from_secs(1),
+            agent_timeout: Duration::from_secs(1),
+            sandbox_mode: SandboxMode::Off,
+            events: tokio::sync::broadcast::channel(16).0,
+            transcript: Arc::new(std::sync::Mutex::new(String::new())),
+        };
+
+        let cmd = primary_agent(&pool_handle, &task);
+        assert_eq!(cmd.program, "agy");
+        assert!(cmd.args.contains(&"-p".to_string()));
+        assert!(cmd.args.contains(&"gemini-3.8-flash-medium".to_string()));
+
+        unsafe {
+            std::env::remove_var("ZOU_CONFIG_FILE");
+        }
     }
 
     #[test]

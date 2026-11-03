@@ -1336,3 +1336,19 @@ async fn version_api_reports_version_and_update_state() {
     assert_eq!(res["current_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(res["docs_url"], "https://zunesha-docs.vercel.app");
 }
+
+#[tokio::test]
+async fn models_api_reports_available_models() {
+    let (_tmp, paths) = scratch();
+    let app = app_for(&paths);
+
+    let (status, res) = json_req(&app, Method::GET, "/api/models", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let opencode = res["opencode"].as_array().expect("opencode models array");
+    let antigravity = res["antigravity"]
+        .as_array()
+        .expect("antigravity models array");
+    assert!(!opencode.is_empty());
+    assert!(!antigravity.is_empty());
+    assert!(antigravity.iter().any(|m| m == "gemini-3.8-flash-medium"));
+}
