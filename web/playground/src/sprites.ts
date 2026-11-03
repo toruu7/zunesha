@@ -593,6 +593,11 @@ export function drawDesk(
   else if (raw.includes('nami')) drawNamiDesk(ctx, dx, dy);
   else if (raw.includes('usopp')) drawUsoppDesk(ctx, dx, dy);
   else if (raw.includes('sanji')) drawSanjiDesk(ctx, dx, dy);
+  else if (raw.includes('chopper')) drawChopperDesk(ctx, dx, dy);
+  else if (raw.includes('robin')) drawRobinDesk(ctx, dx, dy);
+  else if (raw.includes('franky')) drawFrankyDesk(ctx, dx, dy);
+  else if (raw.includes('brook')) drawBrookDesk(ctx, dx, dy);
+  else if (raw.includes('jinbe')) drawJinbeDesk(ctx, dx, dy);
   else drawLuffyDesk(ctx, dx, dy);
 
   // Name plate
@@ -843,6 +848,305 @@ function drawSanjiDesk(ctx: CanvasRenderingContext2D, dx: number, dy: number): v
 
   // Keyboard
   ctx.fillStyle = '#1E3A8A';
+  ctx.fillRect(dx + 3 * s, dy + 9 * s, 9 * s, 2 * s);
+}
+
+function drawChopperDesk(ctx: CanvasRenderingContext2D, dx: number, dy: number): void {
+  // Center: Medical vital telemetry monitor (ECG heart-rate & triage)
+  ctx.fillStyle = '#111';
+  ctx.fillRect(dx + 2 * s, dy + 1 * s, 11 * s, 7 * s);
+  ctx.fillStyle = '#022C22'; // Deep hospital dark green
+  ctx.fillRect(dx + 3 * s, dy + 2 * s, 9 * s, 5 * s);
+
+  // Heartbeat ECG waveform (P-Q-R-S-T pulse line)
+  ctx.fillStyle = '#10B981';
+  ctx.fillRect(dx + 4 * s, dy + 5 * s, 2 * s, 1 * s);
+  ctx.fillRect(dx + 6 * s, dy + 4 * s, 1 * s, 2 * s);
+  ctx.fillRect(dx + 7 * s, dy + 3 * s, 1 * s, 2 * s); // QRS peak
+  ctx.fillRect(dx + 8 * s, dy + 5 * s, 1 * s, 2 * s);
+  ctx.fillRect(dx + 9 * s, dy + 5 * s, 2 * s, 1 * s);
+  // Red medical emergency cross in top corner
+  ctx.fillStyle = '#F43F5E';
+  ctx.fillRect(dx + 10 * s, dy + 3 * s, 1 * s, 1 * s);
+
+  // Monitor stand
+  ctx.fillStyle = '#333';
+  ctx.fillRect(dx + 7 * s, dy + 8 * s, 2 * s, 1 * s);
+
+  // Left: Chopper's Pink Doctor's Bag & Herbal Mortar
+  // Doctor's bag (pink with white cross)
+  ctx.fillStyle = '#EC4899';
+  ctx.fillRect(dx - 4 * s, dy + 4 * s, 5 * s, 4 * s);
+  ctx.fillStyle = '#BE185D'; // Bag leather trim
+  ctx.fillRect(dx - 4 * s, dy + 5 * s, 5 * s, 1 * s);
+  ctx.fillStyle = '#78350F'; // Leather handle
+  ctx.fillRect(dx - 3 * s, dy + 3 * s, 3 * s, 1 * s);
+  // White medical cross on bag
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(dx - 2 * s, dy + 6 * s, 1 * s, 2 * s);
+  ctx.fillRect(dx - 3 * s, dy + 7 * s, 3 * s, 1 * s);
+
+  // Right: Medicine apothecary vials & golden Rumble Balls
+  // Blue medical tincture flask
+  ctx.fillStyle = '#06B6D4';
+  ctx.fillRect(dx + 14 * s, dy + 5 * s, 2 * s, 3 * s);
+  ctx.fillStyle = '#A16207'; // Cork stopper
+  ctx.fillRect(dx + 14 * s, dy + 4 * s, 2 * s, 1 * s);
+  // Red emergency triage elixir vial
+  ctx.fillStyle = '#EF4444';
+  ctx.fillRect(dx + 16 * s, dy + 6 * s, 2 * s, 2 * s);
+  ctx.fillStyle = '#A16207'; // Cork
+  ctx.fillRect(dx + 16 * s, dy + 5 * s, 2 * s, 1 * s);
+  // Golden Rumble Balls on desk
+  ctx.fillStyle = '#FACC15';
+  ctx.fillRect(dx + 13 * s, dy + 8 * s, 2 * s, 1 * s);
+  ctx.fillRect(dx + 16 * s, dy + 8 * s, 1 * s, 1 * s);
+
+  // Keyboard
+  ctx.fillStyle = '#0D9488'; // Mint / apothecary cyan
+  ctx.fillRect(dx + 3 * s, dy + 9 * s, 9 * s, 2 * s);
+}
+
+function drawRobinDesk(ctx: CanvasRenderingContext2D, dx: number, dy: number): void {
+  // Center: Poneglyph historical cipher & rune decoding terminal
+  ctx.fillStyle = '#111';
+  ctx.fillRect(dx + 2 * s, dy + 1 * s, 11 * s, 7 * s);
+  ctx.fillStyle = '#1E1035'; // Deep mystical purple
+  ctx.fillRect(dx + 3 * s, dy + 2 * s, 9 * s, 5 * s);
+
+  // Ancient glowing glyph symbols / rune blocks
+  ctx.fillStyle = '#C084FC';
+  ctx.fillRect(dx + 4 * s, dy + 3 * s, 2 * s, 1 * s);
+  ctx.fillRect(dx + 7 * s, dy + 3 * s, 2 * s, 1 * s);
+  ctx.fillRect(dx + 5 * s, dy + 5 * s, 3 * s, 1 * s);
+  ctx.fillRect(dx + 9 * s, dy + 5 * s, 2 * s, 1 * s);
+  ctx.fillStyle = '#FDE047'; // Golden Poneglyph translation markers
+  ctx.fillRect(dx + 4 * s, dy + 4 * s, 1 * s, 1 * s);
+  ctx.fillRect(dx + 9 * s, dy + 3 * s, 1 * s, 1 * s);
+
+  // Monitor stand
+  ctx.fillStyle = '#333';
+  ctx.fillRect(dx + 7 * s, dy + 8 * s, 2 * s, 1 * s);
+
+  // Left: Stack of ancient leather-bound archaeological tomes
+  // Bottom thick red-leather folio with gold leaf edges
+  ctx.fillStyle = '#7F1D1D';
+  ctx.fillRect(dx - 4 * s, dy + 6 * s, 5 * s, 2 * s);
+  ctx.fillStyle = '#FEF08A';
+  ctx.fillRect(dx + 0 * s, dy + 6 * s, 1 * s, 2 * s);
+  // Middle brown leather tome
+  ctx.fillStyle = '#78350F';
+  ctx.fillRect(dx - 4 * s, dy + 4 * s, 4 * s, 2 * s);
+  ctx.fillStyle = '#FEF08A';
+  ctx.fillRect(dx - 1 * s, dy + 4 * s, 1 * s, 2 * s);
+  // Top deep blue archeology codex with ribbon bookmark
+  ctx.fillStyle = '#1E3A8A';
+  ctx.fillRect(dx - 3 * s, dy + 2 * s, 3 * s, 2 * s);
+  ctx.fillStyle = '#F59E0B'; // Gold bookmark ribbon hanging
+  ctx.fillRect(dx - 2 * s, dy + 4 * s, 1 * s, 2 * s);
+
+  // Right: Poneglyph stone rubbing, magnifying glass & Hana-Hana flower petals
+  // Dark purple Poneglyph stone block rubbing
+  ctx.fillStyle = '#3B0764';
+  ctx.fillRect(dx + 14 * s, dy + 4 * s, 3 * s, 4 * s);
+  ctx.fillStyle = '#A855F7';
+  ctx.fillRect(dx + 15 * s, dy + 5 * s, 1 * s, 2 * s);
+  // Brass magnifying glass
+  ctx.fillStyle = '#D97706'; // Brass rim
+  ctx.fillRect(dx + 13 * s, dy + 7 * s, 2 * s, 2 * s);
+  ctx.fillStyle = '#92400E'; // Wood handle
+  ctx.fillRect(dx + 15 * s, dy + 8 * s, 2 * s, 1 * s);
+  // Hana-Hana blooming pink flower petals
+  ctx.fillStyle = '#E879F9';
+  ctx.fillRect(dx + 13 * s, dy + 4 * s, 1 * s, 1 * s);
+  ctx.fillRect(dx + 16 * s, dy + 6 * s, 1 * s, 1 * s);
+
+  // Keyboard
+  ctx.fillStyle = '#581C87'; // Royal archaeology purple
+  ctx.fillRect(dx + 3 * s, dy + 9 * s, 9 * s, 2 * s);
+}
+
+function drawFrankyDesk(ctx: CanvasRenderingContext2D, dx: number, dy: number): void {
+  // Center: Heavy industrial Iron Pirate & Cola power engineering console
+  ctx.fillStyle = '#111';
+  ctx.fillRect(dx + 2 * s, dy + 1 * s, 11 * s, 7 * s);
+  ctx.fillStyle = '#0F172A'; // Dark slate industrial forge
+  ctx.fillRect(dx + 3 * s, dy + 2 * s, 9 * s, 5 * s);
+
+  // Cola pressure gauges and telemetry meters
+  ctx.fillStyle = '#EF4444'; // Red pressure dial
+  ctx.fillRect(dx + 4 * s, dy + 3 * s, 2 * s, 2 * s);
+  ctx.fillStyle = '#EAB308'; // Warning level
+  ctx.fillRect(dx + 5 * s, dy + 3 * s, 1 * s, 1 * s);
+  // Cyan CAD blueprint vectors & iron grid
+  ctx.fillStyle = '#06B6D4';
+  ctx.fillRect(dx + 7 * s, dy + 3 * s, 4 * s, 1 * s);
+  ctx.fillRect(dx + 7 * s, dy + 5 * s, 3 * s, 1 * s);
+  ctx.fillRect(dx + 9 * s, dy + 4 * s, 1 * s, 2 * s);
+  // Franky's signature golden SUPER star
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(dx + 5 * s, dy + 5 * s, 1 * s, 1 * s);
+
+  // Heavy steel riveted monitor stand
+  ctx.fillStyle = '#475569';
+  ctx.fillRect(dx + 7 * s, dy + 8 * s, 2 * s, 1 * s);
+
+  // Left: Franky's 3-Pack Cola Crate (pure fuel!)
+  ctx.fillStyle = '#78350F'; // Wooden cola carrier box
+  ctx.fillRect(dx - 4 * s, dy + 5 * s, 5 * s, 3 * s);
+  // 3 Glass cola bottles (red body with silver caps)
+  ctx.fillStyle = '#DC2626';
+  ctx.fillRect(dx - 4 * s, dy + 3 * s, 1 * s, 2 * s);
+  ctx.fillRect(dx - 2 * s, dy + 3 * s, 1 * s, 2 * s);
+  ctx.fillRect(dx + 0 * s, dy + 3 * s, 1 * s, 2 * s);
+  ctx.fillStyle = '#F1F5F9'; // Silver bottle crown caps
+  ctx.fillRect(dx - 4 * s, dy + 2 * s, 1 * s, 1 * s);
+  ctx.fillRect(dx - 2 * s, dy + 2 * s, 1 * s, 1 * s);
+  ctx.fillRect(dx + 0 * s, dy + 2 * s, 1 * s, 1 * s);
+
+  // Right: Shipwright heavy steel wrench, hammer & brass nuts
+  // Steel pipe wrench
+  ctx.fillStyle = '#94A3B8';
+  ctx.fillRect(dx + 13 * s, dy + 3 * s, 3 * s, 1 * s);
+  ctx.fillStyle = '#64748B';
+  ctx.fillRect(dx + 14 * s, dy + 4 * s, 1 * s, 4 * s);
+  // Iron hammer head & wood handle
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(dx + 15 * s, dy + 5 * s, 2 * s, 2 * s);
+  ctx.fillStyle = '#A16207';
+  ctx.fillRect(dx + 16 * s, dy + 7 * s, 1 * s, 2 * s);
+  // Brass bolts/rivets
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(dx + 13 * s, dy + 8 * s, 1 * s, 1 * s);
+
+  // Keyboard
+  ctx.fillStyle = '#0284C7'; // Electric cyborg cyan
+  ctx.fillRect(dx + 3 * s, dy + 9 * s, 9 * s, 2 * s);
+}
+
+function drawBrookDesk(ctx: CanvasRenderingContext2D, dx: number, dy: number): void {
+  // Center: Soul King concert audio visualizer & harmonic cadence terminal
+  ctx.fillStyle = '#111';
+  ctx.fillRect(dx + 2 * s, dy + 1 * s, 11 * s, 7 * s);
+  ctx.fillStyle = '#09090B'; // Concert dark room
+  ctx.fillRect(dx + 3 * s, dy + 2 * s, 9 * s, 5 * s);
+
+  // Equalizer spectrum analyzer bars (green soul audio frequencies)
+  ctx.fillStyle = '#22C55E';
+  ctx.fillRect(dx + 4 * s, dy + 5 * s, 1 * s, 2 * s);
+  ctx.fillRect(dx + 5 * s, dy + 4 * s, 1 * s, 3 * s);
+  ctx.fillRect(dx + 6 * s, dy + 3 * s, 1 * s, 4 * s); // High octave peak
+  ctx.fillRect(dx + 7 * s, dy + 4 * s, 1 * s, 3 * s);
+  ctx.fillRect(dx + 8 * s, dy + 6 * s, 1 * s, 1 * s);
+  // Musical note (purple eighth note)
+  ctx.fillStyle = '#A855F7';
+  ctx.fillRect(dx + 9 * s, dy + 3 * s, 2 * s, 1 * s);
+  ctx.fillRect(dx + 10 * s, dy + 4 * s, 1 * s, 2 * s);
+  ctx.fillRect(dx + 9 * s, dy + 5 * s, 2 * s, 1 * s);
+
+  // Monitor stand
+  ctx.fillStyle = '#333';
+  ctx.fillRect(dx + 7 * s, dy + 8 * s, 2 * s, 1 * s);
+
+  // Left: Brook's Classical Violin & Horsehair Bow
+  // Amber wood violin body with hourglass curves
+  ctx.fillStyle = '#92400E';
+  ctx.fillRect(dx - 4 * s, dy + 4 * s, 3 * s, 4 * s);
+  ctx.fillStyle = '#B45309'; // Highlight wood grain
+  ctx.fillRect(dx - 3 * s, dy + 5 * s, 1 * s, 2 * s);
+  // Ebony neck & tuning pegs
+  ctx.fillStyle = '#451A03';
+  ctx.fillRect(dx - 3 * s, dy + 2 * s, 1 * s, 2 * s);
+  ctx.fillStyle = '#FBBF24'; // Gold pegs
+  ctx.fillRect(dx - 4 * s, dy + 1 * s, 3 * s, 1 * s);
+  // Slender wood bow
+  ctx.fillStyle = '#D97706';
+  ctx.fillRect(dx - 1 * s, dy + 2 * s, 1 * s, 6 * s);
+
+  // Right: Victorian gentleman teacup & ethereal Soul wisp
+  // White porcelain teacup & saucer
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(dx + 13 * s, dy + 8 * s, 4 * s, 1 * s); // Saucer
+  ctx.fillRect(dx + 14 * s, dy + 6 * s, 2 * s, 2 * s); // Cup
+  ctx.fillStyle = '#451A03'; // Hot Earl Grey tea
+  ctx.fillRect(dx + 14 * s, dy + 6 * s, 2 * s, 1 * s);
+  // Steaming aroma
+  ctx.fillStyle = '#FFFFFF';
+  ctx.globalAlpha = 0.5;
+  ctx.fillRect(dx + 15 * s, dy + 4 * s, 1 * s, 1 * s);
+  ctx.fillRect(dx + 14 * s, dy + 3 * s, 1 * s, 1 * s);
+  // Ethereal green Soul King astral wisp
+  ctx.fillStyle = '#4ADE80';
+  ctx.globalAlpha = 0.85;
+  ctx.fillRect(dx + 16 * s, dy + 3 * s, 2 * s, 2 * s);
+  ctx.fillRect(dx + 17 * s, dy + 5 * s, 1 * s, 1 * s);
+  ctx.globalAlpha = 1.0;
+
+  // Keyboard
+  ctx.fillStyle = '#18181B'; // Tuxedo black
+  ctx.fillRect(dx + 3 * s, dy + 9 * s, 9 * s, 2 * s);
+  ctx.fillStyle = '#F59E0B'; // Gold trim
+  ctx.fillRect(dx + 3 * s, dy + 10 * s, 9 * s, 1 * s);
+}
+
+function drawJinbeDesk(ctx: CanvasRenderingContext2D, dx: number, dy: number): void {
+  // Center: Thousand Sunny oceanic helm currents & sea chart terminal
+  ctx.fillStyle = '#111';
+  ctx.fillRect(dx + 2 * s, dy + 1 * s, 11 * s, 7 * s);
+  ctx.fillStyle = '#082F49'; // Deep marine ocean
+  ctx.fillRect(dx + 3 * s, dy + 2 * s, 9 * s, 5 * s);
+
+  // Ocean tide currents & wave flow crests
+  ctx.fillStyle = '#38BDF8';
+  ctx.fillRect(dx + 4 * s, dy + 4 * s, 5 * s, 1 * s);
+  ctx.fillRect(dx + 6 * s, dy + 3 * s, 3 * s, 1 * s);
+  ctx.fillStyle = '#0284C7';
+  ctx.fillRect(dx + 5 * s, dy + 5 * s, 5 * s, 1 * s);
+  // Nautical compass rose center point
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(dx + 9 * s, dy + 4 * s, 1 * s, 1 * s);
+
+  // Monitor stand
+  ctx.fillStyle = '#333';
+  ctx.fillRect(dx + 7 * s, dy + 8 * s, 2 * s, 1 * s);
+
+  // Left: Sunny Ships' Wooden Steering Helm Wheel
+  // Outer wheel rim (dark teak wood)
+  ctx.fillStyle = '#78350F';
+  ctx.fillRect(dx - 4 * s, dy + 3 * s, 4 * s, 4 * s);
+  ctx.fillStyle = '#9A8265'; // Wheel inner cutout
+  ctx.fillRect(dx - 3 * s, dy + 4 * s, 2 * s, 2 * s);
+  // Center brass hub
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(dx - 3 * s, dy + 4 * s, 2 * s, 2 * s);
+  // Helm wheel turning handles/spokes
+  ctx.fillStyle = '#B45309';
+  ctx.fillRect(dx - 5 * s, dy + 4 * s, 1 * s, 2 * s);
+  ctx.fillRect(dx - 3 * s, dy + 2 * s, 2 * s, 1 * s);
+  ctx.fillRect(dx - 3 * s, dy + 7 * s, 2 * s, 1 * s);
+  ctx.fillRect(dx + 0 * s, dy + 4 * s, 1 * s, 2 * s);
+
+  // Right: Sun Pirates flaming red sun crest & oceanic sake cup
+  // Sun Pirates flaming red sun tattoo badge
+  ctx.fillStyle = '#DC2626';
+  ctx.fillRect(dx + 14 * s, dy + 4 * s, 3 * s, 3 * s);
+  ctx.fillStyle = '#991B1B'; // Sun core
+  ctx.fillRect(dx + 15 * s, dy + 5 * s, 1 * s, 1 * s);
+  // Flaring sun rays
+  ctx.fillStyle = '#EF4444';
+  ctx.fillRect(dx + 13 * s, dy + 5 * s, 1 * s, 1 * s);
+  ctx.fillRect(dx + 17 * s, dy + 5 * s, 1 * s, 1 * s);
+  ctx.fillRect(dx + 15 * s, dy + 3 * s, 1 * s, 1 * s);
+  ctx.fillRect(dx + 15 * s, dy + 7 * s, 1 * s, 1 * s);
+
+  // Ocean blue sake cup
+  ctx.fillStyle = '#0284C7';
+  ctx.fillRect(dx + 14 * s, dy + 7 * s, 3 * s, 2 * s);
+  ctx.fillStyle = '#F0F9FF'; // Sake foam
+  ctx.fillRect(dx + 14 * s, dy + 7 * s, 3 * s, 1 * s);
+
+  // Keyboard
+  ctx.fillStyle = '#0369A1'; // Deep marine blue
   ctx.fillRect(dx + 3 * s, dy + 9 * s, 9 * s, 2 * s);
 }
 
