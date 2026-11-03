@@ -149,9 +149,17 @@ zou update --check   # only report (no prompt, no install)
 zou update --yes     # install without prompting
 ```
 
-If the installed version is current it prints `✔ up to date`; when a newer
-tag exists it shows the old/new versions and asks before rebuilding. A
-running daemon keeps the old binary, so restart `zou start` afterwards.
+If the installed version is current it prints `✔ up to date`; when newer
+tags exist, `zou update` **steps through intermediate releases sequentially**
+one-by-one (e.g. `v0.18.0` → `v0.18.1` → `v0.19.0`) so that migrations,
+database schemas, and dependency changes upgrade cleanly without skipping steps.
+
+#### In-UI One-Click Updates & Daemon Auto-Restart
+When a new version is released:
+- The **TUI** displays a `[Update Available: vX.Y.Z]` notification in its status bar.
+- The **WebUI Dashboard** and **Playground** headers display a `New version available (vX.Y.Z)` badge.
+- Clicking the badge triggers an automatic sequential update in the backend via `POST /api/update` and gracefully restarts the daemon server automatically.
+- Direct links to **Docs** and **GitHub** are also available in both the WebUI and Playground navigation bars.
 
 The installer records its source in
 `<prefix>/share/zou/install.json` (for example `~/.local/share/zou/install.json`).
@@ -309,14 +317,19 @@ OpenCode's JSON stream. `ZOU_AGENT_CMD` still overrides both providers.
 #### Straw Hat autonomous agent crew (`zou crew`)
 
 Rather than treating every task with generic, one-size-fits-all prompts, Zunesha
-organizes execution around the **Straw Hat Pirates crew** — five autonomous
-specialists with distinct technical directives:
+organizes execution around the **Straw Hat Pirates crew** — ten autonomous
+specialists with distinct technical directives and character-tailored workstations:
 
 * 👒 **Monkey D. Luffy** (*Captain / Feature Driver*): Bold, high-agency implementation. Direct problem solving that writes working code end-to-end without analysis paralysis.
 * ⚔️ **Roronoa Zoro** (*Combatant / Technical Debt Slayer*): Relentless refactoring, performance optimization, compiler cleanliness (zero warnings), and cutting away dead code.
-* 🗺️ **Nami** (*Navigator / Planner & Architect*): System topology mapping, data schemas, clean interfaces, contracts, and dependency graph routing.
-* 🎯 **Usopp** (*Sniper / Edge-Case & Test Scout*): Failure mode anticipation, boundary condition tests, regression suites, and hunting down edge cases.
+* 🗺️ **Nami** (*Navigator / Planner & Architect*): System topology mapping, data schemas, clean interfaces, contracts, token efficiency, and dependency graph routing.
+* 🎯 **Usopp** (*Sniper / Edge-Case & Test Scout*): Failure mode anticipation, boundary condition tests, regression suites, mocks, and hunting down edge cases.
 * 🍳 **Sanji** (*Cook / Review & Polish*): Ergonomics, UI/UX aesthetics, documentation, intuitive outputs, and crafting git diffs designed for human review.
+* 🩺 **Tony Tony Chopper** (*Doctor / Debugging & Crash Medic*): Stack trace diagnosis, panic elimination, memory leak prevention, and diagnostic healing.
+* 🌸 **Nico Robin** (*Archaeologist / Codebase Historian & Map Maker*): Dependency archaeology, dead code forensics, codebase map curation, and architectural documentation.
+* 🤖 **Franky** (*Shipwright / Infrastructure & DevOps*): CI/CD pipelines, Docker/container orchestration, build system acceleration, and tooling automation.
+* 🎻 **Brook** (*Musician / Code Review & Async Concurrency*): Non-blocking concurrency, deadlock prevention, code review harmonies, and event loop optimization.
+* 🌊 **Jinbe** (*Helmsman / Merge Stability & Concurrency Stabilizer*): Multi-branch conflict resolution, transaction safety, and calm invariant protection.
 
 ##### Intent-based task routing & 4-stage crew pipeline
 
@@ -326,22 +339,75 @@ dynamically based on the **intent** of the prompt:
 * **Non-code tasks (Queries, Audits, Investigations)**: If a prompt is a pure question or audit (e.g. *"how does the DAG scheduler work?"*, *"audit dependency vulnerabilities"*), implementation and testing agents are **skipped**. **Nami** investigates the repository, and **Luffy** (Captain) summarizes the findings and outlines next steps. No code churn, no unnecessary test runs.
 * **Code-modifying tasks (4-Stage Pipeline)**:
   1. 🗺️ **Research & Route (Nami)**: Analyzes the codebase map, identifies contract boundaries, and blueprints the changes.
-  2. ⚔️/🍳/👒 **Specialized Implementation**: Hands off to the specialist matched to the intent: **Luffy** (features), **Zoro** (refactoring/perf/debt), or **Sanji** (UI/UX, styling, docs).
+  2. ⚔️/🍳/👒/🤖/🩺 **Specialized Implementation**: Hands off to the specialist matched to the intent: **Luffy** (features), **Zoro** (refactoring/perf/debt), **Sanji** (UI/UX, styling, docs), **Franky** (infra/tooling), or **Chopper** (bugfixes/crash diagnosis).
   3. 🎯 **Testing & QA Verification (Usopp)**: Runs project test suites, checks boundary conditions, and verifies regression-free stability.
   4. 👒 **Captain Briefing & Next Steps (Luffy)**: Reviews the plan, diff, and QA report, delivering the final summary to the user and outlining next steps.
 
-##### Zero-hardcoded models & configuration
+##### Zero-hardcoded models, dynamic model dropdown & configuration
+
+No model names are hardcoded. Every crew member can use their own distinct model
+and provider, or automatically fall back to your default model. In both the
+**WebUI Dashboard** and **Playground**, the Model ID is an interactive `<select>`
+dropdown dynamically populated via `GET /api/models` (listing all installed/available
+models for OpenCode and Google Antigravity), plus a `+ Custom model ID…` fallback.
 
 ```sh
 zou crew                                                      # inspect active roster
 zou crew zoro --model anthropic/claude-3.7-sonnet --provider opencode  # configure a member
-zou crew nami --model gemini-2.5-pro --provider antigravity   # assign Antigravity
+zou crew nami --model gemini-3.8-flash-medium --provider antigravity   # assign Antigravity
+zou crew luffy --model opencode/deepseek-v4.1-flash-free      # assign OpenCode model
 zou crew zoro --reset                                         # return to default model
 ```
 
 Settings persist in `${XDG_CONFIG_HOME:-~/.config}/zou/config.json` under `crew.<member>`.
 Per-shell environment overrides are supported via `ZOU_CREW_<MEMBER>_MODEL` and
 `ZOU_CREW_<MEMBER>_PROVIDER`.
+
+#### Skills system (`zou skill`)
+
+Zunesha includes a modular skills system that injects focused domain expertise
+into autonomous agents. Skills are defined in standard `SKILL.md` format (with optional
+YAML frontmatter) and can be assigned to specific crew members.
+
+##### Built-in skills
+Out of the box, Zunesha includes canonical skills such as:
+- `tdd-scout`: Test-driven development, boundary condition probing, fuzz assertions & zero-regression rigor.
+- `debt-slayer`: Aggressive dead code elimination, compiler warning eradication & clean abstractions.
+- `system-navigator`: DAG route design, clean module boundaries, API contract versioning & non-breaking migrations.
+- `ui-artisan`: Semantic HTML, responsive styling, micro-interactions, accessibility & brutalist aesthetics.
+- `crash-medic`: Root cause analysis, crash diagnostics, defensive nil/null checks & stack trace dissection.
+- `security-sentinel`: Principle of least privilege, input sanitization, token secrecy & injection defense.
+
+##### Project & custom skills (from GitHub or local files)
+Zunesha automatically discovers skills from:
+- `.zou/skills/<skill-id>/SKILL.md`
+- `.skills/<skill-id>/SKILL.md`
+
+You can add skills from GitHub or create your own:
+```sh
+# Option 1: Clone any skill repo from GitHub directly into your project
+git clone https://github.com/<owner>/<skill-repo>.git .zou/skills/my-skill
+
+# Option 2: Download a raw SKILL.md from GitHub or Gist
+mkdir -p .zou/skills/my-skill
+curl -sL https://raw.githubusercontent.com/<owner>/<repo>/main/SKILL.md -o .zou/skills/my-skill/SKILL.md
+
+# Option 3: Create a skill using the CLI
+zou skill create api-guardian --name "API Guardian" --desc "Strict OpenAPI contract validation"
+```
+
+##### Managing skills via CLI or WebUI
+```sh
+zou skill list                                    # list all available skills and installed crew members
+zou skill show tdd-scout                          # inspect instructions and source of a skill
+zou skill install zoro debt-slayer                # install a skill to Zoro
+zou skill install nami system-navigator           # install a skill to Nami
+zou skill uninstall zoro debt-slayer              # uninstall a skill from Zoro
+```
+
+In the **WebUI Dashboard** and **Pixel Office Playground**, you can install or
+uninstall skills with one click from the agent's modal or dossier dropdown. When an
+agent runs a task, its installed skills are injected directly into its workspace instructions.
 
 ##### Interactive Pixel Office Playground (Thousand Sunny Deck)
 
@@ -351,13 +417,18 @@ Open `http://127.0.0.1:57804/playground/` for the interactive pixel control room
 
 * **Thousand Sunny Environment**: Open sea horizon with rolling ocean waves, blue sky with drifting clouds, golden teak ship deck planks with black pitch caulking seams, oak railing balustrades, and a crimson `THOUSAND SUNNY` banner.
 * **Ship Deck Props**: Central main mast with yardarm and waving Straw Hat Jolly Roger flag (`drawJollyRogerFlag`), Thousand Sunny helm steering wheel (`drawHelm`), wheeled naval broadside cannons (`drawShipCannon`), stacked rum and cola barrels (`drawRumBarrels`), Belle-mère's mikan citrus grove planter boxes (`drawMikanTrees`), iron anchor with coiled Manila rope (`drawAnchorAndRope`), and an overflowing treasure chest of sparkling gold coins (`drawTreasureChest`).
-* **Procedural Pixel-Art Sprites & Fixed Stations**:
-  * 👒 **Luffy**: Stationed at the bridge helm with his straw hat, red vest, blue shorts, and left-eye scar.
-  * ⚔️ **Zoro**: Stationed at port deck with triple gold earrings, moss-green hair, green haramaki, and katanas.
-  * 🗺️ **Nami**: Stationed at starboard deck beside the mikan trees with orange hair and wrist Log Pose.
-  * 🎯 **Usopp**: Stationed at port workshop bench with forehead sniper goggles and yellow bandana.
-  * 🍳 **Sanji**: Stationed at starboard galley bar with dark double-breasted suit, blonde hair parted over one eye, and lit cigarette with animated smoke curls.
-* **Live Task Routing & Standby Dossiers**: All 5 Straw Hats remain aboard the Thousand Sunny at all times. Tasks are dispatched to the appropriate pirate, rendering live state animations and speech bubbles. Clicking any pirate's desk selects their active task (logs, output, and diff review) or opens their character dossier when on standby.
+* **Procedural Pixel-Art Sprites & Tailored Character Workstations**:
+  * 👒 **Luffy**: Stationed at the bridge helm with his straw hat, red vest, blue shorts, left-eye scar, and steering wheel.
+  * ⚔️ **Zoro**: Stationed at port deck with triple gold earrings, moss-green hair, green haramaki, katanas, sharpening whetstone, and sake jug.
+  * 🗺️ **Nami**: Stationed at starboard deck beside the mikan trees with orange hair, wrist Log Pose, navigational charts, compass, and abacus.
+  * 🎯 **Usopp**: Stationed at port workshop bench with sniper goggles, yellow bandana, Kabuto slingshot, tool rack, and workbench vise.
+  * 🍳 **Sanji**: Stationed at starboard galley bar with dark double-breasted suit, blonde hair parted over one eye, cutting board, frying pan, and coffee mug.
+  * 🩺 **Chopper**: Stationed at the medical bay desk with blue backpack, pink antlered hat, mortar & pestle, and cross medical kit.
+  * 🌸 **Robin**: Stationed at the library desk with dark sunglasses, open historical grimoire, floral teacup, and reading loupe.
+  * 🤖 **Franky**: Stationed at the engineering anvil with spiked turquoise hair, construction welding goggles, wrench, and ice-cold bottle of cola.
+  * 🎻 **Brook**: Stationed at the music stage with afro silhouette, black cane, violin bow, sheet music, and porcelain teacup.
+  * 🌊 **Jinbe**: Stationed at the ocean stern with sun tattoo, karate gi, helm spokes, anchor rope, and earthenware green tea bowl.
+* **Live Task Routing & Standby Dossiers**: All 10 Straw Hats remain aboard the Thousand Sunny at all times. Tasks are dispatched to the appropriate pirate, rendering live state animations and speech bubbles. Clicking any pirate's desk selects their active task (logs, output, and diff review) or opens their character dossier when on standby.
 * **In-Browser Crew & Model Switcher**: Configure individual pirate providers (`opencode` / `antigravity`) and models directly in the web UI via the Inspector card (`GET /api/crew` & `PUT /api/crew/:member`).
 * **8-Bit Chiptune SFX & Ocean Ambience**: 100% synthesized in the browser via Web Audio API—cannon fire explosions when agents run, golden treasure chimes upon completion, alert buzzers on review/failure, and rolling sea waves against the hull (toggle with `🔊 SFX`).
 * **Animated Cross-Desk Dialogue**: Automatic speech bubbles track tasks across the 4-stage pipeline (Nami architecture -> specialist code execution -> Usopp edge-case & QA testing -> Luffy Captain's briefing).
@@ -646,6 +717,8 @@ zou recover [TASK_ID]                   # release stuck IN_PROGRESS/EVALUATING/R
 zou agent   [opencode|antigravity] [--model ID]  # show/switch the agent provider
 zou model   [MODEL] [--list|--show|--clear]  # choose/save the active provider's model
 zou crew    [MEMBER] [--model ID] [--provider P] [--reset]  # configure/view Straw Hat crew member models
+zou skill   [list|show <ID>|install <MEMBER> <ID>|uninstall <MEMBER> <ID>|create <ID>]
+                                        # manage built-in and project agent skills
 zou update  [--check] [--yes] [--repo URL|PATH] [--prefix DIR] [--no-dashboard]
                                         # check release tags; prompt before updating
 zou status  [--path <PATH>]             # per-status counts + task list

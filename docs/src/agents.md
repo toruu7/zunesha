@@ -81,17 +81,22 @@ The built-in command includes it automatically.
 ## Straw Hat Crew autonomous agents (`zou crew`)
 
 Instead of sending every task to a generic agent with identical instructions,
-Zunesha features the **Straw Hat Pirates crew** — five specialized autonomous
+Zunesha features the **Straw Hat Pirates crew** — ten specialized autonomous
 agents whose distinct personalities and technical philosophies tackle different
 stages of your development pipeline:
 
 | Crew Member | Role | Specialty & Focus |
 |---|---|---|
-| 👒 **Monkey D. Luffy** | Captain | **Feature Driver**: High-agency, pragmatic implementation of new capabilities. Writes direct, end-to-end working code without getting bogged down in analysis paralysis. |
-| ⚔️ **Roronoa Zoro** | Combatant | **Technical Debt Slayer**: Relentless refactoring, performance optimization, compiler cleanliness (zero warnings), and cutting away redundant code. |
-| 🗺️ **Nami** | Navigator | **Architect & Planner**: System mapping, contracts, schema design, intuitive interfaces, and structured dependency routing. |
-| 🎯 **Usopp** | Sniper | **Edge-Case & Test Scout**: Anticipating failure modes, boundary condition handling, regression tests, and sniper error elimination before review. |
-| 🍳 **Sanji** | Cook | **Polish & Review Presentation**: UX aesthetics, formatting, ergonomics, delightful outputs, and crafting git diffs that are clean for human review. |
+| 👒 **Monkey D. Luffy** | Captain & Feature Driver | **Strategic Lead**: High-agency, bold feature implementation. Writes direct, end-to-end working code without getting bogged down in analysis paralysis. |
+| ⚔️ **Roronoa Zoro** | Combatant & Core Logic | **Technical Debt Slayer**: Relentless refactoring, performance optimization, compiler cleanliness (zero warnings), and cutting away redundant code. |
+| 🗺️ **Nami** | Navigator & Architect | **System Topology & Economics**: Dependency routing, clean API contracts, intuitive schemas, and token-efficient execution. |
+| 🎯 **Usopp** | Sniper & Integration Scout | **Edge-Case Elimination**: Anticipating failure modes, boundary condition tests, mocking external dependencies, and sniper error elimination before review. |
+| 🍳 **Sanji** | Cook & Presentation Artisan | **Polish & User Experience**: Ergonomics, responsive design, user-facing documentation, and crafting clean git diffs designed for human review. |
+| 🩺 **Tony Tony Chopper** | Doctor & Crash Medic | **Debugging & Panic Elimination**: Stack trace diagnosis, panic elimination, memory leak prevention, and diagnostic healing. |
+| 🌸 **Nico Robin** | Archaeologist & Historian | **Codebase Archaeology**: Forensic git archaeology, dead code discovery, architectural documentation, and codebase map curation. |
+| 🤖 **Franky** | Shipwright & DevOps Engineer | **Infrastructure & Tooling**: CI/CD pipelines, container orchestration, build system acceleration, and tooling automation. |
+| 🎻 **Brook** | Musician & Concurrency Reviewer | **Async Harmony & Review**: Non-blocking concurrency, deadlock prevention, code review harmonies, and event loop optimization. |
+| 🌊 **Jinbe** | Helmsman & Merge Stabilizer | **Concurrency & Invariant Shield**: Multi-branch conflict resolution, transaction safety, and calm invariant protection. |
 
 ### Delegated planning & intent-based task routing
 
@@ -112,13 +117,18 @@ When code modifications are needed, the Straw Hat crew executes a specialized 4-
    - **Luffy** for core feature logic and greenfield implementations.
    - **Zoro** for refactoring, performance optimization, dead code removal, and compiler cleanliness.
    - **Sanji** for UI/UX styling, frontend components, layout ergonomics, and documentation polish.
+   - **Franky** for Docker, CI/CD, scripts, and build tooling.
+   - **Chopper** for bug fixes, crash diagnosis, and error handling.
 3. **Stage 3: Testing & QA Verification (Usopp)** — Runs test suites, validates boundary conditions, reproduces edge cases, and verifies that no regressions were introduced.
 4. **Stage 4: Captain Briefing & Next Steps (Luffy)** — Consolidates Nami's blueprint, the specialist's diff, and Usopp's QA report into an executive briefing, defining recommended next steps for human approval.
 
 ### Configuring crew models & providers (zero hardcoding)
 
 No model names are hardcoded. Every crew member can use their own distinct model
-and provider, or automatically fall back to your default model:
+and provider, or automatically fall back to your default model. In both the
+**WebUI Dashboard** and the **Pixel Office Playground**, the Model ID field is an
+interactive dropdown populated with available models for the selected provider
+(via `GET /api/models`), alongside a `+ Custom model ID…` fallback.
 
 ```sh
 # View the crew roster, active models, and specialties:
@@ -126,7 +136,7 @@ zou crew
 
 # Configure a specific crew member:
 zou crew zoro --model anthropic/claude-3.7-sonnet --provider opencode
-zou crew nami --model gemini-2.5-pro --provider antigravity
+zou crew nami --model gemini-3.8-flash-medium --provider antigravity
 zou crew luffy --model opencode/deepseek-v4.1-flash-free
 
 # Reset a member back to the global default:
@@ -150,7 +160,7 @@ Crew settings are stored in `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`:
     },
     "nami": {
       "provider": "antigravity",
-      "model": "gemini-2.5-pro"
+      "model": "gemini-3.8-flash-medium"
     }
   }
 }
@@ -159,6 +169,62 @@ Crew settings are stored in `${XDG_CONFIG_HOME:-~/.config}/zou/config.json`:
 Environment variables provide per-shell overrides:
 - `ZOU_CREW_<MEMBER>_MODEL` (e.g. `ZOU_CREW_ZORO_MODEL=anthropic/claude-3.7-sonnet`)
 - `ZOU_CREW_<MEMBER>_PROVIDER` (e.g. `ZOU_CREW_NAMI_PROVIDER=antigravity`)
+
+## Skills system (`zou skill`)
+
+Zunesha features a modular, extensible skills system. Skills bundle specialized
+instructions, architectural principles, and test patterns that are injected into
+an agent's system prompt and workspace when running tasks.
+
+### Canonical built-in skills
+- `tdd-scout`: Test-driven development, boundary condition probing, fuzz assertions & zero-regression rigor.
+- `debt-slayer`: Aggressive dead code elimination, compiler warning eradication & clean abstractions.
+- `system-navigator`: DAG route design, clean module boundaries, API contract versioning & non-breaking migrations.
+- `ui-artisan`: Semantic HTML, responsive Tailwind styling, micro-interactions, accessibility & brutalist aesthetics.
+- `crash-medic`: Root cause analysis, crash diagnostics, defensive nil/null checks & stack trace dissection.
+- `security-sentinel`: Principle of least privilege, input sanitization, token secrecy & injection defense.
+
+### Project & custom skills (from GitHub or local files)
+Zunesha scans for project-specific skills in:
+- `.zou/skills/<skill-id>/SKILL.md`
+- `.skills/<skill-id>/SKILL.md`
+
+A `SKILL.md` file can include YAML frontmatter and instructional markdown:
+```markdown
+---
+name: Web Scraper & Parser
+description: Headless web scraping and schema validation
+---
+
+### Instructions
+- Use headless scraping when dynamic JS rendering is required.
+- Extract structured JSON and validate against schema.
+```
+
+To add a skill from GitHub:
+```sh
+# Clone an entire skill repository
+git clone https://github.com/<owner>/<skill-repo>.git .zou/skills/my-skill
+
+# Or download a raw SKILL.md directly
+mkdir -p .zou/skills/my-skill
+curl -sL https://raw.githubusercontent.com/<owner>/<repo>/main/SKILL.md -o .zou/skills/my-skill/SKILL.md
+
+# Or create a new skill with the CLI
+zou skill create api-guardian --name "API Guardian" --desc "Strict OpenAPI contract validation"
+```
+
+### Installing skills to crew agents
+```sh
+zou skill list                                    # list all available skills and installed crew members
+zou skill show tdd-scout                          # inspect instructions and source of a skill
+zou skill install zoro debt-slayer                # install a skill to Zoro
+zou skill install nami system-navigator           # install a skill to Nami
+zou skill uninstall zoro debt-slayer              # uninstall a skill from Zoro
+```
+
+In the **WebUI Dashboard** (Crew modal) and **Office Playground** (Crew dossier),
+skills can also be installed or uninstalled with one click from an interactive dropdown.
 
 ### Interactive Pixel Office Playground (Thousand Sunny Deck)
 
@@ -177,23 +243,29 @@ The web UI includes an interactive pixel-art control room served at `/playground
   - **Treasure Chest** (`drawTreasureChest`): Brass-trimmed mahogany chest overflowing with sparkling gold and gems.
   - **Sky & Sea**: Animated rolling ocean waves with white foam crests, blue sky with drifting clouds, and golden teak deck planks.
 
-- **Procedural Pixel-Art Sprites & Stations**:
-  - 👒 **Luffy**: Stationed at the bridge helm with his straw hat, red vest, blue shorts, and left-eye scar.
-  - ⚔️ **Zoro**: Stationed at port deck with triple gold earrings, moss-green hair, green haramaki, and katanas.
-  - 🗺️ **Nami**: Stationed at starboard deck beside the mikan trees with orange hair and wrist Log Pose.
-  - 🎯 **Usopp**: Stationed at port workshop bench with forehead sniper goggles and yellow bandana.
-  - 🍳 **Sanji**: Stationed at starboard galley bar with dark double-breasted suit, blonde hair, and lit cigarette with animated smoke curls.
+- **Procedural Pixel-Art Sprites & Tailored Character Workstations**:
+  - 👒 **Luffy**: Stationed at the bridge helm with his straw hat, red vest, blue shorts, left-eye scar, and ship steering wheel.
+  - ⚔️ **Zoro**: Stationed at port deck with triple gold earrings, moss-green hair, green haramaki, katanas, sharpening whetstone, and sake jug.
+  - 🗺️ **Nami**: Stationed at starboard deck beside the mikan trees with orange hair, wrist Log Pose, navigational charts, compass, and abacus.
+  - 🎯 **Usopp**: Stationed at port workshop bench with sniper goggles, yellow bandana, Kabuto slingshot, tool rack, and workbench vise.
+  - 🍳 **Sanji**: Stationed at starboard galley bar with dark double-breasted suit, blonde hair parted over one eye, cutting board, frying pan, and espresso cup.
+  - 🩺 **Chopper**: Stationed at the medical bay desk with blue backpack, pink antlered hat, mortar & pestle, and cross medical kit.
+  - 🌸 **Robin**: Stationed at the library desk with dark sunglasses, open historical grimoire, floral teacup, and reading loupe.
+  - 🤖 **Franky**: Stationed at the engineering anvil with spiked turquoise hair, construction welding goggles, wrench, and bottle of cola.
+  - 🎻 **Brook**: Stationed at the music stage with afro silhouette, black cane, violin bow, sheet music, and porcelain teacup.
+  - 🌊 **Jinbe**: Stationed at the ocean stern with sun tattoo, karate gi, helm spokes, anchor rope, and earthenware green tea bowl.
 
 - **Permanent Crew State & Interactivity**:
-  - The 5 Straw Hats remain permanently aboard the Thousand Sunny regardless of queue state.
+  - All 10 Straw Hats remain permanently aboard the Thousand Sunny regardless of queue state.
   - Active tasks map to crew members, displaying live visual states (`working`, `review`, `ready`, `backlog`, `done`, `needs human`) and speech bubbles.
   - Clicking any pirate desk opens their active task transcript/diff, or their Straw Hat dossier if on standby.
-  - **In-Browser Crew & Model Switcher**: Configure individual pirate providers (`opencode` / `antigravity`) and models directly in the web UI via the Inspector card (`GET /api/crew` & `PUT /api/crew/:member`).
+  - **In-Browser Crew & Model Switcher**: Configure individual pirate providers (`opencode` / `antigravity`) and models directly in the web UI via the Inspector card (`GET /api/crew` & `PUT /api/crew/:member`) using dynamic model dropdowns.
   - **8-Bit Chiptune SFX & Ocean Ambience**: 100% synthesized in the browser via Web Audio API—cannon fire explosions when agents run, golden treasure chimes upon completion, alert buzzers on review/failure, and rolling sea waves against the hull (toggle with `🔊 SFX`).
   - **Animated Cross-Desk Dialogue**: Automatic speech bubbles track tasks across the 4-stage pipeline (Nami architecture -> specialist code execution -> Usopp edge-case & QA testing -> Luffy Captain's briefing).
   - **Task Queue Badges**: Desks display golden `xN` queue counter badges when multiple tasks are assigned to the same pirate.
 
 ![Thousand Sunny Ship Deck Scene](images/thousand-sunny-deck.png)
+
 
 ## The agent (`ZOU_AGENT_CMD`)
 
